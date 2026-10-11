@@ -1,7 +1,7 @@
 use std::{
     fs::{self, remove_file},
     io::Write,
-    process::Command,
+    process::{Command, Output},
 };
 extern crate dynamite_compiler;
 extern crate rand;
@@ -75,6 +75,49 @@ fn it_compiles_many_functions_c(output_option: &str) {
 }
 
 fn compile_and_get_stdout(code: &str, output_option: &str) -> String {
+    let output = compile_and_run(code, output_option);
+    assert!(output.status.success(), "program failed: {:?}", output);
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+#[test_matrix([
+    ("int main() { if (1) return 7; return 3; }", 7),
+    ("int main() { if (0) return 7; return 3; }", 3),
+    ("int main() { int x = -2; if (x) return 7; else return 3; }", 7),
+    ("int main() { int x = 0; if (x) return 7; else return 3; }", 3),
+    ("char x = 2; int main() { if (x) return 7; return 3; }", 7),
+    ("int *p; int main() { if (p) return 7; return 3; }", 3),
+    ("int main() { if (\"yes\") return 7; return 3; }", 7),
+    ("int main() { if (1 < 2) return 7; return 3; }", 7),
+    ("int main() { if (2 < 1) return 7; return 3; }", 3),
+    ("int main() { if (1) { if (0) return 2; else return 7; } else return 3; }", 7),
+    ("int main() { int x = 0; if (1) x = 7; else x = 3; return x; }", 7),
+    ("int main() { int x = 0; if (0) x = 7; else x = 3; return x; }", 3),
+    ("int main() { if (0) return 7; }", 0),
+    ("char a = 2; char b = 3; int main() { if (a < b) return a < b; return 3; }", 1),
+    ("int main() { return (1 < 2) + (3 == 3); }", 2),
+    ("int main() { if ((1 < 2) == (3 < 4)) return 7; return 3; }", 7),
+    ("int main() { return 7; printf(\"unreachable\"); }", 7),
+])]
+fn llvm_if_returns_expected_status(case: (&str, i32)) {
+    let (code, expected) = case;
+    let output = compile_and_run(code, "llvm");
+    assert_eq!(output.status.code(), Some(expected), "{:?}", output);
+    assert!(output.stdout.is_empty());
+}
+
+#[test_matrix([
+    "int main() { return 7; printf(\"unreachable\"); }",
+    "int main() { if (1) return 7; else return 3; printf(\"unreachable\"); }",
+    "int main() { if (1) { if (0) return 2; else return 7; } else return 3; printf(\"unreachable\"); }",
+])]
+fn llvm_omits_unreachable_statements(code: &str) {
+    let ir = dynamite_compiler::generate(code, "llvm", false);
+    assert!(!ir.contains("call"));
+    assert!(!ir.contains("ret i32 0"));
+}
+
+fn compile_and_run(code: &str, output_option: &str) -> Output {
     let assembly = dynamite_compiler::generate(code, output_option, false);
     let mut rng = rand::thread_rng();
     fs::create_dir_all("./tests/temp").unwrap();
@@ -102,8 +145,13 @@ fn compile_and_get_stdout(code: &str, output_option: &str) -> String {
         .expect("Failed to open stdin")
         .expect("Failed to write to stdin");
     let cc_output = child.wait_with_output().unwrap();
-    println!("{}", String::from_utf8_lossy(&cc_output.stderr));
+    assert!(
+        cc_output.status.success(),
+        "clang failed:\n{}\nGenerated code:\n{}",
+        String::from_utf8_lossy(&cc_output.stderr),
+        assembly,
+    );
     let output = Command::new(binary_name).output().unwrap();
     remove_file(binary_name).unwrap();
-    String::from_utf8_lossy(&output.stdout).to_string()
+    output
 }

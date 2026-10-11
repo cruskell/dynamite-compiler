@@ -14,9 +14,16 @@ pub struct Options<'a> {
     register_number: &'a mut usize,
     register_map: &'a mut HashMap<usize, usize>,
     register_queue: &'a mut Vec<String>,
+    label_number: usize,
+    terminated: bool,
 }
 
 impl Options<'_> {
+    fn new_label(&mut self) -> String {
+        self.label_number += 1;
+        format!("block.{}", self.label_number)
+    }
+
     fn new_register(&mut self) -> usize {
         *self.register_number += 1;
         self.register_queue
@@ -157,6 +164,8 @@ impl<'a> IrGenerator<'a> {
             register_number: &mut func.args.len(),
             register_map: &mut HashMap::<usize, usize>::new(),
             register_queue: &mut vec!["?".to_string(); 10],
+            label_number: 0,
+            terminated: false,
         };
         [
             vec![format!(
@@ -196,16 +205,23 @@ impl<'a> IrGenerator<'a> {
                 })
                 .collect::<Vec<String>>(),
             self.gen_node(func.body.as_ref().unwrap(), options),
-            vec![
-                format!("  ret {} 0", Self::gen_type(*return_ty.clone())), // default return value
-                "}".to_string(),
-            ],
+            if options.terminated {
+                vec!["}".to_string()]
+            } else {
+                vec![
+                    format!("  ret {} 0", Self::gen_type(*return_ty.clone())),
+                    "}".to_string(),
+                ]
+            },
         ]
         .concat()
         .join("\n")
     }
 
     fn gen_node(&self, node: &Node, options: &mut Options) -> Vec<String> {
+        if options.terminated {
+            return vec![];
+        }
         match node.nt {
             NodeType::DefVar => {
                 return node
@@ -314,7 +330,7 @@ impl<'a> IrGenerator<'a> {
             }
             NodeType::Return => {
                 let lhs = self.gen_node(node.lhs.as_ref().unwrap(), options);
-                *options.register_number += 1;
+                options.terminated = true;
                 return [
                     lhs,
                     vec![format!(
@@ -470,32 +486,55 @@ impl<'a> IrGenerator<'a> {
                 .concat();
             }
             NodeType::If => {
-                let cond = self.gen_node(node.cond.as_ref().unwrap(), options);
-                let cond_result_register = options.register_queue.pop().unwrap();
-                let then_register = options.new_register();
-                let then = self.gen_node(node.then.as_ref().unwrap(), options);
-                let else_register = options.new_register();
-                let els = node
-                    .els
-                    .as_ref()
-                    .map(|n| self.gen_node(n, options))
-                    .unwrap_or_default();
-                let end_register = options.new_register();
-                return [
-                    cond,
-                    vec![format!(
-                        "  br i1 {}, label %{}, label %{}",
-                        cond_result_register, then_register, else_register
-                    )],
-                    vec![format!("\n{}:", then_register)],
-                    then,
-                    vec![format!("  br label %{}", end_register)],
-                    vec![format!("\n{}:", else_register)],
-                    els,
-                    vec![format!("  br label %{}", end_register)],
-                    vec![format!("\n{}:", end_register)],
-                ]
-                .concat();
+                let condition = node.cond.as_ref().unwrap();
+                let mut lines = self.gen_node(condition, options);
+                let value = options.register_queue.pop().unwrap();
+                let predicate = options.new_register();
+                options.register_queue.pop();
+                let ty = condition.resolve_type().unwrap();
+                let zero = if matches!(ty, Type::Ptr(_)) {
+                    "null"
+                } else {
+                    "0"
+                };
+                lines.push(format!(
+                    "  %{} = icmp ne {} {}, {}",
+                    predicate,
+                    Self::gen_type_with_opaque_ptr(ty),
+                    value,
+                    zero,
+                ));
+                let then_label = options.new_label();
+                let else_label = options.new_label();
+                let end_label = options.new_label();
+                lines.push(format!(
+                    "  br i1 %{}, label %{}, label %{}",
+                    predicate, then_label, else_label,
+                ));
+
+                lines.push(format!("{}:", then_label));
+                options.terminated = false;
+                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
+                let then_terminated = options.terminated;
+                if !then_terminated {
+                    lines.push(format!("  br label %{}", end_label));
+                }
+
+                lines.push(format!("{}:", else_label));
+                options.terminated = false;
+                if let Some(els) = &node.els {
+                    lines.extend(self.gen_node(els, options));
+                }
+                let else_terminated = options.terminated;
+                if !else_terminated {
+                    lines.push(format!("  br label %{}", end_label));
+                }
+
+                options.terminated = then_terminated && else_terminated;
+                if !options.terminated {
+                    lines.push(format!("{}:", end_label));
+                }
+                return lines;
             }
             _ => {}
         }
@@ -534,7 +573,11 @@ impl<'a> IrGenerator<'a> {
             .register_queue
             .pop()
             .expect("register queue is empty");
-        [
+        let comparison = matches!(
+            node.nt,
+            NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le
+        );
+        let mut lines = [
             lhs,
             rhs,
             vec![match node.nt {
@@ -556,13 +599,20 @@ impl<'a> IrGenerator<'a> {
                         "  %{} = {} {} {}, {}",
                         options.new_register(),
                         operation,
-                        Self::gen_type(node.resolve_type().unwrap_or_else(|| {
-                            self.error_logger.print_error_position(
-                                node.token.as_ref().unwrap().pos,
-                                &format!("cannot resolve type: {:?}", node.lhs),
-                            );
-                            unreachable!()
-                        })),
+                        Self::gen_type(
+                            (if comparison {
+                                node.lhs.as_ref().unwrap().resolve_type()
+                            } else {
+                                node.resolve_type()
+                            })
+                            .unwrap_or_else(|| {
+                                self.error_logger.print_error_position(
+                                    node.token.as_ref().unwrap().pos,
+                                    &format!("cannot resolve type: {:?}", node.lhs),
+                                );
+                                unreachable!()
+                            })
+                        ),
                         rhs_register,
                         lhs_register,
                     )
@@ -577,6 +627,12 @@ impl<'a> IrGenerator<'a> {
                 }
             }],
         ]
-        .concat()
+        .concat();
+        if comparison {
+            let value = options.register_queue.pop().unwrap();
+            let register = options.new_register();
+            lines.push(format!("  %{} = zext i1 {} to i32", register, value));
+        }
+        lines
     }
 }
