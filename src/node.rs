@@ -144,6 +144,7 @@ impl Node {
     }
     pub fn resolve_type(&self) -> Option<Type> {
         match self.nt {
+            NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le => Some(Type::I32),
             NodeType::LocalVar | NodeType::Num | NodeType::CallFunc | NodeType::GlobalVar => {
                 self.cty.clone()
             }
