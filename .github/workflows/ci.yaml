@@ -24,7 +24,7 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: dytlzl
+          username: cruskell
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build app
         uses: docker/build-push-action@v4
@@ -33,7 +33,7 @@ jobs:
           file: dockerfiles/dev.Dockerfile
           push: true
           load: false
-          tags: ghcr.io/dytlzl/dynamite-compiler-dev:develop
+          tags: ghcr.io/cruskell/dynamite-compiler-dev:develop
           platforms: linux/amd64,linux/arm/v7,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -45,7 +45,7 @@ jobs:
     needs: docker-push
     if: ${{ always() }}
     container:
-      image: ghcr.io/dytlzl/dynamite-compiler-dev:develop
+      image: ghcr.io/cruskell/dynamite-compiler-dev:develop
     steps:
       - uses: actions/checkout@v3
       - name: Build

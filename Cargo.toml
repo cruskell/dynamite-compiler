@@ -1,7 +1,7 @@
 [package]
 name = "dynamite_compiler"
 version = "0.1.0"
-authors = ["dytlzl <dytlzl.dev@gmail.com>"]
+authors = ["cruskell <dytlzl.dev@gmail.com>"]
 edition = "2024"
 default-run = "dynamite_compiler"
 
