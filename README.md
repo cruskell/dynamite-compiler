@@ -134,3 +134,9 @@ duplicate labels are diagnosed.
 The CLI accepts repeatable `-I`, `-D`, and `-U` preprocessing options. Library
 callers can use `generate_with_options` with `PreprocessorOptions`; existing
 generation APIs retain their defaults.
+## Compound literals
+
+Compound literals such as `(int[]){1, 2}` and `(struct S){3}` create addressable
+objects. Objects created inside a function use automatic storage; file-scope
+compound literals use static storage. Postfix subscripts and member access apply
+to compound literals directly.
