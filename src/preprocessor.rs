@@ -8,6 +8,14 @@ use std::{
 
 use crate::error::{ErrorLogger, ErrorPrinter};
 
+/// Explicit preprocessing configuration shared by the CLI and library callers.
+#[derive(Default, Debug, Clone)]
+pub struct PreprocessorOptions {
+    pub include_directories: Vec<std::path::PathBuf>,
+    pub definitions: Vec<String>,
+    pub undefinitions: Vec<String>,
+}
+
 struct IncludeDirectory(std::path::PathBuf);
 
 impl IncludeDirectory {
@@ -126,6 +134,14 @@ impl ErrorLogger for Preprocessed {
 /// Use Clang's preprocessor for directives and predefined macros. Plain source
 /// takes the existing path without requiring an external preprocessor.
 pub fn preprocess(code: &str, path: Option<&Path>) -> Result<Preprocessed, String> {
+    preprocess_with_options(code, path, &PreprocessorOptions::default())
+}
+
+pub fn preprocess_with_options(
+    code: &str,
+    path: Option<&Path>,
+    options: &PreprocessorOptions,
+) -> Result<Preprocessed, String> {
     let absolute_path = path
         .map(|path| {
             if path.is_absolute() {
@@ -141,7 +157,11 @@ pub fn preprocess(code: &str, path: Option<&Path>) -> Result<Preprocessed, Strin
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| "<stdin>".to_string());
     let source = Source::new(name.clone(), code.to_string());
-    if !code.contains('#') && !code.contains("__") {
+    if !code.contains('#')
+        && !code.contains("__")
+        && options.definitions.is_empty()
+        && options.undefinitions.is_empty()
+    {
         let origins = source
             .lines
             .iter()
@@ -170,6 +190,22 @@ pub fn preprocess(code: &str, path: Option<&Path>) -> Result<Preprocessed, Strin
         .filter(|path| !path.as_os_str().is_empty())
     {
         command.current_dir(parent).arg("-iquote").arg(parent);
+    }
+    for directory in &options.include_directories {
+        let directory = if directory.is_absolute() {
+            directory.clone()
+        } else {
+            std::env::current_dir()
+                .map_err(|error| error.to_string())?
+                .join(directory)
+        };
+        command.arg("-I").arg(directory);
+    }
+    for definition in &options.definitions {
+        command.arg("-D").arg(definition);
+    }
+    for name in &options.undefinitions {
+        command.arg("-U").arg(name);
     }
     let mut child = command
         .stdin(Stdio::piped())
@@ -315,5 +351,20 @@ mod tests {
         ] {
             assert!(preprocess(source, None).is_err(), "{source}");
         }
+    }
+}
+
+#[cfg(test)]
+mod option_tests {
+    use super::*;
+    #[test]
+    fn command_line_macros_apply_without_directives() {
+        let options = PreprocessorOptions {
+            definitions: vec!["ANSWER=7".into()],
+            undefinitions: vec!["__STDC__".into()],
+            ..Default::default()
+        };
+        let result = preprocess_with_options("int value=ANSWER;", None, &options).unwrap();
+        assert!(result.code.contains("int value=7;"));
     }
 }

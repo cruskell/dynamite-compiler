@@ -1,4 +1,4 @@
-use dynamite_compiler::generate_with_path;
+use dynamite_compiler::{generate_with_options, preprocessor::PreprocessorOptions};
 use getopts::Options;
 use std::env;
 use std::fs::File;
@@ -15,6 +15,9 @@ fn main() {
     let program = args[0].clone();
     let mut opts = Options::new();
     opts.optflag("", "debug", "print debug info");
+    opts.optmulti("I", "include", "add an include directory", "DIRECTORY");
+    opts.optmulti("D", "define", "define a preprocessor macro", "NAME[=VALUE]");
+    opts.optmulti("U", "undefine", "undefine a preprocessor macro", "NAME");
     opts.optflag("h", "help", "print this help menu");
     opts.opt(
         "o",
@@ -49,11 +52,20 @@ fn main() {
         .unwrap_or_else(|e| panic!("failed to read file \"{}\": {}", path, e));
     println!(
         "{}",
-        generate_with_path(
+        generate_with_options(
             &code,
             &output_option,
             is_debug,
-            Some(std::path::Path::new(&path))
+            Some(std::path::Path::new(&path)),
+            &PreprocessorOptions {
+                include_directories: matches
+                    .opt_strs("include")
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                definitions: matches.opt_strs("define"),
+                undefinitions: matches.opt_strs("undefine"),
+            }
         )
     );
 }

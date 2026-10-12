@@ -24,10 +24,28 @@ pub fn generate_with_path(
     is_debug: bool,
     path: Option<&std::path::Path>,
 ) -> String {
-    let source = preprocessor::preprocess(code, path).unwrap_or_else(|message| {
-        error::ErrorLogger::print_error_position(&error::ErrorPrinter::new(code), 0, &message);
-        unreachable!()
-    });
+    generate_with_options(
+        code,
+        output_option,
+        is_debug,
+        path,
+        &preprocessor::PreprocessorOptions::default(),
+    )
+}
+
+/// Generate output with an explicit source location and preprocessing options.
+pub fn generate_with_options(
+    code: &str,
+    output_option: &str,
+    is_debug: bool,
+    path: Option<&std::path::Path>,
+    options: &preprocessor::PreprocessorOptions,
+) -> String {
+    let source =
+        preprocessor::preprocess_with_options(code, path, options).unwrap_or_else(|message| {
+            error::ErrorLogger::print_error_position(&error::ErrorPrinter::new(code), 0, &message);
+            unreachable!()
+        });
     let error_printer = &source;
     let tokens = tokenizer::Tokenizer::tokenize(&source.code, is_debug).unwrap_or_else(|e| {
         error::ErrorLogger::print_syntax_error_position(error_printer, e);
