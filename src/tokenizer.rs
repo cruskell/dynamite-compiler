@@ -98,15 +98,31 @@ impl Tokenizer {
             match bytes[pos] {
                 byte if byte.is_ascii_whitespace() => pos += 1,
                 b'0'..=b'9' => {
+                    let radix = if code[pos..].starts_with("0x") || code[pos..].starts_with("0X") {
+                        pos += 2;
+                        16
+                    } else {
+                        10
+                    };
+                    let digits_start = pos;
                     let mut value = 0usize;
-                    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+                    while pos < bytes.len() {
+                        let Some(digit) = (bytes[pos] as char).to_digit(radix) else {
+                            break;
+                        };
                         value = value
-                            .checked_mul(10)
-                            .and_then(|value| value.checked_add((bytes[pos] - b'0') as usize))
+                            .checked_mul(radix as usize)
+                            .and_then(|value| value.checked_add(digit as usize))
                             .ok_or_else(|| {
                                 error::SyntaxError::new(start, "integer literal is too large")
                             })?;
                         pos += 1;
+                    }
+                    if pos == digits_start
+                        || (pos < bytes.len()
+                            && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_'))
+                    {
+                        return Err(error::SyntaxError::new(start, "invalid integer literal"));
                     }
                     tokens.push(Self::num_token(start, value));
                 }
@@ -208,6 +224,17 @@ impl Tokenizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hexadecimal_literals_and_diagnostics() {
+        let tokens = Tokenizer::tokenize("0x10 0XfF 123", false).unwrap();
+        assert_eq!(tokens[0].i_value, 16);
+        assert_eq!(tokens[1].i_value, 255);
+        assert_eq!(tokens[2].i_value, 123);
+        for code in ["0x", "0xG", "0x1G", "0xFFFFFFFFFFFFFFFFFFFFFFFF"] {
+            assert!(Tokenizer::tokenize(code, false).is_err(), "{code}");
+        }
+    }
 
     #[test]
     fn test_tokenize() {

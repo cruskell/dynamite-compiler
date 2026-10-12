@@ -243,3 +243,17 @@ fn it_preserves_string_bytes(output_option: &str) {
         "日本語\t\"\\\ndone\n"
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn it_supports_hexadecimal_integers(output_option: &str) {
+    let output = compile_and_run(
+        "int n = 0X10; int main() { int a[0x2] = {0xf, 0xA}; return n + a[0] + a[1]; }",
+        output_option,
+    );
+    assert_eq!(output.status.code(), Some(41), "{:?}", output);
+    let output = compile_and_run(
+        "int main() { int n = 0xFFFFFFFF; return n == -1; }",
+        output_option,
+    );
+    assert_eq!(output.status.code(), Some(1), "{:?}", output);
+}
