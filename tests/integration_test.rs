@@ -361,3 +361,17 @@ fn it_supports_typedef(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int main() { return (char)300 + 3; }", 47),
+    ("int n = (char)255; int main() { return n + 8; }", 7),
+    ("typedef char Byte; int main() { int n = 7; void *p = &n; return *(int*)p + (Byte)256; }", 7),
+    ("int main() { int n = 0; (void)n++; return n; }", 1),
+    ("int main() { return (int)(char)255 + 8; }", 7),
+    ("int main() { return (int)(void*)(char)-1 == -1; }", 1),
+    ("int main() { return (int)(void*)0xFFFFFFFF == -1; }", 1),
+], ["asm", "llvm"])]
+fn it_supports_casts(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}

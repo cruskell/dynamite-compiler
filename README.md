@@ -79,3 +79,6 @@ nested switches. `break` exits the nearest loop or switch; `continue` targets a 
 pointees. Void functions accept `return;`; objects cannot have void type.
 
 `typedef` introduces scoped type aliases, including pointer and fixed-array aliases.
+
+Explicit casts support integers, pointers, typedef names, and `void`. Integer
+casts truncate or sign-extend to the requested type; void casts retain side effects.

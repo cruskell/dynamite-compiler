@@ -223,6 +223,24 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::Cast => {
+                let mut lines = vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    Assembly::inst1(POP, RAX),
+                ];
+                match node.cty {
+                    Some(Type::I8) => lines.push(Assembly::inst2(MOVSX, RAX, AL)),
+                    Some(Type::I32) => lines.push(Assembly::inst2(MOVSXD, RAX, EAX)),
+                    Some(Type::Ptr(_))
+                        if node.lhs.as_ref().unwrap().resolve_type() == Some(Type::I32) =>
+                    {
+                        lines.push(Assembly::inst2(MOVSXD, RAX, EAX))
+                    }
+                    _ => {}
+                }
+                lines.push(Assembly::inst1(PUSH, RAX));
+                return lines.into();
+            }
             NodeType::Sequence => {
                 let mut lines = vec![];
                 for (index, child) in node.children.iter().enumerate() {

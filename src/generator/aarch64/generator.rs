@@ -271,6 +271,24 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
+            NodeType::Cast => {
+                let mut lines = vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                ];
+                match node.cty {
+                    Some(Type::I8) => lines.push(Assembly::inst2(SXTB, X8, W8)),
+                    Some(Type::I32) => lines.push(Assembly::inst2(SXTW, X8, W8)),
+                    Some(Type::Ptr(_))
+                        if node.lhs.as_ref().unwrap().resolve_type() == Some(Type::I32) =>
+                    {
+                        lines.push(Assembly::inst2(SXTW, X8, W8))
+                    }
+                    _ => {}
+                }
+                lines.push(Self::push(X8));
+                return lines.into();
+            }
             NodeType::Sequence => {
                 let mut lines = vec![];
                 for (index, child) in node.children.iter().enumerate() {

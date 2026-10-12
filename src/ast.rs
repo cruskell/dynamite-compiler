@@ -500,6 +500,22 @@ impl<'a> AstBuilderImpl<'a> {
     fn eval(&mut self, node: &Node) -> i64 {
         match node.nt {
             NodeType::Num => return node.value.unwrap() as i64,
+            NodeType::Cast => {
+                let value = self.eval(node.lhs.as_ref().unwrap());
+                return match node.cty.as_ref().unwrap() {
+                    Type::I8 => value as i8 as i64,
+                    Type::I32 => value as i32 as i64,
+                    Type::Ptr(_) => value,
+                    _ => {
+                        self.error_logger.print_error_position(
+                            node.token.as_ref().unwrap().pos,
+                            "cast is not a constant initializer",
+                        );
+                        unreachable!()
+                    }
+                };
+            }
+
             NodeType::LogicalAnd => {
                 return (self.eval(node.lhs.as_ref().unwrap()) != 0
                     && self.eval(node.rhs.as_ref().unwrap()) != 0) as i64;
@@ -1157,6 +1173,34 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn unary(&mut self) -> Node {
+        let saved = self.cur;
+        if let Some(token) = self.attempt_reserved("(") {
+            if let Some(mut ty) = self.attempt_type() {
+                while self.attempt_reserved("*").is_some() {
+                    ty = Type::Ptr(Box::new(ty));
+                }
+                self.expect_reserved(")");
+                let operand = self.unary();
+                if !matches!(ty, Type::Void | Type::I8 | Type::I32 | Type::Ptr(_))
+                    || (!matches!(
+                        operand.resolve_type(),
+                        Some(Type::I8 | Type::I32 | Type::Ptr(_) | Type::Arr(..))
+                    ) && ty != Type::Void)
+                {
+                    self.error_logger
+                        .print_error_position(token.pos, "invalid cast");
+                }
+                return Node {
+                    nt: NodeType::Cast,
+                    token: Some(token),
+                    cty: Some(ty),
+                    lhs: Some(Box::new(operand)),
+                    ..Node::default()
+                };
+            }
+            self.cur = saved;
+        }
+
         if let Some(t) = self.attempt_reserved("sizeof") {
             let saved = self.cur;
             let size = if self.attempt_reserved("(").is_some() {

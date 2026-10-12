@@ -369,13 +369,28 @@ impl<'a> IrGenerator<'a> {
             if value == "0" {
                 return "null".to_string();
             }
+            let wide = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!(
+                "  %{} = sext {} {} to i64",
+                wide,
+                Self::gen_type(source.clone()),
+                value
+            ));
+            let register = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!("  %{} = inttoptr i64 %{} to ptr", register, wide));
+            return format!("%{}", register);
+        }
+        if matches!(source, Type::Ptr(_) | Type::Arr(..)) && matches!(target, Type::I8 | Type::I32)
+        {
             let register = options.new_register();
             options.register_queue.pop();
             lines.push(format!(
-                "  %{} = inttoptr {} {} to ptr",
+                "  %{} = ptrtoint ptr {} to {}",
                 register,
-                Self::gen_type(source.clone()),
-                value
+                value,
+                Self::gen_type(target.clone())
             ));
             return format!("%{}", register);
         }
@@ -457,6 +472,25 @@ impl<'a> IrGenerator<'a> {
             return lines;
         }
         match node.nt {
+            NodeType::Cast => {
+                let operand = node.lhs.as_ref().unwrap();
+                let mut lines = self.gen_node(operand, options);
+                let value = options.register_queue.pop().unwrap();
+                let target = node.cty.as_ref().unwrap();
+                if *target == Type::Void {
+                    options.register_queue.push("0".to_string());
+                } else {
+                    let value = self.convert_integer(
+                        value,
+                        &operand.resolve_type().unwrap(),
+                        target,
+                        options,
+                        &mut lines,
+                    );
+                    options.register_queue.push(value);
+                }
+                return lines;
+            }
             NodeType::Sequence => {
                 let mut lines = vec![];
                 let depth = options.register_queue.len();
