@@ -106,7 +106,15 @@ impl<'a> AsmGenerator<'a> {
     }
 
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> Assembly {
+        if gv.declaration_only {
+            return vec![].into();
+        }
         vec![
+            if gv.internal {
+                vec![].into()
+            } else {
+                format!(".globl {}", self.with_prefix(name)).into()
+            },
             format!("  .balign {}", gv.ty.align_of()).into(),
             format!("{}:", self.with_prefix(name)).into(),
             Self::gen_initializer_element(&gv.ty, gv.data.as_ref(), self.target_os),
@@ -251,7 +259,11 @@ impl<'a> AsmGenerator<'a> {
             return vec![].into();
         }
         vec![
-            format!(".globl {}", self.with_prefix(name)).into(),
+            if func.internal {
+                vec![].into()
+            } else {
+                format!(".globl {}", self.with_prefix(name)).into()
+            },
             format!("{}:", self.with_prefix(name)).into(),
             // prologue
             Assembly::inst1(PUSH, RBP),

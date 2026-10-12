@@ -541,6 +541,7 @@ fn it_supports_goto_labels(code: &str, output_option: &str) {
 }
 
 #[test_matrix([
+
     "int main(){return sizeof(short)+sizeof(long)+sizeof(unsigned char)+sizeof(_Bool)-12;}",
     "int main(){unsigned int x=4294967295U;return (x/3==1431655765U && x>1)-1;}",
     "int main(){long x=4294967296L;return (x+3==4294967299L)-1;}",
@@ -577,5 +578,14 @@ fn it_supports_compound_literals(code: &str, output_option: &str) {
     "struct S{int a[3];int x;};int main(){struct S s={.a[2]=7,.x=9};return s.a[0]+s.a[2]+s.x-16;}",
 ], ["asm", "llvm"])]
 fn it_supports_designated_initializers(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+    "int f(){static int x=3;return x++;}int main(){return f()+f()-7;}",
+    "static int x=3;static int f(){return x;}int main(){return f()-3;}",
+    "extern int x;int x=7;extern int x;int main(){extern int x;return x-7;}",
+], ["asm", "llvm"])]
+fn it_supports_storage_classes(code: &str, output_option: &str) {
+
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }

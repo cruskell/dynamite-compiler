@@ -116,9 +116,17 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> String {
+        if gv.declaration_only {
+            return format!(
+                "@{} = external global {}",
+                name,
+                Self::gen_type(gv.ty.clone())
+            );
+        }
         format!(
-            "@{} = global {}, align {}",
+            "@{} = {}global {}, align {}",
             name,
+            if gv.internal { "internal " } else { "" },
             Self::gen_initializer_element(&gv.ty, gv.data.as_ref()),
             Self::align(&gv.ty),
         )
@@ -272,7 +280,8 @@ impl<'a> IrGenerator<'a> {
         };
         [
             vec![format!(
-                "define {} @{}({}) {{",
+                "define {}{} @{}({}) {{",
+                if func.internal { "internal " } else { "" },
                 Self::gen_type(*return_ty.clone()),
                 name,
                 func.args

@@ -2,6 +2,8 @@ use crate::ctype::Type;
 #[derive(Debug, PartialEq)]
 pub struct GlobalVariable {
     pub ty: Type,
+    pub internal: bool,
+    pub declaration_only: bool,
     pub data: Option<GlobalVariableData>,
 }
 #[derive(Debug, PartialEq)]
