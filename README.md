@@ -51,7 +51,10 @@ macOS and Linux, for x86_64 and AArch64. It includes recursion, nested calls,
 control flow, arrays, strings, and scalar conversions. Source diagnostics cover
 truncated input, malformed literals, invalid lvalues, initializer sizes, and
 function argument counts. This remains a C-like subset, not a full C compiler;
-function calls currently support at most six arguments.
+function calls support register and stack arguments.
+
+Native calls support stack arguments using x86_64 and AArch64 calling conventions,
+including compact fixed stack arguments on macOS AArch64.
 
 Integer literals support decimal and hexadecimal (`0x` or `0X`) notation.
 
