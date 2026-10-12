@@ -290,6 +290,7 @@ impl<'a> AsmGenerator<'a> {
             NodeType::While => {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 let v = vec![
+                    format!(".Lcontinue.{}:", branch_num).into(),
                     format!("{}:", BeginFlag(branch_num)).into(),
                     Assembly::reset_stack(offset),
                     self.gen_node(node.cond.as_ref().unwrap(), offset, branch_num),
@@ -326,6 +327,8 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst2(CMP, RAX, 0),
                     Assembly::inst1(JE, EndFlag(branch_num)),
                     self.gen_node(node.then.as_ref().unwrap(), offset, branch_num),
+                    format!(".Lcontinue.{}:", branch_num).into(),
+                    Assembly::reset_stack(offset),
                     node.upd.as_ref().map_or(Vec::new().into(), |node| {
                         vec![
                             self.gen_node(node, offset, branch_num),
@@ -340,6 +343,9 @@ impl<'a> AsmGenerator<'a> {
             }
             NodeType::Block => {
                 return self.gen_statements(&node.children, offset, breakable_branch_num);
+            }
+            NodeType::Continue => {
+                return Assembly::inst1(JMP, format!(".Lcontinue.{}", node.value.unwrap()));
             }
             NodeType::Break => {
                 if breakable_branch_num != 0 {

@@ -13,6 +13,7 @@ pub struct AstBuilderImpl<'a> {
     tokens: &'a Vec<Token>,
     cur: usize,
     offset_size: usize,
+    loop_stack: Vec<usize>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
     pub global_variables: HashMap<String, GlobalVariable>,
@@ -87,6 +88,7 @@ impl<'a> AstBuilderImpl<'a> {
             tokens,
             cur: 0,
             offset_size: 0,
+            loop_stack: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
             global_variables: HashMap::new(),
@@ -545,7 +547,10 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved("(");
             let cond = self.expr();
             self.expect_reserved(")");
-            return Node::new_while_node(Some(t), cond, self.stmt());
+            self.loop_stack.push(t.pos);
+            let body = self.stmt();
+            self.loop_stack.pop();
+            return Node::new_while_node(Some(t), cond, body);
         }
         if let Some(t) = self.attempt_reserved("for") {
             self.scope_stack.push(HashMap::new());
@@ -569,7 +574,9 @@ impl<'a> AstBuilderImpl<'a> {
                 upd = Some(self.expr());
                 self.expect_reserved(")");
             }
+            self.loop_stack.push(t.pos);
             let body = self.stmt();
+            self.loop_stack.pop();
             self.scope_stack.pop();
             return Node::new_for_node(Some(t), ini, cond, upd, body);
         }
@@ -578,6 +585,18 @@ impl<'a> AstBuilderImpl<'a> {
         }
         let node = if let Some(ty) = self.attempt_type() {
             self.local_variable_definition(ty)
+        } else if let Some(t) = self.attempt_reserved("continue") {
+            let target = self.loop_stack.last().copied().unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(t.pos, "continue requires an enclosing loop");
+                unreachable!()
+            });
+            Node {
+                token: Some(t),
+                nt: NodeType::Continue,
+                value: Some(target),
+                ..Node::default()
+            }
         } else if let Some(t) = self.attempt_reserved("break") {
             Node {
                 token: Some(t),
