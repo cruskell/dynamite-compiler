@@ -522,3 +522,11 @@ fn it_supports_octal_integers(output_option: &str) {
 fn it_initializes_global_addresses(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "enum E { A=3,B,C=A+7, }; int main(){enum E x=B;return x+C-14;}",
+    "typedef enum { A=-2,B, } E; int main(){E x=B;enum Inner { A=7 };return x+A-6;}",
+], ["asm", "llvm"])]
+fn it_supports_enumerations(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
