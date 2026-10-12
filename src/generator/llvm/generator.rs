@@ -210,6 +210,13 @@ impl<'a> IrGenerator<'a> {
             Type::Ptr(_) => format!(
                 "ptr {}",
                 match data {
+                    Some(GlobalVariableData::Address { symbol, offset }) => {
+                        if *offset == 0 {
+                            format!("@{symbol}")
+                        } else {
+                            format!("getelementptr (i8, ptr @{symbol}, i64 {offset})")
+                        }
+                    }
                     Some(GlobalVariableData::Elem(value)) if value.starts_with('@') =>
                         value.clone(),
                     Some(GlobalVariableData::Elem(value)) if value != "0" =>
@@ -496,7 +503,9 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn gen_node(&self, node: &Node, options: &mut Options) -> Vec<String> {
-        if options.terminated && !matches!(node.nt, NodeType::Block | NodeType::Case) {
+        if options.terminated
+            && !matches!(node.nt, NodeType::Block | NodeType::Case | NodeType::Label)
+        {
             if !node.contains_case() {
                 return vec![];
             }
@@ -803,6 +812,21 @@ impl<'a> IrGenerator<'a> {
                 }
                 lines.push(format!("{}:", end));
                 options.terminated = false;
+                return lines;
+            }
+            NodeType::Goto => {
+                options.terminated = true;
+                return vec![format!("  br label %goto.{}", node.value.unwrap())];
+            }
+            NodeType::Label => {
+                let label = format!("goto.{}", node.value.unwrap());
+                let mut lines = vec![];
+                if !options.terminated {
+                    lines.push(format!("  br label %{label}"));
+                }
+                lines.push(format!("{label}:"));
+                options.terminated = false;
+                lines.extend(self.gen_node(node.lhs.as_ref().unwrap(), options));
                 return lines;
             }
             NodeType::Case => {

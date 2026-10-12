@@ -4,9 +4,9 @@ use crate::trie::Trie;
 use std::collections::HashSet;
 
 pub const TYPES: [&str; 3] = ["int", "char", "void"];
-const RESERVED_WORDS: [&str; 14] = [
+const RESERVED_WORDS: [&str; 16] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
-    "default", "typedef", "struct",
+    "default", "typedef", "struct", "enum", "goto",
 ];
 
 const RESERVED_SYMBOLS: [&str; 51] = [
@@ -106,6 +106,8 @@ impl Tokenizer {
                     let radix = if code[pos..].starts_with("0x") || code[pos..].starts_with("0X") {
                         pos += 2;
                         16
+                    } else if bytes[pos] == b'0' {
+                        8
                     } else {
                         10
                     };

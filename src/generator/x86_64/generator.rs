@@ -203,7 +203,16 @@ impl<'a> AsmGenerator<'a> {
             .into(),
             _ => format!(
                 "  .8byte {}",
-                if let Some(GlobalVariableData::Elem(s)) = data {
+                if let Some(GlobalVariableData::Address { symbol, offset }) = data {
+                    let prefix = if symbol.starts_with(".str.") {
+                        "L_"
+                    } else if matches!(target_os, Os::MacOS) {
+                        "_"
+                    } else {
+                        ""
+                    };
+                    format!("{prefix}{symbol}{offset:+}")
+                } else if let Some(GlobalVariableData::Elem(s)) = data {
                     if s.starts_with("@.str.") {
                         s.replace('@', "L_")
                     } else if let Some(name) = s.strip_prefix('@') {
@@ -400,6 +409,17 @@ impl<'a> AsmGenerator<'a> {
                 lines.push(format!("{}:", EndFlag(branch_num)).into());
                 lines.push(Assembly::reset_stack(offset));
                 return lines.into();
+            }
+            NodeType::Goto => {
+                return Assembly::inst1(JMP, format!(".Lgoto.{}", node.value.unwrap()));
+            }
+            NodeType::Label => {
+                return vec![
+                    format!(".Lgoto.{}:", node.value.unwrap()).into(),
+                    Assembly::reset_stack(offset),
+                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                ]
+                .into();
             }
             NodeType::Case => {
                 return vec![

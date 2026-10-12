@@ -4,7 +4,7 @@ use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use crate::token::{Token, TokenType};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{cell::RefCell, rc::Rc};
 
 type Parameters = Vec<(Option<Token>, Type)>;
@@ -48,6 +48,8 @@ pub struct AstBuilderImpl<'a> {
     cur: usize,
     offset_size: usize,
     loop_stack: Vec<usize>,
+    labels: HashMap<String, usize>,
+    defined_labels: HashSet<String>,
     switch_stack: Vec<Vec<Node>>,
     return_type: Option<Type>,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
@@ -65,6 +67,7 @@ pub struct ProgramAst<'a> {
 
 pub enum Identifier {
     TypeDef(Type),
+    Constant(i64),
     Local(Type, usize),
     Static(Type),
 }
@@ -131,6 +134,8 @@ impl<'a> AstBuilderImpl<'a> {
             cur: 0,
             offset_size: 0,
             loop_stack: vec![],
+            labels: HashMap::new(),
+            defined_labels: HashSet::new(),
             switch_stack: vec![],
             return_type: None,
             struct_definitions: vec![],
@@ -354,6 +359,12 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn initializer_count(&mut self) -> usize {
+        if let Some(token) = self.attempt(TokenType::Str) {
+            return crate::tokenizer::decode_string_literal(&token.s_value)
+                .unwrap()
+                .len()
+                + 1;
+        }
         self.expect_reserved("{");
         let mut depth = 0;
         let mut count = 0;
@@ -408,6 +419,9 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn attempt_type(&mut self) -> Option<Type> {
+        if let Some(token) = self.attempt_reserved("enum") {
+            return Some(self.enum_type(token));
+        }
         if let Some(token) = self.attempt_reserved("struct") {
             return Some(self.struct_type(token));
         }
@@ -426,6 +440,62 @@ impl<'a> AstBuilderImpl<'a> {
         }
         None
     }
+    fn enum_type(&mut self, token: Token) -> Type {
+        let name = self.attempt_ident();
+        let key = name.as_ref().map(|name| format!(".enum.{}", name.s_value));
+        if self.attempt_reserved("{").is_some() {
+            if let Some(key) = &key {
+                if self.scope_stack.last().unwrap().contains_key(key) {
+                    self.error_logger
+                        .print_error_position(token.pos, "enum tag is already defined");
+                }
+                self.scope_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(key.clone(), Identifier::TypeDef(Type::I32));
+            }
+            let mut value = 0i64;
+            loop {
+                let name = self.attempt_ident().unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(self.tokens[self.cur].pos, "enumerator expected");
+                    unreachable!()
+                });
+                if self.attempt_reserved("=").is_some() {
+                    let expression = self.ternary();
+                    value = self.eval(&expression);
+                }
+                if i32::try_from(value).is_err() {
+                    self.error_logger
+                        .print_error_position(name.pos, "enumerator is outside int range");
+                }
+                if self.scope_stack.last().unwrap().contains_key(&name.s_value) {
+                    self.error_logger
+                        .print_error_position(name.pos, "duplicate enumerator");
+                }
+                self.scope_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(name.s_value, Identifier::Constant(value));
+                value += 1;
+                if self.attempt_reserved("}").is_some() {
+                    break;
+                }
+                self.expect_reserved(",");
+                if self.attempt_reserved("}").is_some() {
+                    break;
+                }
+            }
+        } else if key
+            .as_ref()
+            .is_none_or(|key| self.resolve_name(key).is_none())
+        {
+            self.error_logger
+                .print_error_position(token.pos, "enum requires a known tag or definition");
+        }
+        Type::I32
+    }
+
     fn struct_type(&mut self, token: Token) -> Type {
         let name = self.attempt_ident();
         let key = format!(
@@ -610,7 +680,15 @@ impl<'a> AstBuilderImpl<'a> {
                     );
                 }
                 self.return_type = Some(result);
+                self.labels.clear();
+                self.defined_labels.clear();
                 let body = self.consume_block();
+                for (name, position) in &self.labels {
+                    if !self.defined_labels.contains(name) {
+                        self.error_logger
+                            .print_error_position(*position, "goto target is not defined");
+                    }
+                }
                 self.return_type = None;
                 self.scope_stack.pop();
                 if body.is_none() {
@@ -635,7 +713,35 @@ impl<'a> AstBuilderImpl<'a> {
                 );
                 return;
             }
-            let data = self.attempt_reserved("=").map(|_| self.global_data());
+            let data = if self.attempt_reserved("=").is_some() {
+                if matches!(&ty, Type::Arr(child, _) if **child == Type::I8)
+                    && self.tokens[self.cur].tt == TokenType::Str
+                {
+                    let token = self.attempt(TokenType::Str).unwrap();
+                    let mut bytes =
+                        crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
+                    let Type::Arr(_, size) = &ty else {
+                        unreachable!()
+                    };
+                    if *size != 0 && bytes.len() > *size {
+                        self.error_logger
+                            .print_error_position(token.pos, "string initializer is too long");
+                    }
+                    if *size == 0 || bytes.len() < *size {
+                        bytes.push(0);
+                    }
+                    Some(GlobalVariableData::Arr(
+                        bytes
+                            .into_iter()
+                            .map(|b| GlobalVariableData::Elem(b.to_string()))
+                            .collect(),
+                    ))
+                } else {
+                    Some(self.global_data())
+                }
+            } else {
+                None
+            };
             let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
                 elements.len()
             } else {
@@ -716,6 +822,10 @@ impl<'a> AstBuilderImpl<'a> {
                     self.validate_global_initializer(ty, element, token);
                 }
             }
+            (Type::I8 | Type::I32, GlobalVariableData::Address { .. }) => {
+                self.error_logger
+                    .print_error_position(token.pos, "integer initializer cannot be an address");
+            }
             (Type::I8 | Type::I32, GlobalVariableData::Elem(value)) if value.starts_with('@') => {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be a string");
@@ -740,33 +850,60 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             }
             GlobalVariableData::Arr(vec)
-        } else if let Some(t) = self.attempt(TokenType::Str) {
-            GlobalVariableData::Elem(self.new_string_literal(&t.s_value))
         } else {
             let expression = self.ternary();
-            if matches!(expression.nt, NodeType::GlobalVar)
-                && expression
-                    .resolve_type()
-                    .is_some_and(|ty| ty.function_signature().is_some())
-            {
-                GlobalVariableData::Elem(format!("@{}", expression.global_name))
-            } else if matches!(expression.nt, NodeType::Addr)
-                && expression
-                    .lhs
-                    .as_ref()
-                    .unwrap()
-                    .resolve_type()
-                    .is_some_and(|ty| ty.function_signature().is_some())
-            {
-                GlobalVariableData::Elem(format!(
-                    "@{}",
-                    expression.lhs.as_ref().unwrap().global_name
-                ))
+            if let Some((symbol, offset)) = self.constant_address(&expression) {
+                GlobalVariableData::Address { symbol, offset }
             } else {
                 GlobalVariableData::Elem(format!("{}", self.eval(&expression)))
             }
         }
     }
+    fn constant_address(&mut self, node: &Node) -> Option<(String, i64)> {
+        match node.nt {
+            NodeType::GlobalVar
+                if node.resolve_type().is_some_and(|ty| {
+                    matches!(ty, Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..))
+                }) =>
+            {
+                Some((node.global_name.clone(), 0))
+            }
+            NodeType::Addr => {
+                let child = node.lhs.as_ref().unwrap();
+                if matches!(child.nt, NodeType::GlobalVar) {
+                    Some((
+                        if child.dest.is_empty() {
+                            child.global_name.clone()
+                        } else {
+                            child.dest.trim_start_matches('@').to_string()
+                        },
+                        0,
+                    ))
+                } else if matches!(child.nt, NodeType::Deref) {
+                    self.constant_address(child.lhs.as_ref().unwrap())
+                } else {
+                    None
+                }
+            }
+            NodeType::Cast => self.constant_address(node.lhs.as_ref().unwrap()),
+            NodeType::Add | NodeType::Sub => {
+                let lhs = node.lhs.as_ref().unwrap();
+                let (symbol, offset) = self.constant_address(lhs)?;
+                let stride = lhs.dest_type()?.size_of() as i64;
+                let delta = self.eval(node.rhs.as_ref().unwrap()).checked_mul(stride)?;
+                Some((
+                    symbol,
+                    if node.nt == NodeType::Add {
+                        offset.checked_add(delta)?
+                    } else {
+                        offset.checked_sub(delta)?
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn eval(&mut self, node: &Node) -> i64 {
         match node.nt {
             NodeType::Num => return node.value.unwrap() as i64,
@@ -950,6 +1087,41 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn stmt(&mut self) -> Node {
+        if self.tokens[self.cur].tt == TokenType::Ident && self.tokens[self.cur + 1].s_value == ":"
+        {
+            let token = self.attempt_ident().unwrap();
+            self.expect_reserved(":");
+            if !self.defined_labels.insert(token.s_value.clone()) {
+                self.error_logger
+                    .print_error_position(token.pos, "duplicate label");
+            }
+            let id = *self
+                .labels
+                .entry(token.s_value.clone())
+                .or_insert(token.pos);
+            return Node {
+                nt: NodeType::Label,
+                value: Some(id),
+                token: Some(token),
+                lhs: Some(Box::new(self.stmt())),
+                ..Node::default()
+            };
+        }
+        if let Some(token) = self.attempt_reserved("goto") {
+            let name = self.attempt_ident().unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(self.tokens[self.cur].pos, "goto requires a label");
+                unreachable!()
+            });
+            let id = *self.labels.entry(name.s_value).or_insert(name.pos);
+            self.expect_reserved(";");
+            return Node {
+                nt: NodeType::Goto,
+                value: Some(id),
+                token: Some(token),
+                ..Node::default()
+            };
+        }
         if let Some(token) = self.attempt_reserved("typedef") {
             self.typedef_definition();
             self.expect_reserved(";");
@@ -1242,6 +1414,37 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
+        if matches!(node.resolve_type(), Some(Type::Arr(child, _)) if *child == Type::I8)
+            && self.tokens[self.cur].tt == TokenType::Str
+        {
+            let token = self.attempt(TokenType::Str).unwrap();
+            let bytes = crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
+            let Type::Arr(_, size) = node.resolve_type().unwrap() else {
+                unreachable!()
+            };
+            if bytes.len() > size {
+                self.error_logger
+                    .print_error_position(token.pos, "string initializer is too long");
+            }
+            return Node {
+                nt: NodeType::Block,
+                token: Some(token.clone()),
+                children: (0..size)
+                    .map(|index| {
+                        Node::new_with_op(
+                            Some(token.clone()),
+                            NodeType::Assign,
+                            Self::array_element(node, index, &token),
+                            Node::new_with_num(
+                                Some(token.clone()),
+                                bytes.get(index).copied().unwrap_or(0) as usize,
+                            ),
+                        )
+                    })
+                    .collect(),
+                ..Node::default()
+            };
+        }
         if let Some(token) = self.attempt_reserved("{") {
             let elements = Self::aggregate_elements(node, &token);
             if elements.is_none() {
@@ -1781,6 +1984,9 @@ impl<'a> AstBuilderImpl<'a> {
                         global_name: t.s_value.clone(),
                         ..Node::default()
                     },
+                    Identifier::Constant(value) => {
+                        Node::new_with_num(Some(t.clone()), *value as usize)
+                    }
                     Identifier::TypeDef(..) => {
                         self.error_logger
                             .print_error_position(t.pos, "type name is not an expression");

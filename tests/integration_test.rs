@@ -492,3 +492,50 @@ fn it_concatenates_adjacent_strings(output_option: &str) {
         r#"int main(){char *p="\x41" /* gap */ "B" "\0" "C";return p[0]+p[1]+p[2]+p[3]-198;}"#;
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "int main(){char s[]=\"abc\";return sizeof(s)+s[3]-4;}",
+    "char s[]=\"abc\"; int main(){return sizeof(s)+s[3]-4;}",
+    "int main(){char s[3]=\"abc\";return s[2]-99;}",
+    "char s[5]=\"abc\"; int main(){return s[3]+s[4];}",
+], ["asm", "llvm"])]
+fn it_initializes_character_arrays(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_supports_octal_integers(output_option: &str) {
+    assert_eq!(
+        compile_and_run("int main(){return 010+077-71;}", output_option)
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int x=7; int *p=&x; int main(){return *p-7;}",
+    "int a[3]={1,2,7}; int *p=a+2; int main(){return *p-7;}",
+    "int a[3]={1,2,8}; int *p=&a[2]; int main(){return *p-8;}",
+    "char *p=\"abc\"+1; int main(){return *p-98;}",
+], ["asm", "llvm"])]
+fn it_initializes_global_addresses(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "enum E { A=3,B,C=A+7, }; int main(){enum E x=B;return x+C-14;}",
+    "typedef enum { A=-2,B, } E; int main(){E x=B;enum Inner { A=7 };return x+A-6;}",
+], ["asm", "llvm"])]
+fn it_supports_enumerations(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){goto done;return 9;done:return 0;}",
+    "int main(){int x=0;again:x++;if(x<3)goto again;return x-3;}",
+    "int main(){goto inside;while(0){inside:return 0;}return 9;}",
+], ["asm", "llvm"])]
+fn it_supports_goto_labels(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
