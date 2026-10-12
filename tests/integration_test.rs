@@ -540,6 +540,7 @@ fn it_supports_goto_labels(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+
 #[test_matrix([
     "int main(){return sizeof(short)+sizeof(long)+sizeof(unsigned char)+sizeof(_Bool)-12;}",
     "int main(){unsigned int x=4294967295U;return (x/3==1431655765U && x>1)-1;}",
@@ -556,5 +557,16 @@ fn it_supports_goto_labels(code: &str, output_option: &str) {
     "int main(){long x=(long)(0?1U:-1);return (x==4294967295L)-1;}",
 ], ["asm", "llvm"])]
 fn it_supports_extended_integers(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){return ((int[]){7,9})[1]-9;}",
+    "struct S{int x;char y;}; int main(){return ((struct S){7,9}).y-9;}",
+    "int main(){int *p=&(int){7};*p=9;return *p-9;}",
+    "int *p=(int[]){7,9};int main(){return p[1]-9;}",
+], ["asm", "llvm"])]
+fn it_supports_compound_literals(code: &str, output_option: &str) {
+
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }

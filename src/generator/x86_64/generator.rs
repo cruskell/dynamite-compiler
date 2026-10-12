@@ -333,7 +333,9 @@ impl<'a> AsmGenerator<'a> {
                 let mut lines = vec![];
                 for (index, child) in node.children.iter().enumerate() {
                     lines.push(self.gen_node(child, offset, breakable_branch_num));
-                    if index + 1 < node.children.len() {
+                    if index + 1 < node.children.len()
+                        && !matches!(child.nt, NodeType::Block | NodeType::DefVar)
+                    {
                         lines.push(Assembly::inst1(POP, RAX));
                     }
                 }
@@ -876,7 +878,9 @@ impl<'a> AsmGenerator<'a> {
                 let mut lines = vec![];
                 for child in &node.children[..node.children.len() - 1] {
                     lines.push(self.gen_node(child, offset, branch_num));
-                    lines.push(Assembly::inst1(POP, RAX));
+                    if !matches!(child.nt, NodeType::Block | NodeType::DefVar) {
+                        lines.push(Assembly::inst1(POP, RAX));
+                    }
                 }
                 lines.push(self.gen_addr(node.children.last().unwrap(), offset, branch_num));
                 lines.into()

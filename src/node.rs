@@ -57,6 +57,7 @@ impl Default for NodeType {
 #[derive(Default, Clone)]
 pub struct Node {
     pub nt: NodeType,
+    pub compound_literal: bool,
     pub cty: Option<Type>,
     pub token: Option<Token>,
     pub lhs: Option<Box<Node>>,
