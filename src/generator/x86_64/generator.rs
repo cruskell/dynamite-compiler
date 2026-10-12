@@ -46,12 +46,10 @@ impl<'a> AsmGenerator<'a> {
                 .into(),
                 ast.functions
                     .iter()
-                    .fold((0, vec![]), |(last_offset, mut last_vec), (name, f)| {
-                        let stack_offset = last_offset + f.offset_size;
-                        last_vec.push(self.gen_func(name, f, stack_offset));
-                        (stack_offset, last_vec)
+                    .map(|(name, func)| {
+                        self.gen_func(name, func, func.offset_size.div_ceil(16) * 16)
                     })
-                    .1
+                    .collect::<Vec<Assembly>>()
                     .into(),
                 if let Os::MacOS = self.target_os {
                     ".section __DATA,__data"
@@ -86,7 +84,17 @@ impl<'a> AsmGenerator<'a> {
                     .map(|(i, str)| {
                         vec![
                             format!("L_.str.{}:", i).into(),
-                            format!("  .asciz \"{}\"", str).into(),
+                            format!(
+                                "  .byte {}",
+                                crate::tokenizer::decode_string_literal(str)
+                                    .unwrap()
+                                    .into_iter()
+                                    .chain([0])
+                                    .map(|byte| byte.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                            .into(),
                         ]
                         .into()
                     })
@@ -99,6 +107,7 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> Assembly {
         vec![
+            format!("  .balign {}", gv.ty.align_of()).into(),
             format!("{}:", self.with_prefix(name)).into(),
             Self::gen_initializer_element(&gv.ty, gv.data.as_ref()),
         ]
@@ -106,6 +115,15 @@ impl<'a> AsmGenerator<'a> {
     }
 
     fn gen_initializer_element(ty: &Type, data: Option<&GlobalVariableData>) -> Assembly {
+        let data = if !matches!(ty, Type::Arr(..)) {
+            let mut value = data;
+            while let Some(GlobalVariableData::Arr(elements)) = value {
+                value = elements.first();
+            }
+            value
+        } else {
+            data
+        };
         match ty {
             Type::Arr(children_ty, size) => {
                 if let Some(GlobalVariableData::Arr(v)) = data {
@@ -124,7 +142,7 @@ impl<'a> AsmGenerator<'a> {
                                 * v.iter()
                                     .enumerate()
                                     .filter(|(i, _)| i < size)
-                                    .fold(*size, |_, _| { size - v.len() })
+                                    .fold(*size, |_, _| { size.saturating_sub(v.len()) })
                         )
                         .into(),
                     ]
@@ -173,7 +191,7 @@ impl<'a> AsmGenerator<'a> {
             // prologue
             Assembly::inst1(PUSH, RBP),
             Assembly::inst2(MOV, RBP, RSP),
-            Assembly::inst2(SUB, RSP, func.offset_size),
+            Assembly::inst2(SUB, RSP, offset),
             func.args
                 .iter()
                 .enumerate()
@@ -182,7 +200,8 @@ impl<'a> AsmGenerator<'a> {
                         vec![
                             Assembly::inst2(MOV, RAX, RBP),
                             Assembly::inst2(SUB, RAX, arg.offset.unwrap()),
-                            Assembly::inst2(MOV, Ptr(RAX, 8), ARGS_REG[i]),
+                            Assembly::inst2(MOV, RDI, ARGS_REG[i]),
+                            self.operation2rdi(arg.resolve_type(), MOV, RAX),
                         ]
                         .into()
                     } else {
@@ -204,6 +223,16 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::Sequence => {
+                let mut lines = vec![];
+                for (index, child) in node.children.iter().enumerate() {
+                    lines.push(self.gen_node(child, offset, breakable_branch_num));
+                    if index + 1 < node.children.len() {
+                        lines.push(Assembly::inst1(POP, RAX));
+                    }
+                }
+                return lines.into();
+            }
             NodeType::DefVar => {
                 return self.gen_statements(&node.children, offset, breakable_branch_num);
             }
@@ -227,14 +256,20 @@ impl<'a> AsmGenerator<'a> {
                         .map(|op| Assembly::inst1(POP, *op))
                         .collect::<Vec<Assembly>>()
                         .into(),
+                    Assembly::inst2(MOV, RAX, 0),
                     Assembly::inst1(CALL, self.with_prefix(&node.global_name)),
                     Assembly::inst1(POP, RDI),
                     Assembly::inst2(ADD, RSP, RDI),
+                    match node.cty {
+                        Some(Type::I8) => Assembly::inst2(MOVSX, RAX, AL),
+                        Some(Type::I32) => Assembly::inst2(MOVSXD, RAX, EAX),
+                        _ => vec![].into(),
+                    },
                     Assembly::inst1(PUSH, RAX),
                 ]
                 .into();
             }
-            NodeType::If => {
+            NodeType::If | NodeType::Conditional => {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 return vec![
                     self.gen_node(node.cond.as_ref().unwrap(), offset, breakable_branch_num),
@@ -369,7 +404,8 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst1(POP, RDI),
                     Assembly::inst1(POP, RAX),
                     self.operation2rdi(node.lhs.as_ref().unwrap().resolve_type(), MOV, RAX),
-                    Assembly::inst1(PUSH, RDI),
+                    self.deref_rax(node.lhs.as_ref().unwrap()),
+                    Assembly::inst1(PUSH, RAX),
                 ]
                 .into();
             }
@@ -413,6 +449,9 @@ impl<'a> AsmGenerator<'a> {
                     self.gen_node(node.rhs.as_ref().unwrap(), offset, branch_num),
                     Assembly::inst1(POP, RAX),
                     format!("{}:", EndFlag(branch_num)).into(),
+                    Assembly::inst2(CMP, RAX, 0),
+                    Assembly::inst1(SETNE, AL),
+                    Assembly::inst2(MOVZX, RAX, AL),
                     Assembly::inst1(PUSH, RAX),
                 ]
                 .into();
@@ -427,6 +466,9 @@ impl<'a> AsmGenerator<'a> {
                     self.gen_node(node.rhs.as_ref().unwrap(), offset, branch_num),
                     Assembly::inst1(POP, RAX),
                     format!("{}:", EndFlag(branch_num)).into(),
+                    Assembly::inst2(CMP, RAX, 0),
+                    Assembly::inst1(SETNE, AL),
+                    Assembly::inst2(MOVZX, RAX, AL),
                     Assembly::inst1(PUSH, RAX),
                 ]
                 .into();
@@ -470,6 +512,22 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst2(ADD, RAX, RDI),
                 ]
                 .into(),
+                NodeType::Sub
+                    if node.lhs.as_ref().unwrap().dest_type().is_some()
+                        && node.rhs.as_ref().unwrap().dest_type().is_some() =>
+                {
+                    vec![
+                        Assembly::inst2(SUB, RAX, RDI),
+                        Assembly::inst2(
+                            MOV,
+                            RDI,
+                            node.lhs.as_ref().unwrap().dest_type().unwrap().size_of(),
+                        ),
+                        Assembly::inst0(CQO),
+                        Assembly::inst1(IDIV, RDI),
+                    ]
+                    .into()
+                }
                 NodeType::Sub => vec![
                     if let Some(t) = node.lhs.as_ref().unwrap().dest_type() {
                         Assembly::inst2(IMUL, RDI, t.size_of())

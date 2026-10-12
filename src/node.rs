@@ -27,10 +27,12 @@ pub enum NodeType {
     Num,
     Return,
     If,
+    Conditional,
     While,
     For,
     Break,
     Block,
+    Sequence,
     CallFunc,
     Addr,
     Deref,
@@ -144,10 +146,54 @@ impl Node {
     }
     pub fn resolve_type(&self) -> Option<Type> {
         match self.nt {
-            NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le => Some(Type::I32),
-            NodeType::LocalVar | NodeType::Num | NodeType::CallFunc | NodeType::GlobalVar => {
-                self.cty.clone()
+            NodeType::Eq
+            | NodeType::Ne
+            | NodeType::Lt
+            | NodeType::Le
+            | NodeType::LogicalAnd
+            | NodeType::LogicalOr => Some(Type::I32),
+            NodeType::Conditional => {
+                let then = self.then.as_ref().unwrap().resolve_type();
+                let otherwise = self.els.as_ref().unwrap().resolve_type();
+                if matches!(then, Some(Type::I8 | Type::I32))
+                    && matches!(otherwise, Some(Type::I8 | Type::I32))
+                {
+                    Some(Type::I32)
+                } else {
+                    match (then, otherwise) {
+                        (Some(Type::Ptr(child) | Type::Arr(child, _)), _)
+                        | (_, Some(Type::Ptr(child) | Type::Arr(child, _))) => {
+                            Some(Type::Ptr(child))
+                        }
+                        (then, _) => then,
+                    }
+                }
             }
+            NodeType::Num => Some(Type::I32),
+            NodeType::Sequence => self.children.last().and_then(Node::resolve_type),
+            NodeType::Add | NodeType::Sub => {
+                let ty = self.lhs.as_ref().unwrap().resolve_type();
+                if matches!(self.nt, NodeType::Sub)
+                    && self.rhs.as_ref().unwrap().dest_type().is_some()
+                {
+                    return Some(Type::I32);
+                }
+                if ty.as_ref().is_some_and(|ty| ty.dest_type().is_some()) {
+                    ty
+                } else {
+                    Some(Type::I32)
+                }
+            }
+            NodeType::Mul
+            | NodeType::Div
+            | NodeType::Mod
+            | NodeType::BitLeft
+            | NodeType::BitRight
+            | NodeType::BitAnd
+            | NodeType::BitXor
+            | NodeType::BitOr
+            | NodeType::BitNot => Some(Type::I32),
+            NodeType::LocalVar | NodeType::CallFunc | NodeType::GlobalVar => self.cty.clone(),
             NodeType::Addr => {
                 if let Some(ty) = self.lhs.as_ref().unwrap().resolve_type() {
                     Some(Type::Ptr(Box::new(ty)))

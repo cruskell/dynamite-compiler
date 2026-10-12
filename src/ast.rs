@@ -69,11 +69,11 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
         ),
         (
             String::from("putchar"),
-            Identifier::Static(Type::Func(vec![Type::I8], Box::new(Type::I32))),
+            Identifier::Static(Type::Func(vec![Type::I32], Box::new(Type::I32))),
         ),
         (
             String::from("exit"),
-            Identifier::Static(Type::Func(vec![Type::I8], Box::new(Type::I32))),
+            Identifier::Static(Type::Func(vec![Type::I32], Box::new(Type::I32))),
         ),
     ]
     .into_iter()
@@ -146,7 +146,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn at_eof(&self) -> bool {
-        self.cur >= self.tokens.len()
+        self.cur >= self.tokens.len() || matches!(self.tokens[self.cur].tt, TokenType::EOF)
     }
     fn expect_ident_with_type(&mut self, ty: Type) -> (Token, Type) {
         let mut ty = ty.clone();
@@ -154,10 +154,22 @@ impl<'a> AstBuilderImpl<'a> {
             ty = Type::Ptr(Box::new(ty));
         }
         if let Some(t) = self.attempt_ident() {
+            let mut dimensions = vec![];
             while self.attempt_reserved("[").is_some() {
-                let n = self.expect_number();
-                ty = Type::Arr(Box::new(ty), n.i_value);
+                let size = self.expect_number();
+                if size.i_value == 0 {
+                    self.error_logger
+                        .print_error_position(size.pos, "array size must be positive");
+                }
+                dimensions.push(size.i_value);
                 self.expect_reserved("]");
+            }
+            for size in dimensions.into_iter().rev() {
+                if ty.size_of().checked_mul(size).is_none() {
+                    self.error_logger
+                        .print_error_position(t.pos, "array size is too large");
+                }
+                ty = Type::Arr(Box::new(ty), size);
             }
             (t, ty)
         } else {
@@ -168,13 +180,11 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn new_local_variable(&mut self, ty: Type) -> Node {
         let (t, ty) = self.expect_ident_with_type(ty);
+        self.register_local_variable(t, ty)
+    }
+    fn register_local_variable(&mut self, t: Token, ty: Type) -> Node {
         self.offset_size += ty.size_of();
-        let segment_size = if let Some(dest) = ty.dest_type() {
-            dest.size_of()
-        } else {
-            ty.size_of()
-        };
-        self.offset_size += segment_size - self.offset_size % segment_size;
+        self.offset_size = self.offset_size.div_ceil(ty.align_of()) * ty.align_of();
         if self.scope_stack.last().unwrap().contains_key(&t.s_value) {
             self.error_logger
                 .print_error_position(t.pos, "invalid redeclaration");
@@ -238,7 +248,13 @@ impl<'a> AstBuilderImpl<'a> {
             if self.attempt_reserved(")").is_none() {
                 loop {
                     let ty = self.expect_type();
-                    args.push(self.new_local_variable(ty));
+                    let (token, ty) = self.expect_ident_with_type(ty);
+                    let ty = if let Type::Arr(child, _) = ty {
+                        Type::Ptr(child)
+                    } else {
+                        ty
+                    };
+                    args.push(self.register_local_variable(token, ty));
                     if self.attempt_reserved(",").is_none() {
                         break;
                     }
@@ -266,6 +282,9 @@ impl<'a> AstBuilderImpl<'a> {
                 },
             );
             let body = self.consume_block();
+            if body.is_none() {
+                self.expect_reserved(";");
+            }
             self.scope_stack.pop();
             self.functions.insert(
                 t.s_value.clone(),
@@ -283,6 +302,9 @@ impl<'a> AstBuilderImpl<'a> {
             loop {
                 let (t, ty) = self.expect_ident_with_type(ty.clone());
                 let data = self.attempt_reserved("=").map(|_| self.global_data());
+                if let Some(data) = &data {
+                    self.validate_global_initializer(&ty, data, &t);
+                }
                 self.scope_stack
                     .last_mut()
                     .unwrap()
@@ -304,6 +326,37 @@ impl<'a> AstBuilderImpl<'a> {
     fn resolve_name(&mut self, s: &str) -> Option<&Identifier> {
         self.scope_stack.iter().rev().find_map(|map| map.get(s))
     }
+    fn validate_global_initializer(&self, ty: &Type, data: &GlobalVariableData, token: &Token) {
+        match (ty, data) {
+            (Type::Arr(child, size), GlobalVariableData::Arr(elements)) => {
+                if elements.len() > *size {
+                    self.error_logger
+                        .print_error_position(token.pos, "too many array initializer elements");
+                }
+                for element in elements {
+                    self.validate_global_initializer(child, element, token);
+                }
+            }
+            (Type::Arr(..), _) => self
+                .error_logger
+                .print_error_position(token.pos, "array initializer requires braces"),
+            (_, GlobalVariableData::Arr(elements)) => {
+                if elements.len() != 1 {
+                    self.error_logger
+                        .print_error_position(token.pos, "scalar initializer requires one element");
+                }
+                for element in elements {
+                    self.validate_global_initializer(ty, element, token);
+                }
+            }
+            (Type::I8 | Type::I32, GlobalVariableData::Elem(value)) if value.starts_with('@') => {
+                self.error_logger
+                    .print_error_position(token.pos, "integer initializer cannot be a string");
+            }
+            _ => {}
+        }
+    }
+
     fn global_data(&mut self) -> GlobalVariableData {
         if self.attempt_reserved("{").is_some() {
             let mut vec = Vec::new();
@@ -311,53 +364,55 @@ impl<'a> AstBuilderImpl<'a> {
                 loop {
                     vec.push(self.global_data());
                     if self.attempt_reserved(",").is_none() {
+                        self.expect_reserved("}");
+                        break;
+                    }
+                    if self.attempt_reserved("}").is_some() {
                         break;
                     }
                 }
-                self.expect_reserved("}");
             }
             GlobalVariableData::Arr(vec)
         } else if let Some(t) = self.attempt(TokenType::Str) {
             GlobalVariableData::Elem(self.new_string_literal(&t.s_value))
         } else {
-            let equality = self.equality();
-            GlobalVariableData::Elem(format!("{}", self.eval(&equality)))
+            let expression = self.ternary();
+            GlobalVariableData::Elem(format!("{}", self.eval(&expression)))
         }
     }
     fn eval(&mut self, node: &Node) -> i64 {
         match node.nt {
-            NodeType::Num => node.value.unwrap() as i64,
-            NodeType::Eq => {
-                (self.eval(node.lhs.as_ref().unwrap()) == self.eval(node.rhs.as_ref().unwrap()))
-                    as i64
+            NodeType::Num => return node.value.unwrap() as i64,
+            NodeType::LogicalAnd => {
+                return (self.eval(node.lhs.as_ref().unwrap()) != 0
+                    && self.eval(node.rhs.as_ref().unwrap()) != 0) as i64;
             }
-            NodeType::Ne => {
-                (self.eval(node.lhs.as_ref().unwrap()) != self.eval(node.rhs.as_ref().unwrap()))
-                    as i64
+            NodeType::LogicalOr => {
+                return (self.eval(node.lhs.as_ref().unwrap()) != 0
+                    || self.eval(node.rhs.as_ref().unwrap()) != 0) as i64;
             }
-            NodeType::Le => {
-                (self.eval(node.lhs.as_ref().unwrap()) <= self.eval(node.rhs.as_ref().unwrap()))
-                    as i64
+            NodeType::Conditional => {
+                return if self.eval(node.cond.as_ref().unwrap()) != 0 {
+                    self.eval(node.then.as_ref().unwrap())
+                } else {
+                    self.eval(node.els.as_ref().unwrap())
+                };
             }
-            NodeType::Lt => {
-                (self.eval(node.lhs.as_ref().unwrap()) < self.eval(node.rhs.as_ref().unwrap()))
-                    as i64
-            }
-            NodeType::Add => {
-                self.eval(node.lhs.as_ref().unwrap()) + self.eval(node.rhs.as_ref().unwrap())
-            }
-            NodeType::Sub => {
-                self.eval(node.lhs.as_ref().unwrap()) - self.eval(node.rhs.as_ref().unwrap())
-            }
-            NodeType::Mul => {
-                self.eval(node.lhs.as_ref().unwrap()) * self.eval(node.rhs.as_ref().unwrap())
-            }
-            NodeType::Div => {
-                self.eval(node.lhs.as_ref().unwrap()) / self.eval(node.rhs.as_ref().unwrap())
-            }
-            NodeType::Mod => {
-                self.eval(node.lhs.as_ref().unwrap()) % self.eval(node.rhs.as_ref().unwrap())
-            }
+            NodeType::BitNot => return !self.eval(node.lhs.as_ref().unwrap()),
+            NodeType::Eq
+            | NodeType::Ne
+            | NodeType::Le
+            | NodeType::Lt
+            | NodeType::Add
+            | NodeType::Sub
+            | NodeType::Mul
+            | NodeType::Div
+            | NodeType::Mod
+            | NodeType::BitAnd
+            | NodeType::BitOr
+            | NodeType::BitXor
+            | NodeType::BitLeft
+            | NodeType::BitRight => {}
             _ => {
                 self.error_logger.print_error_position(
                     node.token.as_ref().unwrap().pos,
@@ -366,8 +421,41 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             }
         }
+        let lhs = self.eval(node.lhs.as_ref().unwrap());
+        let rhs = self.eval(node.rhs.as_ref().unwrap());
+        let result = match node.nt {
+            NodeType::Eq => Some((lhs == rhs) as i64),
+            NodeType::Ne => Some((lhs != rhs) as i64),
+            NodeType::Le => Some((lhs <= rhs) as i64),
+            NodeType::Lt => Some((lhs < rhs) as i64),
+            NodeType::Add => lhs.checked_add(rhs),
+            NodeType::Sub => lhs.checked_sub(rhs),
+            NodeType::Mul => lhs.checked_mul(rhs),
+            NodeType::Div => lhs.checked_div(rhs),
+            NodeType::Mod => lhs.checked_rem(rhs),
+            NodeType::BitAnd => Some(lhs & rhs),
+            NodeType::BitOr => Some(lhs | rhs),
+            NodeType::BitXor => Some(lhs ^ rhs),
+            NodeType::BitLeft if (0..32).contains(&rhs) => lhs.checked_shl(rhs as u32),
+            NodeType::BitRight if (0..32).contains(&rhs) => lhs.checked_shr(rhs as u32),
+            _ => None,
+        };
+        result.unwrap_or_else(|| {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "invalid arithmetic in constant initializer",
+            );
+            unreachable!()
+        })
     }
     fn stmt(&mut self) -> Node {
+        if let Some(token) = self.attempt_reserved(";") {
+            return Node {
+                nt: NodeType::Block,
+                token: Some(token),
+                ..Node::default()
+            };
+        }
         if let Some(t) = self.attempt_reserved("if") {
             self.expect_reserved("(");
             let cond = self.expr();
@@ -407,8 +495,9 @@ impl<'a> AstBuilderImpl<'a> {
                 upd = Some(self.expr());
                 self.expect_reserved(")");
             }
+            let body = self.stmt();
             self.scope_stack.pop();
-            return Node::new_for_node(Some(t), ini, cond, upd, self.stmt());
+            return Node::new_for_node(Some(t), ini, cond, upd, body);
         }
         if let Some(node) = self.consume_block() {
             return node;
@@ -449,48 +538,86 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn array_element(node: &Node, index: usize, token: &Token) -> Node {
+        Node::new_with_op_and_lhs(
+            Some(token.clone()),
+            NodeType::Deref,
+            Node::new_with_op(
+                Some(token.clone()),
+                NodeType::Add,
+                node.clone(),
+                Node::new_with_num(Some(token.clone()), index),
+            ),
+        )
+    }
+
+    fn zero_initializer(node: &Node, token: &Token) -> Node {
+        if let Some(Type::Arr(_, size)) = node.resolve_type() {
+            Node {
+                nt: NodeType::Block,
+                token: Some(token.clone()),
+                children: (0..size)
+                    .map(|index| {
+                        Self::zero_initializer(&Self::array_element(node, index, token), token)
+                    })
+                    .collect(),
+                ..Node::default()
+            }
+        } else {
+            Node::new_with_op(
+                Some(token.clone()),
+                NodeType::Assign,
+                node.clone(),
+                Node::new_with_num(Some(token.clone()), 0),
+            )
+        }
+    }
+
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
-        if let Some(b_token) = self.attempt_reserved("{") {
-            let mut vec = Vec::new();
+        if let Some(token) = self.attempt_reserved("{") {
+            let Some(Type::Arr(_, size)) = node.resolve_type() else {
+                let initializer = self.local_variable_initialization(node, assign_token);
+                self.attempt_reserved(",");
+                self.expect_reserved("}");
+                return initializer;
+            };
+            let mut children = vec![];
             if self.attempt_reserved("}").is_none() {
-                let mut index = 0;
                 loop {
-                    let rhs = Node::new_with_num(None, index);
-                    let mut node = Node {
-                        token: Some(b_token.clone()),
-                        nt: NodeType::Add,
-                        lhs: Some(Box::new(node.clone())),
-                        rhs: Some(Box::new(rhs)),
-                        ..Node::default()
-                    };
-                    node = Node {
-                        token: Some(b_token.clone()),
-                        nt: NodeType::Deref,
-                        lhs: Some(Box::new(node)),
-                        ..Node::default()
-                    };
-                    vec.push(self.local_variable_initialization(&node, assign_token));
+                    if children.len() >= size {
+                        self.error_logger
+                            .print_error_position(token.pos, "too many array initializer elements");
+                    }
+                    let element = Self::array_element(node, children.len(), &token);
+                    children.push(self.local_variable_initialization(&element, assign_token));
                     if self.attempt_reserved(",").is_none() {
+                        self.expect_reserved("}");
                         break;
                     }
-                    index += 1;
+                    if self.attempt_reserved("}").is_some() {
+                        break;
+                    }
                 }
-                self.expect_reserved("}");
+            }
+            for index in children.len()..size {
+                children.push(Self::zero_initializer(
+                    &Self::array_element(node, index, &token),
+                    assign_token,
+                ));
             }
             Node {
                 token: Some(assign_token.clone()),
                 nt: NodeType::Block,
-                children: vec,
+                children,
                 ..Node::default()
             }
         } else {
-            Node {
-                token: Some(assign_token.clone()),
-                nt: NodeType::Assign,
-                lhs: Some(Box::new(node.clone())),
-                rhs: Some(Box::new(self.expr())),
-                ..Node::default()
-            }
+            Node::new_with_op(
+                Some(assign_token.clone()),
+                NodeType::Assign,
+                node.clone(),
+                self.expr(),
+            )
         }
     }
 
@@ -515,91 +642,92 @@ impl<'a> AstBuilderImpl<'a> {
     pub fn expr(&mut self) -> Node {
         self.assign()
     }
+    fn expect_assignable(&self, node: &Node) {
+        if !matches!(
+            node.nt,
+            NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref
+        ) || matches!(
+            node.resolve_type(),
+            Some(Type::Arr(..) | Type::Func(..)) | None
+        ) {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "expression is not assignable",
+            );
+        }
+    }
+
+    fn compound_assignment(
+        &mut self,
+        token: Token,
+        lhs: Node,
+        rhs: Node,
+        operation: NodeType,
+    ) -> Node {
+        self.expect_assignable(&lhs);
+        // Save the lvalue address so side effects in it occur exactly once.
+        let ty = Type::Ptr(Box::new(lhs.resolve_type().unwrap()));
+        self.offset_size =
+            (self.offset_size + ty.size_of()).div_ceil(ty.align_of()) * ty.align_of();
+        let temporary = Node {
+            nt: NodeType::LocalVar,
+            token: Some(token.clone()),
+            cty: Some(ty),
+            offset: Some(self.offset_size),
+            ..Node::default()
+        };
+        let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, lhs);
+        let save_address = Node::new_with_op(
+            Some(token.clone()),
+            NodeType::Assign,
+            temporary.clone(),
+            address,
+        );
+        let target = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, temporary);
+        let value = Node::new_with_op(Some(token.clone()), operation, target.clone(), rhs);
+        let update = Node::new_with_op(Some(token.clone()), NodeType::Assign, target, value);
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children: vec![save_address, update],
+            ..Node::default()
+        }
+    }
+
     fn assign(&mut self) -> Node {
-        let mut node = self.ternary();
-        if let Some(t) = self.attempt_reserved("=") {
-            // left-associative => while, right-associative => recursive function
-            node = Node::new_with_op(Some(t), NodeType::Assign, node, self.assign())
-        } else if let Some(t) = self.attempt_reserved("+=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::Add, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("-=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::Sub, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("*=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::Mul, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("/=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::Div, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("%=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::Mod, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("<<=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::BitLeft, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved(">>=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::BitRight, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("&=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::BitAnd, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("^=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::BitXor, node, self.assign()),
-            )
-        } else if let Some(t) = self.attempt_reserved("|=") {
-            node = Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::BitOr, node, self.assign()),
-            )
+        let node = self.ternary();
+        if let Some(token) = self.attempt_reserved("=") {
+            self.expect_assignable(&node);
+            return Node::new_with_op(Some(token), NodeType::Assign, node, self.assign());
+        }
+        for (symbol, operation) in [
+            ("+=", NodeType::Add),
+            ("-=", NodeType::Sub),
+            ("*=", NodeType::Mul),
+            ("/=", NodeType::Div),
+            ("%=", NodeType::Mod),
+            ("<<=", NodeType::BitLeft),
+            (">>=", NodeType::BitRight),
+            ("&=", NodeType::BitAnd),
+            ("^=", NodeType::BitXor),
+            ("|=", NodeType::BitOr),
+        ] {
+            if let Some(token) = self.attempt_reserved(symbol) {
+                let rhs = self.assign();
+                return self.compound_assignment(token, node, rhs, operation);
+            }
         }
         node
     }
     fn ternary(&mut self) -> Node {
         let node = self.logical_or();
         if let Some(t) = self.attempt_reserved("?") {
-            let then = self.logical_or();
+            let then = self.expr();
             self.expect_reserved(":");
-            let els = self.logical_or();
-            return Node::new_if_node(Some(t), node, then, Some(els));
+            let els = self.ternary();
+            let mut conditional = Node::new_if_node(Some(t), node, then, Some(els));
+            conditional.nt = NodeType::Conditional;
+            return conditional;
         }
         node
     }
@@ -729,29 +857,33 @@ impl<'a> AstBuilderImpl<'a> {
             };
         }
         if self.attempt_reserved("+").is_some() {
+            return self.unary();
         } else if let Some(t) = self.attempt_reserved("-") {
             return Node::new_with_op(
                 Some(t.clone()),
                 NodeType::Sub,
                 Node::new_with_num(Some(t.clone()), 0),
-                self.prim(),
+                self.unary(),
             );
         }
-        if let Some(t) = self.attempt_reserved("&") {
-            return Node {
-                token: Some(t),
-                nt: NodeType::Addr,
-                lhs: Some(Box::new(self.unary())),
-                ..Node::default()
-            };
+        if let Some(token) = self.attempt_reserved("&") {
+            let operand = self.unary();
+            if !matches!(
+                operand.nt,
+                NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref
+            ) {
+                self.error_logger
+                    .print_error_position(token.pos, "expression is not addressable");
+            }
+            return Node::new_with_op_and_lhs(Some(token), NodeType::Addr, operand);
         }
-        if let Some(t) = self.attempt_reserved("*") {
-            return Node {
-                token: Some(t),
-                nt: NodeType::Deref,
-                lhs: Some(Box::new(self.unary())),
-                ..Node::default()
-            };
+        if let Some(token) = self.attempt_reserved("*") {
+            let operand = self.unary();
+            if operand.dest_type().is_none() {
+                self.error_logger
+                    .print_error_position(token.pos, "cannot dereference a non-pointer");
+            }
+            return Node::new_with_op_and_lhs(Some(token), NodeType::Deref, operand);
         }
         if let Some(t) = self.attempt_reserved("~") {
             return Node {
@@ -770,22 +902,22 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             };
         }
-        if let Some(t) = self.attempt_reserved("++") {
-            let node = self.unary();
-            return Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::Add, node, Node::new_with_num(None, 1)),
+        if let Some(token) = self.attempt_reserved("++") {
+            let operand = self.unary();
+            return self.compound_assignment(
+                token,
+                operand,
+                Node::new_with_num(None, 1),
+                NodeType::Add,
             );
         }
-        if let Some(t) = self.attempt_reserved("--") {
-            let node = self.unary();
-            return Node::new_with_op(
-                Some(t.clone()),
-                NodeType::Assign,
-                node.clone(),
-                Node::new_with_op(Some(t), NodeType::Sub, node, Node::new_with_num(None, 1)),
+        if let Some(token) = self.attempt_reserved("--") {
+            let operand = self.unary();
+            return self.compound_assignment(
+                token,
+                operand,
+                Node::new_with_num(None, 1),
+                NodeType::Sub,
             );
         }
         self.prim()
@@ -837,7 +969,9 @@ impl<'a> AstBuilderImpl<'a> {
                         ..Node::default()
                     },
                     Identifier::TypeDef(..) => {
-                        unimplemented!()
+                        self.error_logger
+                            .print_error_position(t.pos, "type name is not an expression");
+                        unreachable!()
                     }
                 }
             } else {
@@ -854,11 +988,14 @@ impl<'a> AstBuilderImpl<'a> {
             if self.attempt_reserved("(").is_some() {
                 // Call function
                 let t = node.token.clone().unwrap();
-                let return_type = if let Some(Type::Func(_, return_type)) = node.resolve_type() {
-                    *return_type.clone()
-                } else {
-                    unreachable!()
-                };
+                let (parameter_types, return_type) =
+                    if let Some(Type::Func(parameters, return_type)) = node.resolve_type() {
+                        (parameters, *return_type)
+                    } else {
+                        self.error_logger
+                            .print_error_position(t.pos, "called expression is not a function");
+                        unreachable!()
+                    };
                 let mut args: Vec<Node> = Vec::new();
                 if self.attempt_reserved(")").is_none() {
                     args.push(self.expr());
@@ -873,6 +1010,14 @@ impl<'a> AstBuilderImpl<'a> {
                     // conforming to cdecl
                     // arguments are pushed onto the stack, from right to left
                     args.reverse();
+                }
+                if args.len() < parameter_types.len()
+                    || (t.s_value != "printf" && args.len() != parameter_types.len())
+                {
+                    self.error_logger.print_error_position(
+                        t.pos,
+                        "argument count does not match function declaration",
+                    );
                 }
                 let s_value = t.s_value.clone();
                 node = Node {
@@ -895,9 +1040,11 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             } else if let Some(token) = self.attempt_reserved("++") {
                 // Suffix increment
+                self.expect_assignable(&node);
                 node = Node::new_with_op_and_lhs(Some(token), NodeType::SuffixIncr, node);
             } else if let Some(token) = self.attempt_reserved("--") {
                 // Suffix decrement
+                self.expect_assignable(&node);
                 node = Node::new_with_op_and_lhs(Some(token), NodeType::SuffixDecr, node);
             } else {
                 return node;
@@ -925,6 +1072,33 @@ mod tests {
     use crate::error::NopLogger;
 
     use super::*;
+
+    #[test]
+    fn malformed_programs_have_source_diagnostics() {
+        for (code, message) in [
+            ("int main() { return", "unexpected eof"),
+            ("int main() { int x; return x(); }", "not a function"),
+            ("int a[2] = {1, 2, 3};", "too many array initializer"),
+            ("int main() { return puts(); }", "argument count"),
+            ("int main() { 3 = 4; }", "not assignable"),
+            ("int main() { return *3; }", "non-pointer"),
+            ("int x = 1 / 0;", "invalid arithmetic"),
+        ] {
+            let tokens = crate::tokenizer::Tokenizer::tokenize(code, false).unwrap();
+            let logger = crate::error::ErrorPrinter::new(code);
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                AstBuilderImpl::new(&logger, &tokens).build(false);
+            }))
+            .unwrap_err();
+            let text = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap();
+            assert!(text.contains(message), "{}", text);
+            assert!(text.contains('^'), "{}", text);
+        }
+    }
 
     #[test]
     fn test_ast_builder() {

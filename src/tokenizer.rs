@@ -11,15 +11,53 @@ const RESERVED_SYMBOLS: [&str; 48] = [
     "\"", "!", "~", "?", ":", "<<=", ">>=", "&=", "^=", "|=", "++", "--", "#", "'",
 ];
 
-fn close_symbol(s: &str) -> Option<&str> {
-    match s {
-        "\"" => Some("\""),
-        "\'" => Some("\'"),
-        "//" => Some("\n"),
-        "/*" => Some("*/"),
-        "#" => Some("\n"),
-        _ => None,
+pub(crate) fn decode_string_literal(value: &str) -> Option<Vec<u8>> {
+    let mut bytes = value.bytes().peekable();
+    let mut decoded = vec![];
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' {
+            decoded.push(byte);
+            continue;
+        }
+        let escaped = bytes.next()?;
+        decoded.push(match escaped {
+            b'a' => 7,
+            b'b' => 8,
+            b'f' => 12,
+            b'n' => 10,
+            b'r' => 13,
+            b't' => 9,
+            b'v' => 11,
+            b'\\' | b'\'' | b'"' | b'?' => escaped,
+            b'0'..=b'7' => {
+                let mut value = (escaped - b'0') as u16;
+                for _ in 0..2 {
+                    if let Some(b'0'..=b'7') = bytes.peek() {
+                        value = value * 8 + (bytes.next()? - b'0') as u16;
+                    } else {
+                        break;
+                    }
+                }
+                u8::try_from(value).ok()?
+            }
+            b'x' => {
+                let mut value = 0u16;
+                let mut count = 0;
+                while bytes.peek().is_some_and(u8::is_ascii_hexdigit) {
+                    value = value
+                        .checked_mul(16)?
+                        .checked_add((bytes.next()? as char).to_digit(16)? as u16)?;
+                    count += 1;
+                }
+                if count == 0 {
+                    return None;
+                }
+                u8::try_from(value).ok()?
+            }
+            _ => return None,
+        });
     }
+    Some(decoded)
 }
 
 pub struct Tokenizer {}
@@ -50,147 +88,113 @@ impl Tokenizer {
         }
     }
     pub fn tokenize(code: &str, is_debug: bool) -> Result<Vec<Token>, error::SyntaxError> {
-        let mut tokens = Vec::<Token>::new();
-        let reserved_words = RESERVED_WORDS.into_iter().collect::<HashSet<&str>>();
+        let mut tokens = vec![];
+        let reserved_words = RESERVED_WORDS.into_iter().collect::<HashSet<_>>();
         let reserved_symbols = Trie::new(&RESERVED_SYMBOLS);
-        let chars: Vec<(usize, char)> = code.char_indices().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            match chars[i].1 {
-                ' ' | '\t' | '\n' => {
-                    i += 1;
-                }
-                '0'..='9' => {
-                    let pos = chars[i].0;
-                    let mut temp = chars[i].1 as usize - '0' as usize;
-                    i += 1;
-                    while i < chars.len() {
-                        match chars[i].1 {
-                            '0'..='9' => {
-                                temp = temp * 10 + chars[i].1 as usize - '0' as usize;
-                                i += 1;
-                            }
-                            _ => {
-                                break;
-                            }
-                        }
+        let bytes = code.as_bytes();
+        let mut pos = 0;
+        while pos < bytes.len() {
+            let start = pos;
+            match bytes[pos] {
+                byte if byte.is_ascii_whitespace() => pos += 1,
+                b'0'..=b'9' => {
+                    let mut value = 0usize;
+                    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+                        value = value
+                            .checked_mul(10)
+                            .and_then(|value| value.checked_add((bytes[pos] - b'0') as usize))
+                            .ok_or_else(|| {
+                                error::SyntaxError::new(start, "integer literal is too large")
+                            })?;
+                        pos += 1;
                     }
-                    tokens.push(Self::num_token(pos, temp));
+                    tokens.push(Self::num_token(start, value));
                 }
-                'a'..='z' | 'A'..='Z' | '_' => {
-                    let pos = chars[i].0;
-                    i += 1;
-                    while i < chars.len() {
-                        match chars[i].1 {
-                            'a'..='z' | 'A'..='Z' | '_' | '0'..='9' => {
-                                i += 1;
-                            }
-                            _ => {
-                                break;
-                            }
-                        }
-                    }
-                    if reserved_words
-                        .contains(&&code[pos..chars[i - 1].0 + chars[i - 1].1.len_utf8()])
-                        || TYPES.contains(&&code[pos..chars[i - 1].0 + chars[i - 1].1.len_utf8()])
+                b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
+                    pos += 1;
+                    while pos < bytes.len()
+                        && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_')
                     {
-                        tokens.push(Self::reserved_token(
-                            pos,
-                            String::from(&code[pos..chars[i - 1].0 + chars[i - 1].1.len_utf8()]),
-                        ));
+                        pos += 1;
+                    }
+                    let value = &code[start..pos];
+                    tokens.push(
+                        if reserved_words.contains(value) || TYPES.contains(&value) {
+                            Self::reserved_token(start, value.to_string())
+                        } else {
+                            Self::ident_token(start, value.to_string())
+                        },
+                    );
+                }
+                b'#' => {
+                    while pos < bytes.len() && bytes[pos] != b'\n' {
+                        pos += 1;
+                    }
+                }
+                b'/' if code[pos..].starts_with("//") => {
+                    while pos < bytes.len() && bytes[pos] != b'\n' {
+                        pos += 1;
+                    }
+                }
+                b'/' if code[pos..].starts_with("/*") => {
+                    let end = code[pos + 2..]
+                        .find("*/")
+                        .ok_or_else(|| error::SyntaxError::new(start, "unterminated comment"))?;
+                    pos += end + 4;
+                }
+                b'"' | b'\'' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < bytes.len() && bytes[pos] != quote {
+                        if bytes[pos] == b'\n' || bytes[pos] == b'\r' {
+                            return Err(error::SyntaxError::new(start, "newline in literal"));
+                        }
+                        if bytes[pos] == b'\\' {
+                            pos += 1;
+                        }
+                        if pos < bytes.len() {
+                            pos += 1;
+                        }
+                    }
+                    if pos >= bytes.len() {
+                        return Err(error::SyntaxError::new(start, "unterminated literal"));
+                    }
+                    let value = &code[start + 1..pos];
+                    let decoded = decode_string_literal(value)
+                        .ok_or_else(|| error::SyntaxError::new(start, "invalid escape sequence"))?;
+                    pos += 1;
+                    if quote == b'\'' {
+                        if decoded.len() != 1 {
+                            return Err(error::SyntaxError::new(
+                                start,
+                                "character constant must contain one byte",
+                            ));
+                        }
+                        tokens.push(Self::num_token(start, decoded[0] as usize));
                     } else {
-                        tokens.push(Self::ident_token(
-                            pos,
-                            String::from(&code[pos..chars[i - 1].0 + chars[i - 1].1.len_utf8()]),
-                        ));
+                        tokens.push(Token {
+                            tt: TokenType::Str,
+                            pos: start,
+                            s_value: value.to_string(),
+                            ..Token::default()
+                        });
                     }
                 }
                 _ => {
-                    let pos = chars[i].0;
-                    let match_size = reserved_symbols.matched_length(&code[pos..]);
-                    if match_size != 0 {
-                        i += match_size;
-                        match close_symbol(&code[pos..pos + match_size]) {
-                            Some(close_sym) => {
-                                loop {
-                                    if i >= chars.len() {
-                                        match &code[pos..pos + match_size] {
-                                            "//" | "#" => break,
-                                            _ => {
-                                                return Err(error::SyntaxError::new(
-                                                    i,
-                                                    "unexpected EOF",
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    if code[chars[i].0..].starts_with(close_sym) {
-                                        i += close_sym.len();
-                                        break;
-                                    }
-                                    if code[chars[i].0..].starts_with('\\') {
-                                        i += 2;
-                                    } else {
-                                        i += 1;
-                                    }
-                                }
-                                if &code[pos..pos + match_size] == "\"" {
-                                    tokens.push(Token {
-                                        tt: TokenType::Str,
-                                        pos,
-                                        s_value: String::from(&code[pos + 1..i - 1]), // symbol is ascii
-                                        ..Token::default()
-                                    })
-                                }
-                                if &code[pos..pos + match_size] == "'" {
-                                    if i - pos == 2 {
-                                        return Err(error::SyntaxError::new(
-                                            pos + 1,
-                                            "unexpected character",
-                                        ));
-                                    }
-                                    if i - pos > 3 {
-                                        let escaped_character = match &code[pos + 1..pos + 3] {
-                                            "\\\\" => '\\',
-                                            "\\'" => '\'',
-                                            "\\t" => '\t',
-                                            "\\n" => '\n',
-                                            _ => {
-                                                return Err(error::SyntaxError::new(
-                                                    pos,
-                                                    "multi-character character constant",
-                                                ));
-                                            }
-                                        };
-                                        tokens.push(Token {
-                                            tt: TokenType::Num,
-                                            pos,
-                                            i_value: escaped_character as usize,
-                                            ..Token::default()
-                                        })
-                                    } else {
-                                        tokens.push(Token {
-                                            tt: TokenType::Num,
-                                            pos,
-                                            i_value: code.as_bytes()[pos + 1..pos + 2][0] as usize,
-                                            ..Token::default()
-                                        })
-                                    }
-                                }
-                            }
-                            None => {
-                                tokens.push(Self::reserved_token(
-                                    pos,
-                                    String::from(&code[pos..pos + match_size]),
-                                ));
-                            }
-                        }
-                    } else if i < chars.len() {
-                        return Err(error::SyntaxError::new(pos, "unexpected character"));
+                    let size = reserved_symbols.matched_length(&code[pos..]);
+                    if size == 0 {
+                        return Err(error::SyntaxError::new(start, "unexpected character"));
                     }
+                    pos += size;
+                    tokens.push(Self::reserved_token(start, code[start..pos].to_string()));
                 }
             }
         }
+        tokens.push(Token {
+            tt: TokenType::EOF,
+            pos: code.len(),
+            ..Token::default()
+        });
         if is_debug {
             Self::print_tokens(&tokens);
         }
@@ -264,7 +268,42 @@ mod tests {
                 i_value: 0,
             },
         ];
+        let mut expected = expected;
+        expected.push(Token {
+            tt: TokenType::EOF,
+            pos: code.len(),
+            ..Token::default()
+        });
         assert_eq!(Tokenizer::tokenize(code, false).unwrap(), expected);
+    }
+
+    #[test]
+    fn literals_and_comments_preserve_byte_positions() {
+        let code = "/* 日本語 \\ */ \"日本語\\t\"; // end";
+        let tokens = Tokenizer::tokenize(code, false).unwrap();
+        assert_eq!(tokens[0].pos, code.find('"').unwrap());
+        assert_eq!(tokens[0].s_value, "日本語\\t");
+        assert_eq!(tokens.last().unwrap().tt, TokenType::EOF);
+        assert_eq!(tokens.last().unwrap().pos, code.len());
+        assert_eq!(
+            decode_string_literal("\\x41\\101\\0").unwrap(),
+            vec![65, 65, 0]
+        );
+    }
+
+    #[test]
+    fn invalid_literals_return_syntax_errors() {
+        for code in [
+            "\"日本語",
+            "\"abc\\",
+            "/* unfinished",
+            "''",
+            "'ab'",
+            "\"\\q\"",
+            "99999999999999999999999999",
+        ] {
+            assert!(Tokenizer::tokenize(code, false).is_err(), "{}", code);
+        }
     }
 
     #[test]
