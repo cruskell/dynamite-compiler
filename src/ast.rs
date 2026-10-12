@@ -1964,6 +1964,16 @@ impl<'a> AstBuilderImpl<'a> {
             }
         }
     }
+    fn initializer_expressions(node: Node, expressions: &mut Vec<Node>) {
+        if matches!(node.nt, NodeType::Block | NodeType::DefVar) {
+            for child in node.children {
+                Self::initializer_expressions(child, expressions);
+            }
+        } else {
+            expressions.push(node);
+        }
+    }
+
     fn unary(&mut self) -> Node {
         let saved = self.cur;
         if let Some(token) = self.attempt_reserved("(") {
@@ -1989,11 +1999,14 @@ impl<'a> AstBuilderImpl<'a> {
                     let literal = if self.return_type.is_some() {
                         let object = self.register_local_variable(name, ty);
                         let initializer = self.local_variable_initialization(&object, &token);
+                        let mut children = vec![];
+                        Self::initializer_expressions(initializer, &mut children);
+                        children.push(object);
                         Node {
                             nt: NodeType::Sequence,
                             token: Some(token.clone()),
                             compound_literal: true,
-                            children: vec![initializer, object],
+                            children,
                             ..Node::default()
                         }
                     } else {
