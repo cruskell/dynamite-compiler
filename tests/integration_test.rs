@@ -593,12 +593,12 @@ fn it_supports_storage_classes(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix([
     "union U{int x;char bytes[4];};int main(){union U u={258};return u.bytes[0]+u.bytes[1]-3;}",
     "union U{int x;char bytes[4];};union U u={258};int main(){return u.bytes[0]+u.bytes[1]-3;}",
     "union U{char a[9];int x;};struct S{char c;union U u;char d;};int main(){return sizeof(union U)+sizeof(struct S)-32;}",
     "int x=7;union U{int *p;char bytes[8];};union U u={&x};int main(){return *u.p-7;}",
 ], ["asm", "llvm"])]
 fn it_supports_unions(code: &str, output_option: &str) {
-
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
