@@ -1,10 +1,11 @@
-use crate::ctype::Type;
+use crate::ctype::{StructDefinition, StructMember, StructType, Type};
 use crate::error;
 use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use crate::token::{Token, TokenType};
 use std::collections::HashMap;
+use std::{cell::RefCell, rc::Rc};
 
 type Parameters = Vec<(Option<Token>, Type)>;
 
@@ -49,6 +50,7 @@ pub struct AstBuilderImpl<'a> {
     loop_stack: Vec<usize>,
     switch_stack: Vec<Vec<Node>>,
     return_type: Option<Type>,
+    struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
     pub global_variables: HashMap<String, GlobalVariable>,
@@ -131,6 +133,7 @@ impl<'a> AstBuilderImpl<'a> {
             loop_stack: vec![],
             switch_stack: vec![],
             return_type: None,
+            struct_definitions: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
             global_variables: HashMap::new(),
@@ -388,6 +391,9 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn attempt_type(&mut self) -> Option<Type> {
+        if let Some(token) = self.attempt_reserved("struct") {
+            return Some(self.struct_type(token));
+        }
         for (name, ty) in [("int", Type::I32), ("char", Type::I8), ("void", Type::Void)] {
             if self.attempt_reserved(name).is_some() {
                 return Some(ty);
@@ -403,10 +409,96 @@ impl<'a> AstBuilderImpl<'a> {
         }
         None
     }
+    fn struct_type(&mut self, token: Token) -> Type {
+        let name = self.attempt_ident();
+        let key = format!(
+            ".struct.{}",
+            name.as_ref()
+                .map(|name| name.s_value.clone())
+                .unwrap_or_else(|| format!("anonymous.{}", token.pos))
+        );
+        let defining = self.tokens[self.cur].s_value == "{";
+        let existing = if defining {
+            self.scope_stack.last().unwrap().get(&key)
+        } else {
+            self.scope_stack
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(&key))
+        };
+        let ty = if let Some(Identifier::TypeDef(Type::Struct(ty))) = existing {
+            ty.clone()
+        } else {
+            if name.is_none() && !defining {
+                self.error_logger
+                    .print_error_position(token.pos, "struct requires a tag or definition");
+            }
+            let (ty, definition) = StructType::new(self.struct_definitions.len());
+            self.struct_definitions.push(definition);
+            self.scope_stack
+                .last_mut()
+                .unwrap()
+                .insert(key, Identifier::TypeDef(Type::Struct(ty.clone())));
+            ty
+        };
+        if self.attempt_reserved("{").is_some() {
+            if ty.definition().borrow().complete {
+                self.error_logger
+                    .print_error_position(token.pos, "struct tag is already defined");
+            }
+            let mut members: Vec<StructMember> = vec![];
+            let mut size = 0usize;
+            let mut align = 1;
+            while self.attempt_reserved("}").is_none() {
+                let base = self.expect_type();
+                loop {
+                    let (name, member_type) = self.expect_ident_with_type(base.clone());
+                    self.expect_object_type(&member_type, &name);
+                    if member_type.size_of() == 0 {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "member requires a complete object type",
+                        );
+                    }
+                    if members.iter().any(|member| member.name == name.s_value) {
+                        self.error_logger
+                            .print_error_position(name.pos, "duplicate struct member");
+                    }
+                    size = size.div_ceil(member_type.align_of()) * member_type.align_of();
+                    align = align.max(member_type.align_of());
+                    members.push(StructMember {
+                        name: name.s_value,
+                        ty: member_type.clone(),
+                        offset: size,
+                    });
+                    size += member_type.size_of();
+                    if self.attempt_reserved(",").is_none() {
+                        break;
+                    }
+                }
+                self.expect_reserved(";");
+            }
+            if members.is_empty() {
+                self.error_logger
+                    .print_error_position(token.pos, "struct requires at least one member");
+            }
+            *ty.definition().borrow_mut() = StructDefinition {
+                members,
+                size: size.div_ceil(align) * align,
+                align,
+                complete: true,
+            };
+        }
+        Type::Struct(ty)
+    }
+
     fn expect_object_type(&self, ty: &Type, token: &Token) {
-        if matches!(ty, Type::Void) || matches!(ty, Type::Arr(child, _) if **child == Type::Void) {
+        if ty.size_of() == 0
+            || matches!(ty, Type::Void)
+            || matches!(ty, Type::Arr(child, _) if **child == Type::Void)
+        {
             self.error_logger
-                .print_error_position(token.pos, "object cannot have void type");
+                .print_error_position(token.pos, "object requires a complete non-void type");
         }
     }
     fn expect_type(&mut self) -> Type {
@@ -448,6 +540,9 @@ impl<'a> AstBuilderImpl<'a> {
             return;
         }
         let base = self.expect_type();
+        if self.attempt_reserved(";").is_some() {
+            return;
+        }
         loop {
             let (name, ty, parameters) = self.declarator().resolve(base.clone());
             let token = name.unwrap_or_else(|| {
@@ -484,7 +579,16 @@ impl<'a> AstBuilderImpl<'a> {
                         token: Some(token.clone()),
                         ..Func::default()
                     });
-                self.return_type = Some(ty.function_signature().unwrap().1);
+                let (parameters, result, _) = ty.function_signature().unwrap();
+                if matches!(result, Type::Struct(_))
+                    || parameters.iter().any(|ty| matches!(ty, Type::Struct(_)))
+                {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "struct function arguments and results must use pointers",
+                    );
+                }
+                self.return_type = Some(result);
                 let body = self.consume_block();
                 self.return_type = None;
                 self.scope_stack.pop();
@@ -538,6 +642,20 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn validate_global_initializer(&self, ty: &Type, data: &GlobalVariableData, token: &Token) {
         match (ty, data) {
+            (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
+                let members = ty.members();
+                if elements.len() > members.len() {
+                    self.error_logger
+                        .print_error_position(token.pos, "too many struct initializer elements");
+                }
+                for (member, element) in members.iter().zip(elements) {
+                    self.validate_global_initializer(&member.ty, element, token);
+                }
+            }
+            (Type::Struct(_), _) => {
+                self.error_logger
+                    .print_error_position(token.pos, "global struct initializer requires braces");
+            }
             (Type::Arr(child, size), GlobalVariableData::Arr(elements)) => {
                 if elements.len() > *size {
                     self.error_logger
@@ -896,7 +1014,14 @@ impl<'a> AstBuilderImpl<'a> {
             return node;
         }
         let node = if let Some(ty) = self.attempt_type() {
-            self.local_variable_definition(ty)
+            if self.tokens[self.cur].s_value == ";" {
+                Node {
+                    nt: NodeType::Block,
+                    ..Node::default()
+                }
+            } else {
+                self.local_variable_definition(ty)
+            }
         } else if let Some(t) = self.attempt_reserved("continue") {
             let target = self.loop_stack.last().copied().unwrap_or_else(|| {
                 self.error_logger
@@ -963,6 +1088,48 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn member_node(node: Node, member: &StructMember, token: &Token) -> Node {
+        let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, node);
+        let bytes = Node {
+            nt: NodeType::Cast,
+            token: Some(token.clone()),
+            cty: Some(Type::Ptr(Box::new(Type::I8))),
+            lhs: Some(Box::new(address)),
+            ..Node::default()
+        };
+        let offset = Node::new_with_op(
+            Some(token.clone()),
+            NodeType::Add,
+            bytes,
+            Node::new_with_num(Some(token.clone()), member.offset),
+        );
+        let pointer = Node {
+            nt: NodeType::Cast,
+            token: Some(token.clone()),
+            cty: Some(Type::Ptr(Box::new(member.ty.clone()))),
+            lhs: Some(Box::new(offset)),
+            ..Node::default()
+        };
+        Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, pointer)
+    }
+
+    fn aggregate_elements(node: &Node, token: &Token) -> Option<Vec<Node>> {
+        match node.resolve_type()? {
+            Type::Arr(_, size) => Some(
+                (0..size)
+                    .map(|index| Self::array_element(node, index, token))
+                    .collect(),
+            ),
+            Type::Struct(ty) => Some(
+                ty.members()
+                    .iter()
+                    .map(|member| Self::member_node(node.clone(), member, token))
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
     fn array_element(node: &Node, index: usize, token: &Token) -> Node {
         Node::new_with_op_and_lhs(
             Some(token.clone()),
@@ -977,14 +1144,13 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn zero_initializer(node: &Node, token: &Token) -> Node {
-        if let Some(Type::Arr(_, size)) = node.resolve_type() {
+        if let Some(elements) = Self::aggregate_elements(node, token) {
             Node {
                 nt: NodeType::Block,
                 token: Some(token.clone()),
-                children: (0..size)
-                    .map(|index| {
-                        Self::zero_initializer(&Self::array_element(node, index, token), token)
-                    })
+                children: elements
+                    .iter()
+                    .map(|element| Self::zero_initializer(element, token))
                     .collect(),
                 ..Node::default()
             }
@@ -1000,21 +1166,26 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
         if let Some(token) = self.attempt_reserved("{") {
-            let Some(Type::Arr(_, size)) = node.resolve_type() else {
+            let elements = Self::aggregate_elements(node, &token);
+            if elements.is_none() {
                 let initializer = self.local_variable_initialization(node, assign_token);
                 self.attempt_reserved(",");
                 self.expect_reserved("}");
                 return initializer;
-            };
+            }
+            let elements = elements.unwrap();
             let mut children = vec![];
             if self.attempt_reserved("}").is_none() {
                 loop {
-                    if children.len() >= size {
-                        self.error_logger
-                            .print_error_position(token.pos, "too many array initializer elements");
+                    if children.len() >= elements.len() {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "too many aggregate initializer elements",
+                        );
                     }
-                    let element = Self::array_element(node, children.len(), &token);
-                    children.push(self.local_variable_initialization(&element, assign_token));
+                    children.push(
+                        self.local_variable_initialization(&elements[children.len()], assign_token),
+                    );
                     if self.attempt_reserved(",").is_none() {
                         self.expect_reserved("}");
                         break;
@@ -1024,11 +1195,8 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                 }
             }
-            for index in children.len()..size {
-                children.push(Self::zero_initializer(
-                    &Self::array_element(node, index, &token),
-                    assign_token,
-                ));
+            for element in &elements[children.len()..] {
+                children.push(Self::zero_initializer(element, assign_token));
             }
             Node {
                 token: Some(assign_token.clone()),
@@ -1037,12 +1205,76 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else {
-            Node::new_with_op(
-                Some(assign_token.clone()),
+            let rhs = self.assign();
+            if matches!(node.resolve_type(), Some(Type::Struct(_))) {
+                self.struct_assignment(node.clone(), rhs, assign_token.clone())
+            } else {
+                Node::new_with_op(
+                    Some(assign_token.clone()),
+                    NodeType::Assign,
+                    node.clone(),
+                    rhs,
+                )
+            }
+        }
+    }
+
+    fn struct_assignment(&mut self, lhs: Node, rhs: Node, token: Token) -> Node {
+        let ty = lhs.resolve_type().unwrap();
+        if rhs.resolve_type() != Some(ty.clone()) {
+            self.error_logger
+                .print_error_position(token.pos, "incompatible struct assignment");
+        }
+        let mut children = vec![];
+        let mut addresses = vec![];
+        for operand in [lhs, rhs] {
+            self.offset_size = (self.offset_size + 8).div_ceil(8) * 8;
+            let temporary = Node {
+                nt: NodeType::LocalVar,
+                token: Some(token.clone()),
+                cty: Some(Type::Ptr(Box::new(ty.clone()))),
+                offset: Some(self.offset_size),
+                ..Node::default()
+            };
+            children.push(Node::new_with_op(
+                Some(token.clone()),
                 NodeType::Assign,
-                node.clone(),
-                self.assign(),
-            )
+                temporary.clone(),
+                Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, operand),
+            ));
+            addresses.push(temporary);
+        }
+        for index in 0..ty.size_of() {
+            let bytes = addresses
+                .iter()
+                .map(|address| {
+                    let pointer = Node {
+                        nt: NodeType::Cast,
+                        token: Some(token.clone()),
+                        cty: Some(Type::Ptr(Box::new(Type::I8))),
+                        lhs: Some(Box::new(address.clone())),
+                        ..Node::default()
+                    };
+                    Self::array_element(&pointer, index, &token)
+                })
+                .collect::<Vec<_>>();
+            children.push(Node::new_with_op(
+                Some(token.clone()),
+                NodeType::Assign,
+                bytes[0].clone(),
+                bytes[1].clone(),
+            ));
+        }
+        children.push(Node::new_with_op_and_lhs(
+            Some(token.clone()),
+            NodeType::Deref,
+            addresses.remove(0),
+        ));
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children,
+            ..Node::default()
         }
     }
 
@@ -1136,7 +1368,11 @@ impl<'a> AstBuilderImpl<'a> {
         let node = self.ternary();
         if let Some(token) = self.attempt_reserved("=") {
             self.expect_assignable(&node);
-            return Node::new_with_op(Some(token), NodeType::Assign, node, self.assign());
+            let rhs = self.assign();
+            if matches!(node.resolve_type(), Some(Type::Struct(_))) {
+                return self.struct_assignment(node, rhs, token);
+            }
+            return Node::new_with_op(Some(token), NodeType::Assign, node, rhs);
         }
         for (symbol, operation) in [
             ("+=", NodeType::Add),
@@ -1499,6 +1735,16 @@ impl<'a> AstBuilderImpl<'a> {
                             .print_error_position(t.pos, "called expression is not a function");
                         unreachable!()
                     });
+                if matches!(return_type, Type::Struct(_))
+                    || parameter_types
+                        .iter()
+                        .any(|ty| matches!(ty, Type::Struct(_)))
+                {
+                    self.error_logger.print_error_position(
+                        t.pos,
+                        "struct function arguments and results must use pointers",
+                    );
+                }
                 let mut args: Vec<Node> = Vec::new();
                 if self.attempt_reserved(")").is_none() {
                     args.push(self.assign());
@@ -1540,6 +1786,33 @@ impl<'a> AstBuilderImpl<'a> {
                     lhs: callee,
                     ..Node::default()
                 }
+            } else if let Some(token) = self
+                .attempt_reserved(".")
+                .or_else(|| self.attempt_reserved("->"))
+            {
+                if token.s_value == "->" {
+                    node = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, node);
+                }
+                let Some(Type::Struct(ty)) = node.resolve_type() else {
+                    self.error_logger
+                        .print_error_position(token.pos, "member access requires a struct");
+                    unreachable!()
+                };
+                let name = self.attempt_ident().unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(self.tokens[self.cur].pos, "member name expected");
+                    unreachable!()
+                });
+                let member = ty
+                    .members()
+                    .into_iter()
+                    .find(|member| member.name == name.s_value)
+                    .unwrap_or_else(|| {
+                        self.error_logger
+                            .print_error_position(name.pos, "unknown struct member");
+                        unreachable!()
+                    });
+                node = Self::member_node(node, &member, &token);
             } else if let Some(b_token) = self.attempt_reserved("[") {
                 // Subscript array
                 node = Node::new_with_op(Some(b_token.clone()), NodeType::Add, node, self.expr());
@@ -1633,6 +1906,46 @@ mod tests {
                 .or_else(|| panic.downcast_ref::<&str>().copied())
                 .unwrap();
             assert!(text.contains('^'), "{text}");
+        }
+    }
+
+    #[test]
+    fn invalid_structs_have_source_diagnostics() {
+        for (code, message) in [
+            ("struct S { int x; int x; };", "duplicate struct member"),
+            (
+                "struct S; struct S x;",
+                "object requires a complete non-void type",
+            ),
+            (
+                "struct S { struct S x; };",
+                "object requires a complete non-void type",
+            ),
+            (
+                "struct S { int x; }; int main() { struct S s; return s.missing; }",
+                "unknown struct member",
+            ),
+            (
+                "struct S { int x; }; struct S s = {1,2};",
+                "too many struct initializer",
+            ),
+            (
+                "struct S { int x; }; int f(struct S s) { return 0; }",
+                "struct function arguments",
+            ),
+        ] {
+            let tokens = crate::tokenizer::Tokenizer::tokenize(code, false).unwrap();
+            let logger = crate::error::ErrorPrinter::new(code);
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                AstBuilderImpl::new(&logger, &tokens).build(false);
+            }))
+            .unwrap_err();
+            let text = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap();
+            assert!(text.contains(message) && text.contains('^'), "{text}");
         }
     }
 

@@ -119,7 +119,7 @@ impl<'a> AsmGenerator<'a> {
         data: Option<&GlobalVariableData>,
         target_os: Os,
     ) -> Assembly {
-        let data = if !matches!(ty, Type::Arr(..)) {
+        let data = if !matches!(ty, Type::Arr(..) | Type::Struct(_)) {
             let mut value = data;
             while let Some(GlobalVariableData::Arr(elements)) = value {
                 value = elements.first();
@@ -129,6 +129,30 @@ impl<'a> AsmGenerator<'a> {
             data
         };
         match ty {
+            Type::Struct(struct_type) => {
+                let elements = if let Some(GlobalVariableData::Arr(elements)) = data {
+                    Some(elements)
+                } else {
+                    None
+                };
+                let mut lines = vec![];
+                let mut end = 0;
+                for (i, member) in struct_type.members().iter().enumerate() {
+                    if member.offset > end {
+                        lines.push(format!("  .zero {}", member.offset - end).into());
+                    }
+                    lines.push(Self::gen_initializer_element(
+                        &member.ty,
+                        elements.and_then(|elements| elements.get(i)),
+                        target_os,
+                    ));
+                    end = member.offset + member.ty.size_of();
+                }
+                if ty.size_of() > end {
+                    lines.push(format!("  .zero {}", ty.size_of() - end).into());
+                }
+                lines.into()
+            }
             Type::Arr(children_ty, size) => {
                 if let Some(GlobalVariableData::Arr(v)) = data {
                     vec![
@@ -493,8 +517,9 @@ impl<'a> AsmGenerator<'a> {
             NodeType::LocalVar | NodeType::GlobalVar => {
                 return vec![
                     self.gen_addr(node, offset, breakable_branch_num),
-                    if let Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) =
-                        node.resolve_type()
+                    if let Some(
+                        Type::Arr(..) | Type::Struct(_) | Type::Func(..) | Type::VariadicFunc(..),
+                    ) = node.resolve_type()
                     {
                         vec![].into()
                     } else {
@@ -514,8 +539,9 @@ impl<'a> AsmGenerator<'a> {
             NodeType::Deref => {
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
-                    if let Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) =
-                        node.lhs.as_ref().unwrap().dest_type()
+                    if let Some(
+                        Type::Arr(..) | Type::Struct(_) | Type::Func(..) | Type::VariadicFunc(..),
+                    ) = node.lhs.as_ref().unwrap().dest_type()
                     {
                         vec![].into()
                     } else {
@@ -722,6 +748,18 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, offset: usize, branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::Conditional => self.gen_node(node, offset, branch_num),
+
+            NodeType::Sequence => {
+                let mut lines = vec![];
+                for child in &node.children[..node.children.len() - 1] {
+                    lines.push(self.gen_node(child, offset, branch_num));
+                    lines.push(Assembly::inst1(POP, RAX));
+                }
+                lines.push(self.gen_addr(node.children.last().unwrap(), offset, branch_num));
+                lines.into()
+            }
+
             NodeType::GlobalVar => vec![
                 if !node.dest.is_empty() {
                     Assembly::inst2(LEA, RAX, PtrAdd(RIP, node.dest.clone().replace('@', "L_")))

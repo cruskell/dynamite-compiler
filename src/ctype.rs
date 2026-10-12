@@ -1,6 +1,65 @@
+use std::{
+    cell::RefCell,
+    fmt,
+    rc::{Rc, Weak},
+};
+
+#[derive(Clone)]
+pub struct StructType {
+    pub id: usize,
+    definition: Weak<RefCell<StructDefinition>>,
+}
+
+#[derive(Default)]
+pub struct StructDefinition {
+    pub members: Vec<StructMember>,
+    pub size: usize,
+    pub align: usize,
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructMember {
+    pub name: String,
+    pub ty: Type,
+    pub offset: usize,
+}
+
+impl StructType {
+    pub fn new(id: usize) -> (Self, Rc<RefCell<StructDefinition>>) {
+        let definition = Rc::new(RefCell::new(StructDefinition::default()));
+        (
+            Self {
+                id,
+                definition: Rc::downgrade(&definition),
+            },
+            definition,
+        )
+    }
+    pub fn definition(&self) -> Rc<RefCell<StructDefinition>> {
+        self.definition
+            .upgrade()
+            .expect("struct definitions outlive the compiler pipeline")
+    }
+    pub fn members(&self) -> Vec<StructMember> {
+        self.definition().borrow().members.clone()
+    }
+}
+impl PartialEq for StructType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl fmt::Debug for StructType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Struct({})", self.id)
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
     Void,
+    Struct(StructType),
     I8,
     I32,
     Ptr(Box<Type>),
@@ -28,6 +87,7 @@ impl Type {
     pub fn size_of(&self) -> usize {
         match self {
             Type::Void => 0,
+            Type::Struct(ty) => ty.definition().borrow().size,
             Type::I8 => 1,
             Type::I32 => 4,
             Type::Ptr(_) => 8,
@@ -38,6 +98,7 @@ impl Type {
     pub fn align_of(&self) -> usize {
         match self {
             Self::Void => 1,
+            Self::Struct(ty) => ty.definition().borrow().align.max(1),
             Self::Arr(child, _) => child.align_of(),
             _ => self.size_of(),
         }

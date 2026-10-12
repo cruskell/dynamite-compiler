@@ -112,11 +112,7 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn align(ty: &Type) -> usize {
-        match ty {
-            Type::Ptr(_) => 8,
-            Type::Arr(child_ty, _) => Self::align(child_ty),
-            _ => ty.size_of(),
-        }
+        ty.align_of()
     }
 
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> String {
@@ -131,6 +127,14 @@ impl<'a> IrGenerator<'a> {
     fn gen_type(ty: Type) -> String {
         match ty {
             Type::Void => "void".to_string(),
+            Type::Struct(ty) => format!(
+                "{{ {} }}",
+                ty.members()
+                    .iter()
+                    .map(|member| Self::gen_type(member.ty.clone()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Type::I8 => "i8".to_string(),
             Type::I32 => "i32".to_string(),
             Type::Ptr(_) => "ptr".to_string(),
@@ -159,7 +163,7 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn gen_initializer_element(ty: &Type, data: Option<&GlobalVariableData>) -> String {
-        let data = if !matches!(ty, Type::Arr(..)) {
+        let data = if !matches!(ty, Type::Arr(..) | Type::Struct(_)) {
             let mut value = data;
             while let Some(GlobalVariableData::Arr(elements)) = value {
                 value = elements.first();
@@ -169,6 +173,26 @@ impl<'a> IrGenerator<'a> {
             data
         };
         match ty {
+            Type::Struct(struct_type) => {
+                if let Some(GlobalVariableData::Arr(elements)) = data {
+                    format!(
+                        "{} {{ {} }}",
+                        Self::gen_type(ty.clone()),
+                        struct_type
+                            .members()
+                            .iter()
+                            .enumerate()
+                            .map(|(i, member)| Self::gen_initializer_element(
+                                &member.ty,
+                                elements.get(i)
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    format!("{} zeroinitializer", Self::gen_type(ty.clone()))
+                }
+            }
             Type::Arr(children_ty, size) => {
                 if let Some(GlobalVariableData::Arr(v)) = data {
                     format!(
@@ -428,6 +452,25 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, options: &mut Options) -> Vec<String> {
         match node.nt {
+            NodeType::Conditional => {
+                let lines = self.gen_node(node, options);
+                options.register_queue.pop();
+                let slot = options.expression_slots[&node.token.as_ref().unwrap().pos];
+                options.register_queue.push(format!("%{}", slot));
+                lines
+            }
+
+            NodeType::Sequence => {
+                let mut lines = vec![];
+                let depth = options.register_queue.len();
+                for child in &node.children[..node.children.len() - 1] {
+                    lines.extend(self.gen_node(child, options));
+                    options.register_queue.truncate(depth);
+                }
+                lines.extend(self.gen_addr(node.children.last().unwrap(), options));
+                lines
+            }
+
             NodeType::LocalVar => {
                 let register = options.register_from_offset(node.offset.unwrap());
                 options.register_queue.push(format!("%{}", register));

@@ -4,15 +4,16 @@ use crate::trie::Trie;
 use std::collections::HashSet;
 
 pub const TYPES: [&str; 3] = ["int", "char", "void"];
-const RESERVED_WORDS: [&str; 13] = [
+const RESERVED_WORDS: [&str; 14] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
-    "default", "typedef",
+    "default", "typedef", "struct",
 ];
 
-const RESERVED_SYMBOLS: [&str; 49] = [
+const RESERVED_SYMBOLS: [&str; 51] = [
     "=", "+", "-", "*", "/", "%", "<", ">", "==", "!=", "+=", "-=", "*=", "/=", "%=", "<=", ">=",
     "&", "^", "|", "&&", "||", "<<", ">>", "{", "}", "(", ")", "[", "]", ",", ";", "/*", "//",
-    "\"", "!", "~", "?", ":", "<<=", ">>=", "&=", "^=", "|=", "++", "--", "#", "'", "...",
+    "\"", "!", "~", "?", ":", "<<=", ">>=", "&=", "^=", "|=", "++", "--", "#", "'", "...", ".",
+    "->",
 ];
 
 pub(crate) fn decode_string_literal(value: &str) -> Option<Vec<u8>> {
