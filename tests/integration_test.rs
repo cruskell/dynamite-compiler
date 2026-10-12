@@ -512,3 +512,13 @@ fn it_supports_octal_integers(output_option: &str) {
         Some(0)
     );
 }
+
+#[test_matrix([
+    "int x=7; int *p=&x; int main(){return *p-7;}",
+    "int a[3]={1,2,7}; int *p=a+2; int main(){return *p-7;}",
+    "int a[3]={1,2,8}; int *p=&a[2]; int main(){return *p-8;}",
+    "char *p=\"abc\"+1; int main(){return *p-98;}",
+], ["asm", "llvm"])]
+fn it_initializes_global_addresses(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

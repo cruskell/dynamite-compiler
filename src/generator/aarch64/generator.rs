@@ -203,7 +203,16 @@ impl<'a> AsmGenerator<'a> {
             .into(),
             _ => format!(
                 "  .8byte {}",
-                if let Some(GlobalVariableData::Elem(s)) = data {
+                if let Some(GlobalVariableData::Address { symbol, offset }) = data {
+                    let prefix = if symbol.starts_with(".str.") {
+                        "L_"
+                    } else if matches!(target_os, Os::MacOS) {
+                        "_"
+                    } else {
+                        ""
+                    };
+                    format!("{prefix}{symbol}{offset:+}")
+                } else if let Some(GlobalVariableData::Elem(s)) = data {
                     if s.starts_with("@.str.") {
                         s.replace('@', "L_")
                     } else if let Some(name) = s.strip_prefix('@') {

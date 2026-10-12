@@ -750,6 +750,10 @@ impl<'a> AstBuilderImpl<'a> {
                     self.validate_global_initializer(ty, element, token);
                 }
             }
+            (Type::I8 | Type::I32, GlobalVariableData::Address { .. }) => {
+                self.error_logger
+                    .print_error_position(token.pos, "integer initializer cannot be an address");
+            }
             (Type::I8 | Type::I32, GlobalVariableData::Elem(value)) if value.starts_with('@') => {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be a string");
@@ -774,33 +778,60 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             }
             GlobalVariableData::Arr(vec)
-        } else if let Some(t) = self.attempt(TokenType::Str) {
-            GlobalVariableData::Elem(self.new_string_literal(&t.s_value))
         } else {
             let expression = self.ternary();
-            if matches!(expression.nt, NodeType::GlobalVar)
-                && expression
-                    .resolve_type()
-                    .is_some_and(|ty| ty.function_signature().is_some())
-            {
-                GlobalVariableData::Elem(format!("@{}", expression.global_name))
-            } else if matches!(expression.nt, NodeType::Addr)
-                && expression
-                    .lhs
-                    .as_ref()
-                    .unwrap()
-                    .resolve_type()
-                    .is_some_and(|ty| ty.function_signature().is_some())
-            {
-                GlobalVariableData::Elem(format!(
-                    "@{}",
-                    expression.lhs.as_ref().unwrap().global_name
-                ))
+            if let Some((symbol, offset)) = self.constant_address(&expression) {
+                GlobalVariableData::Address { symbol, offset }
             } else {
                 GlobalVariableData::Elem(format!("{}", self.eval(&expression)))
             }
         }
     }
+    fn constant_address(&mut self, node: &Node) -> Option<(String, i64)> {
+        match node.nt {
+            NodeType::GlobalVar
+                if node.resolve_type().is_some_and(|ty| {
+                    matches!(ty, Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..))
+                }) =>
+            {
+                Some((node.global_name.clone(), 0))
+            }
+            NodeType::Addr => {
+                let child = node.lhs.as_ref().unwrap();
+                if matches!(child.nt, NodeType::GlobalVar) {
+                    Some((
+                        if child.dest.is_empty() {
+                            child.global_name.clone()
+                        } else {
+                            child.dest.trim_start_matches('@').to_string()
+                        },
+                        0,
+                    ))
+                } else if matches!(child.nt, NodeType::Deref) {
+                    self.constant_address(child.lhs.as_ref().unwrap())
+                } else {
+                    None
+                }
+            }
+            NodeType::Cast => self.constant_address(node.lhs.as_ref().unwrap()),
+            NodeType::Add | NodeType::Sub => {
+                let lhs = node.lhs.as_ref().unwrap();
+                let (symbol, offset) = self.constant_address(lhs)?;
+                let stride = lhs.dest_type()?.size_of() as i64;
+                let delta = self.eval(node.rhs.as_ref().unwrap()).checked_mul(stride)?;
+                Some((
+                    symbol,
+                    if node.nt == NodeType::Add {
+                        offset.checked_add(delta)?
+                    } else {
+                        offset.checked_sub(delta)?
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn eval(&mut self, node: &Node) -> i64 {
         match node.nt {
             NodeType::Num => return node.value.unwrap() as i64,
