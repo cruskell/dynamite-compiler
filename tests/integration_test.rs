@@ -964,3 +964,12 @@ fn it_preserves_variable_array_bound_evaluation(code: &str, output_option: &str)
 fn it_supports_variable_array_loop_lifetimes(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "int f(struct S{int x;} *p){struct S s={7};return s.x;}int main(){return f(0)-7;}",
+    "int f(enum E{A=7} e){enum E x=A;return x;}int main(){return f(0)-7;}",
+    "struct S{int x;};int f(struct S{long y;} *p){struct S s={7};return sizeof(s)+s.y-15;}int main(){struct S s;return f(0)+sizeof(s)-4;}",
+], ["asm", "llvm"])]
+fn it_preserves_function_parameter_tag_scopes(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

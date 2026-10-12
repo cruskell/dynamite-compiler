@@ -13,19 +13,20 @@ mod varargs;
 mod vla;
 
 type Parameters = Vec<(Option<Token>, Type)>;
+type ParameterScope = HashMap<String, Identifier>;
 
 enum Declarator {
     Name(Option<Token>),
     Pointer(Box<Declarator>, Qualifiers),
     Array(Box<Declarator>, usize),
     VariableArray(Box<Declarator>, usize),
-    Function(Box<Declarator>, Parameters, bool),
+    Function(Box<Declarator>, Parameters, bool, ParameterScope),
 }
 
 impl Declarator {
-    fn resolve(self, base: Type) -> (Option<Token>, Type, Parameters) {
+    fn resolve(self, base: Type) -> (Option<Token>, Type, Parameters, ParameterScope) {
         match self {
-            Self::Name(token) => (token, base, vec![]),
+            Self::Name(token) => (token, base, vec![], HashMap::new()),
             Self::Pointer(inner, q) => {
                 let ty = Type::Ptr(Box::new(base));
                 inner.resolve(if q == Qualifiers::default() {
@@ -36,7 +37,7 @@ impl Declarator {
             }
             Self::Array(inner, size) => inner.resolve(Type::Arr(Box::new(base), size)),
             Self::VariableArray(inner, offset) => inner.resolve(Type::Vla(Box::new(base), offset)),
-            Self::Function(inner, parameters, variadic) => {
+            Self::Function(inner, parameters, variadic, scope) => {
                 let types = parameters.iter().map(|(_, ty)| ty.clone()).collect();
                 let ty = if variadic {
                     Type::VariadicFunc(types, Box::new(base))
@@ -44,13 +45,13 @@ impl Declarator {
                     Type::Func(types, Box::new(base))
                 };
                 let function_type = ty.clone();
-                let (name, ty, nested) = inner.resolve(ty);
-                let parameters = if ty == function_type {
-                    parameters
+                let (name, ty, nested, nested_scope) = inner.resolve(ty);
+                let (parameters, scope) = if ty == function_type {
+                    (parameters, scope)
                 } else {
-                    nested
+                    (nested, nested_scope)
                 };
-                (name, ty, parameters)
+                (name, ty, parameters, scope)
             }
         }
     }
@@ -395,7 +396,7 @@ impl<'a> AstBuilderImpl<'a> {
                         {
                             break;
                         }
-                        let (name, ty, _) = self.declarator().resolve(base);
+                        let (name, ty, _, _) = self.declarator().resolve(base);
                         self.validate_type_layout(&ty, &self.tokens[self.cur]);
                         let ty = match ty {
                             Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
@@ -415,8 +416,16 @@ impl<'a> AstBuilderImpl<'a> {
                         self.expect_reserved(",");
                     }
                 }
-                self.scope_stack.pop();
-                direct = Declarator::Function(Box::new(direct), parameters, variadic);
+                let scope = self
+                    .scope_stack
+                    .pop()
+                    .unwrap()
+                    .into_iter()
+                    .filter(|(_, identifier)| {
+                        matches!(identifier, Identifier::TypeDef(_) | Identifier::Constant(_))
+                    })
+                    .collect();
+                direct = Declarator::Function(Box::new(direct), parameters, variadic, scope);
             } else {
                 break;
             }
@@ -428,7 +437,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn expect_ident_with_type(&mut self, ty: Type) -> (Token, Type) {
-        let (name, ty, _) = self.declarator().resolve(ty);
+        let (name, ty, _, _) = self.declarator().resolve(ty);
         let token = name.unwrap_or_else(|| {
             self.error_logger
                 .print_error_position(self.tokens[self.cur].pos, "ident expected");
@@ -774,7 +783,7 @@ impl<'a> AstBuilderImpl<'a> {
             while self.attempt_reserved("}").is_none() {
                 let base = self.expect_type();
                 loop {
-                    let (name, member_type, _) = self.declarator().resolve(base.clone());
+                    let (name, member_type, _, _) = self.declarator().resolve(base.clone());
                     let position = name.as_ref().unwrap_or(&token);
                     if member_type.is_variably_modified() {
                         self.error_logger.print_error_position(
@@ -938,7 +947,7 @@ impl<'a> AstBuilderImpl<'a> {
             return;
         }
         loop {
-            let (name, ty, parameters) = self.declarator().resolve(base.clone());
+            let (name, ty, parameters, parameter_scope) = self.declarator().resolve(base.clone());
             let token = name.unwrap_or_else(|| {
                 self.error_logger
                     .print_error_position(self.tokens[self.cur].pos, "ident expected");
@@ -956,7 +965,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "function conflicts with object");
                 }
-                self.scope_stack.push(HashMap::new());
+                self.scope_stack.push(parameter_scope);
                 let mut args = vec![];
                 for (i, (name, ty)) in parameters.into_iter().enumerate() {
                     let name = name.unwrap_or_else(|| Token {
@@ -2862,7 +2871,7 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(token) = self.attempt_reserved("(") {
             if let Some(base) = self.attempt_type() {
                 let pending_start = self.pending_bounds.len();
-                let (name, mut ty, _) = self.declarator().resolve(base);
+                let (name, mut ty, _, _) = self.declarator().resolve(base);
                 self.validate_type_layout(&ty, &self.tokens[self.cur]);
                 if name.is_some() {
                     self.error_logger
@@ -2971,7 +2980,7 @@ impl<'a> AstBuilderImpl<'a> {
             if self.attempt_reserved("(").is_some() {
                 if let Some(base) = self.attempt_type() {
                     let pending_start = self.pending_bounds.len();
-                    let (name, ty, _) = self.declarator().resolve(base);
+                    let (name, ty, _, _) = self.declarator().resolve(base);
                     self.validate_type_layout(&ty, &t);
                     if name.is_some() {
                         self.error_logger

@@ -110,7 +110,7 @@ impl AstBuilderImpl<'_> {
             "__builtin_va_arg" => {
                 self.expect_reserved(",");
                 let base = self.expect_type();
-                let (_, ty, _) = self.declarator().resolve(base);
+                let (_, ty, _, _) = self.declarator().resolve(base);
                 self.expect_reserved(")");
                 self.expect_object_type(&ty, &token);
                 if matches!(ty.unqualified(), Type::Arr(..) | Type::Vla(..))
