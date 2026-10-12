@@ -402,3 +402,21 @@ fn it_defines_variadic_functions(output_option: &str) {
     );
     assert_eq!(output.status.code(), Some(7), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int add(int a, int b) { return a + b; } int main() { int (*f)(int, int) = add; return f(2,5); }", 7),
+    ("int add(int a, int b) { return a + b; } int call(int (*f)(int, int), int n) { return (*f)(n, 5); } int main() { return call(&add, 2); }", 7),
+    ("int f(int n) { return n+2; } int g(int n) { return n+3; } int main() { int (*fs[2])(int) = {f,g}; return fs[1](4); }", 7),
+    ("int f(int a,int b,int c,int d,int e,int f,int g,int h,int i) { return i; } int main() { int (*p)(int,int,int,int,int,int,int,int,int) = f; return 2 + p(1,2,3,4,5,6,7,8,5); }", 7),
+    ("int f(int n) { return n + 2; } int (*p)(int) = &f; int main() { return p(5); }", 7),
+    ("typedef int (*Callback)(int); int f(int n) { return n + 2; } int main(void) { Callback p = (int (*)(int))f; return p(5); }", 7),
+    ("int n; void set(void) { n = 7; } int main(void) { void (*p)(void) = set; p(); return n; }", 7),
+    ("int f(int n) { return n+2; } int (*get(void))(int) { return f; } int main() { return get()(5); }", 7),
+    ("int main() { return sizeof(int (*)(int)) + sizeof(int (*)[3]); }", 16),
+    ("typedef void Nothing; int main(Nothing) { return 7; }", 7),
+    ("int f(int n) { return n + 2; } int f(int); int main() { return f(5); }", 7),
+], ["asm", "llvm"])]
+fn it_supports_function_pointers(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}
