@@ -57,3 +57,6 @@ Integer literals support decimal and hexadecimal (`0x` or `0X`) notation.
 
 Comma expressions evaluate operands from left to right and produce the last value.
 Commas in declarations, initializers, and argument lists remain separators.
+
+`sizeof` accepts expressions and type names, including pointers and fixed arrays.
+Its expression operand is not evaluated.

@@ -268,3 +268,14 @@ fn it_supports_comma_expressions(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int main() { return sizeof(int) + sizeof(char) + sizeof(int*); }", 13),
+    ("int main() { return sizeof(int[2][3]); }", 24),
+    ("int main() { int x = 7; return sizeof(x++) + x; }", 11),
+    ("int n = sizeof(int); int main() { return n; }", 4),
+], ["asm", "llvm"])]
+fn it_supports_sizeof_types(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}
