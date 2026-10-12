@@ -89,3 +89,6 @@ casts truncate or sign-extend to the requested type; void casts retain side effe
 Functions may declare `...` after fixed parameters. Variadic calls apply integer
 promotions and platform argument placement. Variadic definitions may use their
 fixed parameters; `va_list` and `va_start`/`va_arg` are not implemented.
+
+Parenthesized declarators support function pointers, function-pointer arrays,
+callback parameters, unnamed prototype parameters, and indirect calls.

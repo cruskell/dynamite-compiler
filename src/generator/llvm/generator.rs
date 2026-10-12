@@ -18,7 +18,6 @@ pub struct Options<'a> {
     terminated: bool,
     return_ty: Type,
     break_labels: Vec<String>,
-    function_types: HashMap<String, Type>,
     expression_slots: HashMap<usize, usize>,
 }
 
@@ -61,7 +60,7 @@ impl<'a> IrGenerator<'a> {
                 .collect::<Vec<String>>(),
             ast.functions
                 .iter()
-                .map(|(name, f)| self.gen_func(name, f, ast.functions) + "\n")
+                .map(|(name, f)| self.gen_func(name, f) + "\n")
                 .collect::<Vec<String>>(),
             reserved_functions()
                 .iter()
@@ -209,7 +208,7 @@ impl<'a> IrGenerator<'a> {
         }
     }
 
-    fn gen_func(&self, name: &str, func: &Func, functions: &HashMap<String, Func>) -> String {
+    fn gen_func(&self, name: &str, func: &Func) -> String {
         if func.body.is_none() {
             let (args, result, variadic) = func.cty.function_signature().unwrap();
             let mut arguments = args
@@ -237,23 +236,6 @@ impl<'a> IrGenerator<'a> {
             return_ty: *return_ty.clone(),
             break_labels: vec![],
             expression_slots: HashMap::new(),
-            function_types: functions
-                .iter()
-                .map(|(name, func)| (name.clone(), func.cty.clone()))
-                .chain(
-                    reserved_functions()
-                        .into_iter()
-                        .filter_map(|(name, ident)| {
-                            if functions.contains_key(&name) {
-                                return None;
-                            }
-                            let Identifier::Static(ty) = ident else {
-                                unreachable!()
-                            };
-                            Some((name, ty))
-                        }),
-                )
-                .collect(),
         };
         [
             vec![format!(
@@ -521,19 +503,25 @@ impl<'a> IrGenerator<'a> {
                     .collect();
             }
             NodeType::CallFunc => {
-                let (parameters, result, variadic) = options.function_types[&node.global_name]
-                    .function_signature()
-                    .unwrap();
+                let parameters = node.parameter_types.clone();
+                let result = node.cty.clone().unwrap();
+                let variadic = node.variadic;
                 let mut lines = vec![];
+                let callee = if let Some(callee) = &node.lhs {
+                    lines.extend(self.gen_node(callee, options));
+                    options.register_queue.pop().unwrap()
+                } else {
+                    format!("@{}", node.global_name)
+                };
                 let mut arguments = vec![];
                 for (i, arg) in node.args.iter().enumerate() {
                     lines.extend(self.gen_node(arg, options));
                     let value = options.register_queue.pop().unwrap();
                     let source = arg.resolve_type().unwrap();
-                    let source = if let Type::Arr(child, _) = source {
-                        Type::Ptr(child)
-                    } else {
-                        source
+                    let source = match source {
+                        Type::Arr(child, _) => Type::Ptr(child),
+                        Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(source)),
+                        _ => source,
                     };
                     let ty = parameters
                         .get(node.args.len() - i - 1)
@@ -563,20 +551,20 @@ impl<'a> IrGenerator<'a> {
                 };
                 if result == Type::Void {
                     lines.push(format!(
-                        "  call void{} @{}({})",
+                        "  call void{} {}({})",
                         signature,
-                        node.global_name,
+                        callee,
                         arguments.join(", ")
                     ));
                     options.register_queue.push("0".to_string());
                     return lines;
                 }
                 lines.push(format!(
-                    "  %{} = call {}{} @{}({})",
+                    "  %{} = call {}{} {}({})",
                     options.new_register(),
                     Self::gen_type(result),
                     signature,
-                    node.global_name,
+                    callee,
                     arguments.join(", ")
                 ));
                 return lines;
@@ -649,7 +637,7 @@ impl<'a> IrGenerator<'a> {
             NodeType::Deref | NodeType::LocalVar | NodeType::GlobalVar => {
                 let mut lines = self.gen_addr(node, options);
                 let ty = node.resolve_type().unwrap();
-                if !matches!(ty, Type::Arr(..)) {
+                if !matches!(ty, Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) {
                     let address = options.register_queue.pop().unwrap();
                     lines.push(format!(
                         "  %{} = load {}, ptr {}, align {}",

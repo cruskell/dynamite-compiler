@@ -18,6 +18,13 @@ impl Type {
         }
     }
 
+    pub fn checked_size_of(&self) -> Option<usize> {
+        match self {
+            Self::Arr(child, size) => child.checked_size_of()?.checked_mul(*size),
+            _ => Some(self.size_of()),
+        }
+    }
+
     pub fn size_of(&self) -> usize {
         match self {
             Type::Void => 0,

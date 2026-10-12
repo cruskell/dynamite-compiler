@@ -6,6 +6,41 @@ use crate::node::{Node, NodeType};
 use crate::token::{Token, TokenType};
 use std::collections::HashMap;
 
+type Parameters = Vec<(Option<Token>, Type)>;
+
+enum Declarator {
+    Name(Option<Token>),
+    Pointer(Box<Declarator>),
+    Array(Box<Declarator>, usize),
+    Function(Box<Declarator>, Parameters, bool),
+}
+
+impl Declarator {
+    fn resolve(self, base: Type) -> (Option<Token>, Type, Parameters) {
+        match self {
+            Self::Name(token) => (token, base, vec![]),
+            Self::Pointer(inner) => inner.resolve(Type::Ptr(Box::new(base))),
+            Self::Array(inner, size) => inner.resolve(Type::Arr(Box::new(base), size)),
+            Self::Function(inner, parameters, variadic) => {
+                let types = parameters.iter().map(|(_, ty)| ty.clone()).collect();
+                let ty = if variadic {
+                    Type::VariadicFunc(types, Box::new(base))
+                } else {
+                    Type::Func(types, Box::new(base))
+                };
+                let function_type = ty.clone();
+                let (name, ty, nested) = inner.resolve(ty);
+                let parameters = if ty == function_type {
+                    parameters
+                } else {
+                    nested
+                };
+                (name, ty, parameters)
+            }
+        }
+    }
+}
+
 pub struct AstBuilderImpl<'a> {
     error_logger: &'a dyn error::ErrorLogger,
     tokens: &'a Vec<Token>,
@@ -157,41 +192,114 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn expect_ident_with_type(&mut self, ty: Type) -> (Token, Type) {
-        let mut ty = ty.clone();
-        while self.attempt_reserved("*").is_some() {
-            ty = Type::Ptr(Box::new(ty));
+    fn validate_type_layout(&self, ty: &Type, token: &Token) {
+        match ty {
+            Type::Ptr(child) | Type::Arr(child, _) => self.validate_type_layout(child, token),
+            Type::Func(args, result) | Type::VariadicFunc(args, result) => {
+                for arg in args {
+                    self.validate_type_layout(arg, token);
+                }
+                self.validate_type_layout(result, token);
+            }
+            _ => {}
         }
-        if let Some(t) = self.attempt_ident() {
-            let mut dimensions = vec![];
-            while self.attempt_reserved("[").is_some() {
-                if self.attempt_reserved("]").is_some() {
-                    if !dimensions.is_empty() {
+        if ty.checked_size_of().is_none() {
+            self.error_logger
+                .print_error_position(token.pos, "array size is too large");
+        }
+    }
+
+    fn declarator(&mut self) -> Declarator {
+        let mut pointers = 0;
+        while self.attempt_reserved("*").is_some() {
+            pointers += 1;
+        }
+        let mut direct = if self.attempt_reserved("(").is_some() {
+            let inner = self.declarator();
+            self.expect_reserved(")");
+            inner
+        } else {
+            Declarator::Name(self.attempt_ident())
+        };
+        loop {
+            if self.attempt_reserved("[").is_some() {
+                let size = if self.attempt_reserved("]").is_some() {
+                    if matches!(direct, Declarator::Array(..)) {
                         self.error_logger.print_error_position(
-                            t.pos,
+                            self.tokens[self.cur - 1].pos,
                             "only the outer array dimension may be omitted",
                         );
                     }
-                    dimensions.push(0);
+                    0
                 } else {
                     let size = self.constant_array_size();
-                    dimensions.push(size.i_value);
                     self.expect_reserved("]");
+                    size.i_value
+                };
+                direct = Declarator::Array(Box::new(direct), size);
+            } else if self.attempt_reserved("(").is_some() {
+                let mut parameters = vec![];
+                let mut variadic = false;
+                let saved = self.cur;
+                let empty_void =
+                    self.attempt_reserved("void").is_some() && self.attempt_reserved(")").is_some();
+                if !empty_void {
+                    self.cur = saved;
                 }
-            }
-            for size in dimensions.into_iter().rev() {
-                if ty.size_of().checked_mul(size).is_none() {
-                    self.error_logger
-                        .print_error_position(t.pos, "array size is too large");
+                if !empty_void && self.attempt_reserved(")").is_none() {
+                    loop {
+                        if self.attempt_reserved("...").is_some() {
+                            if parameters.is_empty() {
+                                self.error_logger.print_error_position(
+                                    self.tokens[self.cur - 1].pos,
+                                    "variadic function requires a fixed parameter",
+                                );
+                            }
+                            variadic = true;
+                            self.expect_reserved(")");
+                            break;
+                        }
+                        let base = self.expect_type();
+                        if base == Type::Void
+                            && parameters.is_empty()
+                            && self.attempt_reserved(")").is_some()
+                        {
+                            break;
+                        }
+                        let (name, ty, _) = self.declarator().resolve(base);
+                        self.validate_type_layout(&ty, &self.tokens[self.cur]);
+                        let ty = match ty {
+                            Type::Arr(child, _) => Type::Ptr(child),
+                            Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
+                            _ => ty,
+                        };
+                        parameters.push((name, ty));
+                        if self.attempt_reserved(")").is_some() {
+                            break;
+                        }
+                        self.expect_reserved(",");
+                    }
                 }
-                ty = Type::Arr(Box::new(ty), size);
+                direct = Declarator::Function(Box::new(direct), parameters, variadic);
+            } else {
+                break;
             }
-            (t, ty)
-        } else {
+        }
+        for _ in 0..pointers {
+            direct = Declarator::Pointer(Box::new(direct));
+        }
+        direct
+    }
+
+    fn expect_ident_with_type(&mut self, ty: Type) -> (Token, Type) {
+        let (name, ty, _) = self.declarator().resolve(ty);
+        let token = name.unwrap_or_else(|| {
             self.error_logger
                 .print_error_position(self.tokens[self.cur].pos, "ident expected");
-            unreachable!();
-        }
+            unreachable!()
+        });
+        self.validate_type_layout(&ty, &token);
+        (token, ty)
     }
     fn new_local_variable(&mut self, ty: Type) -> Node {
         let (t, ty) = self.expect_ident_with_type(ty);
@@ -339,119 +447,91 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(";");
             return;
         }
-        let ty = self.expect_type();
-        let cur_to_back = self.cur;
-        let (t, return_type) = self.expect_ident_with_type(ty.clone());
-        if self.attempt_reserved("(").is_some() {
-            // function
-            self.offset_size = 0;
-            self.scope_stack.push(HashMap::new());
-            let mut args: Vec<Node> = Vec::new();
-            let mut variadic = false;
-            let saved = self.cur;
-            let void_parameters =
-                self.attempt_reserved("void").is_some() && self.attempt_reserved(")").is_some();
-            if !void_parameters {
-                self.cur = saved;
-            }
-            if !void_parameters && self.attempt_reserved(")").is_none() {
-                loop {
-                    if self.attempt_reserved("...").is_some() {
-                        if args.is_empty() {
-                            self.error_logger.print_error_position(
-                                t.pos,
-                                "variadic function requires a fixed parameter",
-                            );
-                        }
-                        variadic = true;
-                        break;
-                    }
-                    let ty = self.expect_type();
-                    let (token, ty) = self.expect_ident_with_type(ty);
-                    let ty = if let Type::Arr(child, _) = ty {
-                        Type::Ptr(child)
-                    } else {
-                        ty
-                    };
-                    args.push(self.register_local_variable(token, ty));
-                    if self.attempt_reserved(",").is_none() {
-                        break;
-                    }
-                }
-                self.expect_reserved(")");
-            }
-
-            let arg_types: Vec<Type> = args
-                .iter()
-                .map(|arg| arg.resolve_type().clone().unwrap())
-                .collect();
-            let function_type = if variadic {
-                Type::VariadicFunc(arg_types.clone(), Box::new(return_type.clone()))
-            } else {
-                Type::Func(arg_types.clone(), Box::new(return_type.clone()))
-            };
-            self.scope_stack
-                .first_mut()
-                .unwrap()
-                .insert(t.s_value.clone(), Identifier::Static(function_type.clone()));
-            self.functions.insert(
-                t.s_value.clone(),
-                Func {
-                    cty: function_type.clone(),
-                    token: Some(t.clone()),
-                    ..Func::default()
-                },
-            );
-            self.return_type = Some(return_type.clone());
-            let body = self.consume_block();
-            self.return_type = None;
-            if body.is_none() {
-                self.expect_reserved(";");
-            }
-            self.scope_stack.pop();
-            self.functions.insert(
-                t.s_value.clone(),
-                Func {
-                    body,
-                    cty: function_type.clone(),
-                    offset_size: self.offset_size,
-                    token: Some(t.clone()),
-                    args,
-                },
-            );
-        } else {
-            // global variable
-            self.cur = cur_to_back; // back the cursor
-            loop {
-                let (t, ty) = self.expect_ident_with_type(ty.clone());
-                self.expect_object_type(&ty, &t);
-                let data = self.attempt_reserved("=").map(|_| self.global_data());
-                let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
-                    elements.len()
-                } else {
-                    0
-                };
-                let ty = self.infer_array_size(ty, count, &t);
-                if let Some(data) = &data {
-                    self.validate_global_initializer(&ty, data, &t);
+        let base = self.expect_type();
+        loop {
+            let (name, ty, parameters) = self.declarator().resolve(base.clone());
+            let token = name.unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(self.tokens[self.cur].pos, "ident expected");
+                unreachable!()
+            });
+            self.validate_type_layout(&ty, &token);
+            if ty.function_signature().is_some() {
+                self.offset_size = 0;
+                self.scope_stack.push(HashMap::new());
+                let mut args = vec![];
+                for (i, (name, ty)) in parameters.into_iter().enumerate() {
+                    let name = name.unwrap_or_else(|| Token {
+                        s_value: format!(".parameter.{i}"),
+                        ..token.clone()
+                    });
+                    args.push(self.register_local_variable(name, ty));
                 }
                 self.scope_stack
-                    .last_mut()
+                    .first_mut()
                     .unwrap()
-                    .insert(t.s_value.clone(), Identifier::Static(ty.clone()));
-                self.global_variables.insert(
-                    t.s_value.clone(),
-                    GlobalVariable {
-                        ty: ty.clone(),
-                        data,
+                    .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
+                if let Some(existing) = self.functions.get(&token.s_value) {
+                    if existing.cty != ty {
+                        self.error_logger
+                            .print_error_position(token.pos, "incompatible function redeclaration");
+                    }
+                }
+                self.functions
+                    .entry(token.s_value.clone())
+                    .or_insert_with(|| Func {
+                        cty: ty.clone(),
+                        token: Some(token.clone()),
+                        ..Func::default()
+                    });
+                self.return_type = Some(ty.function_signature().unwrap().1);
+                let body = self.consume_block();
+                self.return_type = None;
+                self.scope_stack.pop();
+                if body.is_none() {
+                    self.expect_reserved(";");
+                }
+                if self.functions[&token.s_value].body.is_some() {
+                    if body.is_some() {
+                        self.error_logger
+                            .print_error_position(token.pos, "function is already defined");
+                    }
+                    return;
+                }
+                self.functions.insert(
+                    token.s_value.clone(),
+                    Func {
+                        body,
+                        cty: ty,
+                        token: Some(token),
+                        args,
+                        offset_size: self.offset_size,
                     },
                 );
-                if self.attempt_reserved(",").is_none() {
-                    break;
-                }
+                return;
             }
-            self.expect_reserved(";");
+            let data = self.attempt_reserved("=").map(|_| self.global_data());
+            let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
+                elements.len()
+            } else {
+                0
+            };
+            let ty = self.infer_array_size(ty, count, &token);
+            self.expect_object_type(&ty, &token);
+            if let Some(data) = &data {
+                self.validate_global_initializer(&ty, data, &token);
+            }
+            self.scope_stack
+                .last_mut()
+                .unwrap()
+                .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
+            self.global_variables
+                .insert(token.s_value, GlobalVariable { ty, data });
+            if self.attempt_reserved(",").is_none() {
+                break;
+            }
         }
+        self.expect_reserved(";");
     }
     fn resolve_name(&mut self, s: &str) -> Option<&Identifier> {
         self.scope_stack.iter().rev().find_map(|map| map.get(s))
@@ -507,7 +587,27 @@ impl<'a> AstBuilderImpl<'a> {
             GlobalVariableData::Elem(self.new_string_literal(&t.s_value))
         } else {
             let expression = self.ternary();
-            GlobalVariableData::Elem(format!("{}", self.eval(&expression)))
+            if matches!(expression.nt, NodeType::GlobalVar)
+                && expression
+                    .resolve_type()
+                    .is_some_and(|ty| ty.function_signature().is_some())
+            {
+                GlobalVariableData::Elem(format!("@{}", expression.global_name))
+            } else if matches!(expression.nt, NodeType::Addr)
+                && expression
+                    .lhs
+                    .as_ref()
+                    .unwrap()
+                    .resolve_type()
+                    .is_some_and(|ty| ty.function_signature().is_some())
+            {
+                GlobalVariableData::Elem(format!(
+                    "@{}",
+                    expression.lhs.as_ref().unwrap().global_name
+                ))
+            } else {
+                GlobalVariableData::Elem(format!("{}", self.eval(&expression)))
+            }
         }
     }
     fn eval(&mut self, node: &Node) -> i64 {
@@ -1188,16 +1288,26 @@ impl<'a> AstBuilderImpl<'a> {
     fn unary(&mut self) -> Node {
         let saved = self.cur;
         if let Some(token) = self.attempt_reserved("(") {
-            if let Some(mut ty) = self.attempt_type() {
-                while self.attempt_reserved("*").is_some() {
-                    ty = Type::Ptr(Box::new(ty));
+            if let Some(base) = self.attempt_type() {
+                let (name, ty, _) = self.declarator().resolve(base);
+                self.validate_type_layout(&ty, &self.tokens[self.cur]);
+                if name.is_some() {
+                    self.error_logger
+                        .print_error_position(token.pos, "cast requires a type name");
                 }
                 self.expect_reserved(")");
                 let operand = self.unary();
                 if !matches!(ty, Type::Void | Type::I8 | Type::I32 | Type::Ptr(_))
                     || (!matches!(
                         operand.resolve_type(),
-                        Some(Type::I8 | Type::I32 | Type::Ptr(_) | Type::Arr(..))
+                        Some(
+                            Type::I8
+                                | Type::I32
+                                | Type::Ptr(_)
+                                | Type::Arr(..)
+                                | Type::Func(..)
+                                | Type::VariadicFunc(..)
+                        )
                     ) && ty != Type::Void)
                 {
                     self.error_logger
@@ -1217,27 +1327,19 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(t) = self.attempt_reserved("sizeof") {
             let saved = self.cur;
             let size = if self.attempt_reserved("(").is_some() {
-                if let Some(mut ty) = self.attempt_type() {
-                    while self.attempt_reserved("*").is_some() {
-                        ty = Type::Ptr(Box::new(ty));
-                    }
-                    let mut dimensions = vec![];
-                    while self.attempt_reserved("[").is_some() {
-                        let size = self.constant_array_size();
-                        if size.i_value == 0 {
-                            self.error_logger
-                                .print_error_position(size.pos, "array size must be positive");
-                        }
-                        dimensions.push(size.i_value);
-                        self.expect_reserved("]");
-                    }
-                    for size in dimensions.into_iter().rev() {
-                        ty = Type::Arr(Box::new(ty), size);
+                if let Some(base) = self.attempt_type() {
+                    let (name, ty, _) = self.declarator().resolve(base);
+                    self.validate_type_layout(&ty, &self.tokens[self.cur]);
+                    if name.is_some() {
+                        self.error_logger
+                            .print_error_position(t.pos, "sizeof requires a type name");
                     }
                     self.expect_reserved(")");
-                    if ty == Type::Void {
+                    if matches!(ty, Type::Void | Type::Func(..) | Type::VariadicFunc(..))
+                        || ty.size_of() == 0
+                    {
                         self.error_logger
-                            .print_error_position(t.pos, "sizeof requires an object type");
+                            .print_error_position(t.pos, "sizeof requires a complete object type");
                     }
                     ty.size_of()
                 } else {
@@ -1388,7 +1490,10 @@ impl<'a> AstBuilderImpl<'a> {
                 let t = node.token.clone().unwrap();
                 let (parameter_types, return_type, variadic) = node
                     .resolve_type()
-                    .and_then(|ty| ty.function_signature())
+                    .and_then(|ty| match ty {
+                        Type::Ptr(child) => child.function_signature(),
+                        _ => ty.function_signature(),
+                    })
                     .unwrap_or_else(|| {
                         self.error_logger
                             .print_error_position(t.pos, "called expression is not a function");
@@ -1414,7 +1519,16 @@ impl<'a> AstBuilderImpl<'a> {
                         "argument count does not match function declaration",
                     );
                 }
-                let s_value = t.s_value.clone();
+                let direct = matches!(node.nt, NodeType::GlobalVar)
+                    && node
+                        .resolve_type()
+                        .is_some_and(|ty| ty.function_signature().is_some());
+                let s_value = if direct {
+                    node.global_name.clone()
+                } else {
+                    String::new()
+                };
+                let callee = if direct { None } else { Some(Box::new(node)) };
                 node = Node {
                     token: Some(t),
                     nt: NodeType::CallFunc,
@@ -1423,6 +1537,7 @@ impl<'a> AstBuilderImpl<'a> {
                     args,
                     parameter_types,
                     variadic,
+                    lhs: callee,
                     ..Node::default()
                 }
             } else if let Some(b_token) = self.attempt_reserved("[") {

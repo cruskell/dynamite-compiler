@@ -109,12 +109,16 @@ impl<'a> AsmGenerator<'a> {
         vec![
             format!("  .balign {}", gv.ty.align_of()).into(),
             format!("{}:", self.with_prefix(name)).into(),
-            Self::gen_initializer_element(&gv.ty, gv.data.as_ref()),
+            Self::gen_initializer_element(&gv.ty, gv.data.as_ref(), self.target_os),
         ]
         .into()
     }
 
-    fn gen_initializer_element(ty: &Type, data: Option<&GlobalVariableData>) -> Assembly {
+    fn gen_initializer_element(
+        ty: &Type,
+        data: Option<&GlobalVariableData>,
+        target_os: Os,
+    ) -> Assembly {
         let data = if !matches!(ty, Type::Arr(..)) {
             let mut value = data;
             while let Some(GlobalVariableData::Arr(elements)) = value {
@@ -132,7 +136,11 @@ impl<'a> AsmGenerator<'a> {
                             .enumerate()
                             .filter(|(i, _)| i < size)
                             .map(|(_, d)| {
-                                Self::gen_initializer_element(children_ty.as_ref(), Some(d))
+                                Self::gen_initializer_element(
+                                    children_ty.as_ref(),
+                                    Some(d),
+                                    target_os,
+                                )
                             })
                             .collect::<Vec<Assembly>>()
                             .into(),
@@ -172,7 +180,21 @@ impl<'a> AsmGenerator<'a> {
             _ => format!(
                 "  .8byte {}",
                 if let Some(GlobalVariableData::Elem(s)) = data {
-                    s.replace('@', "L_")
+                    if s.starts_with("@.str.") {
+                        s.replace('@', "L_")
+                    } else if let Some(name) = s.strip_prefix('@') {
+                        format!(
+                            "{}{}",
+                            if matches!(target_os, Os::MacOS) {
+                                "_"
+                            } else {
+                                ""
+                            },
+                            name
+                        )
+                    } else {
+                        s.clone()
+                    }
                 } else {
                     "0".to_string()
                 }
@@ -362,6 +384,10 @@ impl<'a> AsmGenerator<'a> {
                     .collect::<Vec<_>>();
                 let (stack_slots, stack_size) = self.stack_arguments(&types, fixed);
                 let mut lines = vec![
+                    node.lhs
+                        .as_ref()
+                        .map(|callee| self.gen_node(callee, options))
+                        .unwrap_or_else(|| vec![].into()),
                     node.args
                         .iter()
                         .map(|arg| self.gen_node(arg, options))
@@ -384,8 +410,25 @@ impl<'a> AsmGenerator<'a> {
                     lines.push(Assembly::inst2(STR, X8, Ptr(X11, size)));
                 }
                 lines.extend([
-                    Assembly::inst1(BL, self.with_prefix(&node.global_name)),
-                    Assembly::inst3(ADD, X19, X19, node.args.len() * 8),
+                    if node.lhs.is_some() {
+                        vec![
+                            Assembly::inst2(
+                                LDR,
+                                X12,
+                                PtrAdd(X19, format!("#{}", node.args.len() * 8)),
+                            ),
+                            Assembly::inst1(BLR, X12),
+                        ]
+                        .into()
+                    } else {
+                        Assembly::inst1(BL, self.with_prefix(&node.global_name))
+                    },
+                    Assembly::inst3(
+                        ADD,
+                        X19,
+                        X19,
+                        (node.args.len() + usize::from(node.lhs.is_some())) * 8,
+                    ),
                     Assembly::inst2(MOV, SP, X29),
                     match node.cty {
                         Some(Type::I8) => Assembly::inst2(SXTB, X0, W0),
@@ -554,7 +597,9 @@ impl<'a> AsmGenerator<'a> {
             NodeType::LocalVar | NodeType::GlobalVar => {
                 return vec![
                     self.gen_addr(node, options),
-                    if let Some(Type::Arr(_, _)) = node.resolve_type() {
+                    if let Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) =
+                        node.resolve_type()
+                    {
                         vec![].into()
                     } else {
                         vec![Self::pop(X8), self.deref(node), Self::push(X8)].into()
@@ -568,7 +613,9 @@ impl<'a> AsmGenerator<'a> {
             NodeType::Deref => {
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    if let Some(Type::Arr(..)) = node.lhs.as_ref().unwrap().dest_type() {
+                    if let Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) =
+                        node.lhs.as_ref().unwrap().dest_type()
+                    {
                         vec![].into()
                     } else {
                         vec![Self::pop(X8), self.deref(node), Self::push(X8)].into()
