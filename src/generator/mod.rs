@@ -13,7 +13,7 @@ pub enum Arch {
     X86_64,
 }
 
-use crate::{ast::ProgramAst, error::ErrorPrinter};
+use crate::{ast::ProgramAst, error::ErrorLogger};
 
 pub trait Assembly {
     fn to_string(&self, target_os: Os) -> String;
@@ -26,7 +26,7 @@ pub trait Generator {
 pub fn new<'a>(
     target_arch: Arch,
     target_os: Os,
-    error_printer: &'a ErrorPrinter,
+    error_printer: &'a dyn ErrorLogger,
 ) -> Box<dyn Generator + 'a> {
     match target_arch {
         Arch::Aarch64 => Box::new(aarch64::generator::AsmGenerator::new(

@@ -1,0 +1,319 @@
+use std::{
+    collections::HashMap,
+    fs,
+    io::Write,
+    path::Path,
+    process::{Command, Stdio},
+};
+
+use crate::error::{ErrorLogger, ErrorPrinter};
+
+struct IncludeDirectory(std::path::PathBuf);
+
+impl IncludeDirectory {
+    fn new() -> Result<Self, String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let mut attempt = 0;
+        let directory = loop {
+            let path = std::env::temp_dir().join(format!(
+                "dynamite-preprocessor-{}-{nonce}-{attempt}",
+                std::process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => break Self(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    attempt += 1;
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "failed to create preprocessor include directory: {error}"
+                    ));
+                }
+            }
+        };
+        for (name, contents) in [
+            ("stdio.h", include_str!("../include/stdio.h")),
+            ("stdlib.h", include_str!("../include/stdlib.h")),
+        ] {
+            fs::write(directory.0.join(name), contents)
+                .map_err(|error| format!("failed to prepare builtin headers: {error}"))?;
+        }
+        Ok(directory)
+    }
+}
+impl Drop for IncludeDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct Source {
+    name: String,
+    code: String,
+    lines: Vec<usize>,
+}
+
+impl Source {
+    fn new(name: String, code: String) -> Self {
+        let lines = std::iter::once(0)
+            .chain(code.match_indices('\n').map(|(pos, _)| pos + 1))
+            .collect();
+        Self { name, code, lines }
+    }
+}
+
+struct Origin {
+    start: usize,
+    source: usize,
+    line: usize,
+}
+
+/// Expanded source with line origins for parser and backend diagnostics.
+pub struct Preprocessed {
+    pub code: String,
+    sources: Vec<Source>,
+    origins: Vec<Origin>,
+}
+
+impl Preprocessed {
+    fn location(&self, pos: usize) -> (&Source, usize) {
+        let origin = self.origins.iter().rev().find(|origin| origin.start <= pos);
+        let Some(origin) = origin else {
+            return (&self.sources[0], 0);
+        };
+        let source = &self.sources[origin.source];
+        let start = source
+            .lines
+            .get(origin.line.saturating_sub(1))
+            .copied()
+            .unwrap_or(source.code.len());
+        let end = source.code[start..]
+            .find('\n')
+            .map(|len| start + len)
+            .unwrap_or(source.code.len());
+        let mut column = pos.saturating_sub(origin.start).min(end - start);
+        while !source.code.is_char_boundary(start + column) {
+            column -= 1;
+        }
+        (source, start + column)
+    }
+}
+
+impl ErrorLogger for Preprocessed {
+    fn line_from_position(&self, pos: usize) -> (usize, usize, &str) {
+        let (source, position) = self.location(pos);
+        let row = source
+            .lines
+            .partition_point(|start| *start <= position)
+            .max(1);
+        let start = source.lines[row - 1];
+        let end = source.code[start..]
+            .find('\n')
+            .map(|len| start + len)
+            .unwrap_or(source.code.len());
+        (row, position - start, &source.code[start..end])
+    }
+    fn print_error_position(&self, pos: usize, message: &str) {
+        let (source, position) = self.location(pos);
+        ErrorPrinter::new(&source.code)
+            .print_error_position(position, &format!("{}: {}", source.name, message));
+    }
+}
+
+/// Use Clang's preprocessor for directives and predefined macros. Plain source
+/// takes the existing path without requiring an external preprocessor.
+pub fn preprocess(code: &str, path: Option<&Path>) -> Result<Preprocessed, String> {
+    let absolute_path = path
+        .map(|path| {
+            if path.is_absolute() {
+                Ok(path.to_path_buf())
+            } else {
+                std::env::current_dir().map(|directory| directory.join(path))
+            }
+        })
+        .transpose()
+        .map_err(|error| format!("failed to resolve source path: {error}"))?;
+    let name = absolute_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "<stdin>".to_string());
+    let source = Source::new(name.clone(), code.to_string());
+    if !code.contains('#') && !code.contains("__") {
+        let origins = source
+            .lines
+            .iter()
+            .enumerate()
+            .map(|(i, start)| Origin {
+                start: *start,
+                source: 0,
+                line: i + 1,
+            })
+            .collect();
+        return Ok(Preprocessed {
+            code: code.to_string(),
+            sources: vec![source],
+            origins,
+        });
+    }
+    let includes = IncludeDirectory::new()?;
+    let mut command = Command::new("clang");
+    command
+        .args(["-E", "-x", "c", "-nostdinc", "-"])
+        .arg("-I")
+        .arg(&includes.0);
+    if let Some(parent) = absolute_path
+        .as_deref()
+        .and_then(Path::parent)
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        command.current_dir(parent).arg("-iquote").arg(parent);
+    }
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("preprocessing requires clang in PATH: {error}"))?;
+    let input = format!(
+        "#line 1 \"{}\"\n{}",
+        name.replace('\\', "\\\\").replace('"', "\\\""),
+        code
+    );
+    let mut stdin = child.stdin.take().unwrap();
+    let output = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || stdin.write_all(input.as_bytes()));
+        let output = child.wait_with_output();
+        let written = writer.join().unwrap();
+        output.and_then(|output| written.map(|_| output))
+    })
+    .map_err(|error| format!("failed to preprocess source: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    let expanded = String::from_utf8(output.stdout)
+        .map_err(|error| format!("preprocessor returned invalid UTF-8: {error}"))?;
+    let mut result = Preprocessed {
+        code: String::new(),
+        sources: vec![source],
+        origins: vec![],
+    };
+    let mut source_ids = HashMap::from([(name, 0)]);
+    let mut current_source = 0;
+    let mut current_line = 1;
+    for line in expanded.split_inclusive('\n') {
+        if let Some(marker) = line.strip_prefix("# ") {
+            let Some((number, rest)) = marker.split_once(' ') else {
+                continue;
+            };
+            let Ok(number) = number.parse::<usize>() else {
+                continue;
+            };
+            if let Some(rest) = rest.strip_prefix('"') {
+                let mut end = 0;
+                let mut escaped = false;
+                for (i, ch) in rest.char_indices() {
+                    if ch == '"' && !escaped {
+                        end = i;
+                        break;
+                    }
+                    escaped = ch == '\\' && !escaped;
+                }
+                let bytes = crate::tokenizer::decode_string_literal(&rest[..end])
+                    .ok_or("invalid preprocessor file marker")?;
+                let filename =
+                    String::from_utf8(bytes).map_err(|_| "invalid preprocessor filename")?;
+                current_source = *source_ids.entry(filename.clone()).or_insert_with(|| {
+                    let index = result.sources.len();
+                    let filename_path = Path::new(&filename);
+                    let resolved = if filename_path.is_absolute() {
+                        filename_path.to_path_buf()
+                    } else {
+                        absolute_path
+                            .as_deref()
+                            .and_then(Path::parent)
+                            .unwrap_or(Path::new("."))
+                            .join(filename_path)
+                    };
+                    let text = fs::read_to_string(resolved).unwrap_or_default();
+                    result.sources.push(Source::new(filename, text));
+                    index
+                });
+                current_line = number;
+                continue;
+            }
+        }
+        result.origins.push(Origin {
+            start: result.code.len(),
+            source: current_source,
+            line: current_line,
+        });
+        result.code.push_str(line);
+        current_line += 1;
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parallel_include_directories_remain_independent() {
+        let barrier = std::sync::Barrier::new(16);
+        std::thread::scope(|scope| {
+            let barrier = &barrier;
+            for _ in 0..16 {
+                scope.spawn(move || {
+                    let directory = IncludeDirectory::new().unwrap();
+                    barrier.wait();
+                    assert!(directory.0.join("stdio.h").is_file());
+                    assert!(directory.0.join("stdlib.h").is_file());
+                    barrier.wait();
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn macro_expansion_preserves_original_line_numbers() {
+        let source = "#define VALUE 7\n\nint main() { return VALUE; }\n";
+        let expanded = preprocess(source, None).unwrap();
+        let position = expanded.code.find("return 7").unwrap();
+        let (line, _, text) = expanded.line_from_position(position);
+        assert_eq!(line, 3);
+        assert_eq!(text, "int main() { return VALUE; }");
+    }
+
+    #[test]
+    fn includes_resolve_relative_to_source_path() {
+        let directory = IncludeDirectory::new().unwrap();
+        fs::write(
+            directory.0.join("values.h"),
+            "#define VALUE 7\nint from_header = VALUE;\n",
+        )
+        .unwrap();
+        let source = "#include \"values.h\"\nint main() { return VALUE; }";
+        let expanded = preprocess(source, Some(&directory.0.join("main.c"))).unwrap();
+        assert!(expanded.code.contains("return 7"));
+        let position = expanded.code.find("int from_header").unwrap();
+        let (line, _, source_line) = expanded.line_from_position(position);
+        assert_eq!(line, 2);
+        assert_eq!(source_line, "int from_header = VALUE;");
+        let expanded = preprocess("int line = __LINE__;", None).unwrap();
+        assert!(expanded.code.contains("int line = 1;"));
+    }
+
+    #[test]
+    fn invalid_directives_are_errors() {
+        for source in [
+            "#error expected failure\n",
+            "#if 1\n",
+            "#include \"missing-dynamite-header.h\"\n",
+        ] {
+            assert!(preprocess(source, None).is_err(), "{source}");
+        }
+    }
+}

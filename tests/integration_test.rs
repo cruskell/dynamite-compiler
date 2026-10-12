@@ -439,3 +439,49 @@ fn it_supports_structs(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn it_preprocesses_macros_and_conditionals(output_option: &str) {
+    let code = r#"
+#define ADD(a,b) ((a)+(b))
+#define JOIN(a,b) a ## b
+#define TEXT(x) #x
+#define ENABLED 1
+#if defined(ENABLED) && ENABLED
+int JOIN(val,ue) = ADD(2,5);
+#else
+#error wrong branch
+#endif
+#undef ENABLED
+#ifdef ENABLED
+#error undef failed
+#elif 1
+int main() { puts(TEXT(hello)); return value; }
+#endif
+"#;
+    let output = compile_and_run(code, output_option);
+    assert_eq!(output.status.code(), Some(7), "{:?}", output);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "hello\n");
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_preprocesses_includes(output_option: &str) {
+    fs::create_dir_all("tests/temp").unwrap();
+    let name = format!(
+        "tests/temp/{}.h",
+        Alphanumeric.sample_string(&mut rand::thread_rng(), 32)
+    );
+    fs::write(
+        &name,
+        "#ifndef DYNAMITE_HEADER\n#define DYNAMITE_HEADER\n#define VALUE 7\n#endif\n",
+    )
+    .unwrap();
+    let code = format!(
+        "#include \"{}\"\n#include \"{}\"\nint main() {{ return VALUE; }}",
+        std::env::current_dir().unwrap().join(&name).display(),
+        std::env::current_dir().unwrap().join(&name).display()
+    );
+    let output = compile_and_run(&code, output_option);
+    fs::remove_file(name).unwrap();
+    assert_eq!(output.status.code(), Some(7), "{:?}", output);
+}
