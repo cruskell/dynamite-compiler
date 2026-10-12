@@ -86,11 +86,51 @@ pub enum Type {
     Float(u8),
     Ptr(Box<Type>),
     Arr(Box<Type>, usize),
+    // The offset names the captured bound; runtime_size computes the language size.
+    Vla(Box<Type>, usize),
     Func(Vec<Type>, Box<Type>),
     VariadicFunc(Vec<Type>, Box<Type>),
 }
 
 impl Type {
+    pub fn compatible(&self, other: &Self) -> bool {
+        match (self.unqualified(), other.unqualified()) {
+            (Self::Vla(left, _), Self::Vla(right, _) | Self::Arr(right, _))
+            | (Self::Arr(left, _), Self::Vla(right, _))
+            | (Self::Ptr(left), Self::Ptr(right)) => {
+                left.qualifiers() == right.qualifiers() && left.compatible(right)
+            }
+            (Self::Arr(left, count), Self::Arr(right, other_count)) => {
+                count == other_count && left.compatible(right)
+            }
+            (Self::Func(args, result), Self::Func(other_args, other_result))
+            | (Self::VariadicFunc(args, result), Self::VariadicFunc(other_args, other_result)) => {
+                args.len() == other_args.len()
+                    && args
+                        .iter()
+                        .zip(other_args)
+                        .all(|(left, right)| left.compatible(right))
+                    && result.compatible(other_result)
+            }
+            (left, right) => left == right,
+        }
+    }
+
+    pub fn is_variable_array(&self) -> bool {
+        match self.unqualified() {
+            Self::Vla(..) => true,
+            Self::Arr(child, _) => child.is_variable_array(),
+            _ => false,
+        }
+    }
+    pub fn is_variably_modified(&self) -> bool {
+        match self.unqualified() {
+            Self::Vla(..) => true,
+            Self::Arr(child, _) | Self::Ptr(child) => child.is_variably_modified(),
+            _ => false,
+        }
+    }
+
     pub fn float_bits(&self) -> Option<u8> {
         match self.unqualified() {
             Self::Float(bits) => Some(*bits),
@@ -197,6 +237,7 @@ impl Type {
             Self::Qualified(child, _) => child.without_qualifiers(),
             Self::Ptr(child) => Self::Ptr(Box::new(child.without_qualifiers())),
             Self::Arr(child, size) => Self::Arr(Box::new(child.without_qualifiers()), *size),
+            Self::Vla(child, offset) => Self::Vla(Box::new(child.without_qualifiers()), *offset),
             Self::Func(args, result) => Self::Func(
                 args.iter().map(Self::without_qualifiers).collect(),
                 Box::new(result.without_qualifiers()),
@@ -235,6 +276,7 @@ impl Type {
             Type::Float(bits) => usize::from(*bits) / 8,
             Type::Ptr(_) => 8,
             Type::Arr(t, s) => t.size_of() * s,
+            Type::Vla(..) => 8,
             Type::Func(..) | Type::VariadicFunc(..) => 1,
         }
     }
@@ -243,7 +285,7 @@ impl Type {
             Self::Qualified(child, _) => child.align_of(),
             Self::Void => 1,
             Self::Struct(ty) => ty.definition().borrow().align.max(1),
-            Self::Arr(child, _) => child.align_of(),
+            Self::Arr(child, _) | Self::Vla(child, _) => child.align_of(),
             _ => self.size_of(),
         }
     }
@@ -251,7 +293,7 @@ impl Type {
         match self {
             Type::Qualified(child, _) => child.dest_type(),
             Type::Ptr(c) => Some(*c.clone()),
-            Type::Arr(c, _) => Some(*c.clone()),
+            Type::Arr(c, _) | Type::Vla(c, _) => Some(*c.clone()),
             _ => None,
         }
     }

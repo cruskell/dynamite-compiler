@@ -88,15 +88,15 @@ casts truncate or sign-extend to the requested type; void casts retain side effe
 
 Functions may declare `...` after fixed parameters. Variadic calls apply integer
 promotions and platform argument placement. Variadic definitions may use their
-fixed parameters; `va_list` and `va_start`/`va_arg` are not implemented.
+fixed parameters and retrieve unnamed arguments through the bundled `stdarg.h`.
 
 Parenthesized declarators support function pointers, function-pointer arrays,
 callback parameters, unnamed prototype parameters, and indirect calls.
 
 Structs support tags, anonymous typedefs, aligned members, nested aggregates,
 self-referential pointers, member access (`.` and `->`), brace initialization,
-and assignment. Struct parameters and results currently require pointers;
-passing or returning structs by value is diagnosed. Integer bit-fields support
+and assignment. Struct parameters and results support values and pointers.
+Integer bit-fields support
 signed and unsigned values, unnamed padding, zero-width separators, initialization,
 and assignment. Address-taking and `sizeof` on a bit-field are diagnosed.
 
@@ -113,7 +113,8 @@ Compiler diagnostics retain source file names and original line numbers,
 including included files. Columns within macro-expanded lines are approximate.
 Preprocessing uses a small bundled include environment: `stdio.h` exposes the
 builtin `printf`, `puts`, and `putchar` API and `EOF`; `stdlib.h` exposes `exit`,
-`EXIT_SUCCESS`, and `EXIT_FAILURE`. Host system headers are not searched. Custom
+`EXIT_SUCCESS`, `EXIT_FAILURE`, `malloc`, and `free`; `stdarg.h` exposes variadic
+argument access. Host system headers are not searched. Custom
 headers must use the compiler's supported C-like subset.
 
 ## Additional language support
@@ -192,3 +193,18 @@ The bundled `stdarg.h` provides `va_list`, `va_start`, `va_arg`, `va_copy`, and
 values, including arguments that overflow the register banks. `va_start` must
 name the last fixed parameter. Retrieve `float` as `double`, and retrieve narrow
 integer types as their promoted integer type.
+
+## Variable length arrays
+
+Block-scope arrays accept integer bounds computed at runtime, including multiple
+dimensions, variably modified typedefs, and pointer declarators. Bounds are
+captured when the declaration executes; later changes to the source variables
+do not change an existing array's size. Array parameters can refer to earlier
+named parameters. `sizeof` and pointer arithmetic use the captured dimensions.
+
+Automatic variable arrays use `malloc` and `free` to preserve the existing fixed
+frame layout. Normal scope exits, returns, loop jumps, and outward gotos release
+their storage. Gotos and switch labels cannot enter the scope of a variably
+modified declaration. Variable arrays cannot have static storage, file scope,
+struct membership, or an initializer. Static pointers to variable arrays remain
+supported at block scope.

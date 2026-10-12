@@ -113,7 +113,7 @@ impl AstBuilderImpl<'_> {
                 let (_, ty, _) = self.declarator().resolve(base);
                 self.expect_reserved(")");
                 self.expect_object_type(&ty, &token);
-                if matches!(ty.unqualified(), Type::Arr(..))
+                if matches!(ty.unqualified(), Type::Arr(..) | Type::Vla(..))
                     || ty.float_bits() == Some(32)
                     || ty.integer_info().is_some_and(|(bits, _)| bits < 32)
                 {

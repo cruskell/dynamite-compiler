@@ -876,3 +876,91 @@ fn it_starts_after_named_stack_and_floating_parameters(output_option: &str) {
 fn it_diagnoses_invalid_variadic_builtins(code: &str) {
     assert!(std::panic::catch_unwind(|| dynamite_compiler::generate(code, "asm", false)).is_err());
 }
+
+#[test_matrix([
+    "int main(){int n=3;int a[n];for(int i=0;i<n;i++)a[i]=i+2;return a[2]+sizeof(a)-16;}",
+    "int main(){int n=2;int m=3;int a[n][m];a[1][2]=7;return a[1][2]+sizeof(a)+sizeof(a[0])-43;}",
+    "int main(){int n=2;int a[n++];n=8;a[1]=3;return sizeof(a)+n+a[1]-19;}",
+    "int main(){int n=3;int s=sizeof(int[n++]);return s+n-16;}",
+    "int f(int n){int a[n];a[n-1]=7;return a[n-1];}int main(){return f(3)-7;}",
+    "int main(){int s=0;for(int i=1;i<5;i++){int a[i];a[0]=i;if(i==2)continue;s+=a[0];if(i==3)break;}return s-4;}",
+    "int main(){int n=3;{int a[n];a[0]=7;goto out;}out:return 0;}",
+    "int main(){int n=3;typedef int A[n];n=8;A a;a[2]=7;return sizeof(a)+a[2]-19;}",
+], ["asm", "llvm"])]
+fn it_supports_variable_length_arrays(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int f(int n,int m,int a[n][m]){return a[n-1][m-1]+sizeof(*a);}int main(){int n=2;int m=3;int a[n][m];a[1][2]=7;return f(n,m,a)-19;}",
+    "int main(){int n=2;int m=3;int a[n][m];int (*p)[m]=a;p++;p[0][2]=7;return a[1][2]+(p-a)-8;}",
+    "int main(){int n=3;int a[n][2];a[2][1]=5;return a[2][1]+sizeof(a)-29;}",
+    "int main(){int n=2;int m=3;int a[n][m];int (*p)[m]=a;int (*q)[m]=p++;return (p-q)-1;}",
+], ["asm", "llvm"])]
+fn it_supports_variable_array_parameters_and_pointers(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_releases_variable_arrays_on_scope_exits(output_option: &str) {
+    let code = "char pool[10000];unsigned long top;int live;void *malloc(unsigned long n){live++;void *p=pool+top;top+=n;return p;}void free(void *p){live--;}int f(int n){int a[n];a[0]=9;return a[0];}int main(){live=0;top=0;int n=3;typedef int A[n];{A a;goto out;}out:if(live)return 1;for(int i=0;i<4;i++){int a[n];if(i==1)continue;if(i==2)break;}if(live)return 2;int s=f(n);if(live)return 3;return s-9;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int n;int a[n];",
+    "int main(){int n=2;static int a[n];}",
+    "int main(){int n=2;int a[n]={1};}",
+    "int main(){int n=2;goto label;int a[n];label:return 0;}",
+    "int main(){int n=2;struct S{int a[n];};return 0;}",
+    "int main(){int n=2;switch(n){int a[n];case 2:return 0;}return 1;}",
+])]
+fn it_diagnoses_invalid_variable_arrays(code: &str) {
+    assert!(std::panic::catch_unwind(|| dynamite_compiler::generate(code, "asm", false)).is_err());
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_interoperates_with_clang_variable_array_parameters(output_option: &str) {
+    let code = "int foreign(int n,int m,int a[n][m]);int local(int n,int m,int a[n][m]){return a[n-1][m-1]+sizeof(*a);}int main(){int n=2;int m=3;int a[n][m];a[1][2]=7;return foreign(n,m,a)-21;}";
+    let companion = "int local(int n,int m,int a[n][m]);int foreign(int n,int m,int a[n][m]){a[0][1]=2;return local(n,m,a)+a[0][1];}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){int n=3;int a[n];void *p=a;int (*q)[n]=(int (*)[n])p;(*q)[2]=7;return a[2]-7;}",
+    "int main(){int n=3;goto label;int s=sizeof(int[n]);label:return 0;}",
+    "int main(){int n=3;const int a[n];a[1]=2;return 0;}",
+], ["asm", "llvm"])]
+fn it_checks_variable_array_expression_scopes(code: &str, output_option: &str) {
+    if code.contains("const int") {
+        assert!(
+            std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+                .is_err()
+        );
+    } else {
+        assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+    }
+}
+
+#[test_matrix([
+    "int main(){int n=2;int m=3;int a[n][(int)m];a[1][2]=7;return sizeof(a)+a[1][2]-31;}",
+    "int f(int n,int a[n][n]);int f(int n,int a[n][n]){return a[n-1][n-1];}int main(){int n=2;int a[n][n];a[1][1]=7;return f(n,a)-7;}",
+    "int main(){int n=2;int a[n][n];static int (*p)[n];p=a;p[1][1]=7;return a[1][1]-7;}",
+], ["asm", "llvm"])]
+fn it_preserves_variable_array_bound_evaluation(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){int n=3;int i=0;for(int a[n];i<2;i++){a[0]=i;}return i-2;}",
+    "int main(){int n=3;int x=0;again:{int a[n];a[0]=1;x+=a[0];if(x<3)goto again;}return x-3;}",
+    "int a[(int)3.0];int main(){return sizeof(a)-12;}",
+], ["asm", "llvm"])]
+fn it_supports_variable_array_loop_lifetimes(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
