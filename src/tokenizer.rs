@@ -3,7 +3,9 @@ use crate::token::{Token, TokenType};
 use crate::trie::Trie;
 use std::collections::HashSet;
 
-pub const TYPES: [&str; 3] = ["int", "char", "void"];
+pub const TYPES: [&str; 9] = [
+    "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool",
+];
 const RESERVED_WORDS: [&str; 16] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
     "default", "typedef", "struct", "enum", "goto",
@@ -125,13 +127,34 @@ impl Tokenizer {
                             })?;
                         pos += 1;
                     }
-                    if pos == digits_start
+                    let suffix_start = pos;
+                    while pos < bytes.len() && matches!(bytes[pos], b'u' | b'U' | b'l' | b'L') {
+                        pos += 1;
+                    }
+                    let suffix = code[suffix_start..pos].to_ascii_lowercase();
+                    if !matches!(
+                        suffix.as_str(),
+                        "" | "u" | "l" | "ul" | "lu" | "ll" | "ull" | "llu"
+                    ) {
+                        return Err(error::SyntaxError::new(start, "invalid integer suffix"));
+                    }
+                    if suffix_start == digits_start
                         || (pos < bytes.len()
                             && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_'))
                     {
                         return Err(error::SyntaxError::new(start, "invalid integer literal"));
                     }
-                    tokens.push(Self::num_token(start, value));
+                    let mut token = Self::num_token(start, value);
+                    let wide = suffix.contains('l')
+                        || value > u32::MAX as usize
+                        || (radix == 10 && !suffix.contains('u') && value > i32::MAX as usize);
+                    let unsigned = suffix.contains('u') || (!wide && value > i32::MAX as usize);
+                    token.s_value = format!(
+                        "{}{}",
+                        if wide { "l" } else { "" },
+                        if unsigned { "u" } else { "" }
+                    );
+                    tokens.push(token);
                 }
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                     pos += 1;

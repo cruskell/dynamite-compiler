@@ -19,6 +19,9 @@ pub enum InstOperator {
     JNE,
     MUL,
     SDIV,
+    UDIV,
+    SHR,
+    LDRU,
     SHL,
     SAR,
     NOT,
@@ -70,6 +73,9 @@ impl InstOperator {
             JNE => "b.ne",
             MUL => "mul",
             SDIV => "sdiv",
+            UDIV => "udiv",
+            SHR => "lsr",
+            LDRU => "ldr",
             MSUB => "msub",
             SHL => "lsl",
             SAR => "asr",
@@ -265,9 +271,14 @@ impl Instruction {
         if let (Some(InstOperand::Reg(register)), Some(InstOperand::Ptr(base, size))) =
             (&self.operand1, &self.operand2)
         {
-            if matches!(self.operator, LDR | STR) {
+            if matches!(self.operator, LDR | LDRU | STR) {
                 let (operator, operand) = match (&self.operator, size) {
                     (LDR, 1) => ("ldrsb", register.to_string()),
+                    (LDR, 2) => ("ldrsh", register.to_string()),
+                    (LDRU, 1) => ("ldrb", register.to_string().replacen('x', "w", 1)),
+                    (LDRU, 2) => ("ldrh", register.to_string().replacen('x', "w", 1)),
+                    (LDRU, 4) => ("ldr", register.to_string().replacen('x', "w", 1)),
+                    (STR, 2) => ("strh", register.to_string().replacen('x', "w", 1)),
                     (LDR, 4) => ("ldrsw", register.to_string()),
                     (STR, 1) => ("strb", register.to_string().replacen('x', "w", 1)),
                     (STR, 4) => ("str", register.to_string().replacen('x', "w", 1)),

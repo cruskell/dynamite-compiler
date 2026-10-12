@@ -137,6 +137,8 @@ impl<'a> IrGenerator<'a> {
             ),
             Type::I8 => "i8".to_string(),
             Type::I32 => "i32".to_string(),
+            Type::Integer { bits, .. } => format!("i{bits}"),
+            Type::Bool => "i8".to_string(),
             Type::Ptr(_) => "ptr".to_string(),
             Type::Arr(child, size) => format!("[{} x {}]", size, Self::gen_type(*child)),
             Type::VariadicFunc(args, result) => format!(
@@ -224,7 +226,7 @@ impl<'a> IrGenerator<'a> {
                     _ => "null".to_string(),
                 }
             ),
-            Type::I8 | Type::I32 => format!(
+            Type::I8 | Type::I32 | Type::Integer { .. } | Type::Bool => format!(
                 "{} {}",
                 Self::gen_type(ty.clone()),
                 if let Some(GlobalVariableData::Elem(s)) = data {
@@ -382,32 +384,38 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn convert_integer(
-        &self,
         value: String,
         source: &Type,
         target: &Type,
         options: &mut Options,
         lines: &mut Vec<String>,
     ) -> String {
-        if matches!(target, Type::Ptr(_)) && matches!(source, Type::I8 | Type::I32) {
+        if matches!(target, Type::Ptr(_)) && source.integer_info().is_some() {
             if value == "0" {
                 return "null".to_string();
             }
-            let wide = options.new_register();
-            options.register_queue.pop();
-            lines.push(format!(
-                "  %{} = sext {} {} to i64",
-                wide,
-                Self::gen_type(source.clone()),
-                value
-            ));
+            let wide_value = Self::convert_integer(
+                value,
+                source,
+                &Type::integer(64, source.integer_info().unwrap().1),
+                options,
+                lines,
+            );
             let register = options.new_register();
             options.register_queue.pop();
-            lines.push(format!("  %{} = inttoptr i64 %{} to ptr", register, wide));
-            return format!("%{}", register);
+            lines.push(format!("  %{register} = inttoptr i64 {wide_value} to ptr"));
+            return format!("%{register}");
         }
-        if matches!(source, Type::Ptr(_) | Type::Arr(..)) && matches!(target, Type::I8 | Type::I32)
-        {
+        if *target == Type::Bool && matches!(source, Type::Ptr(_) | Type::Arr(..)) {
+            let predicate = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!("  %{predicate} = icmp ne ptr {value}, null"));
+            let result = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!("  %{result} = zext i1 %{predicate} to i8"));
+            return format!("%{result}");
+        }
+        if matches!(source, Type::Ptr(_) | Type::Arr(..)) && target.integer_info().is_some() {
             let register = options.new_register();
             options.register_queue.pop();
             lines.push(format!(
@@ -418,9 +426,27 @@ impl<'a> IrGenerator<'a> {
             ));
             return format!("%{}", register);
         }
-        let operation = match (source, target) {
-            (Type::I8, Type::I32) => "sext",
-            (Type::I32, Type::I8) => "trunc",
+        if *target == Type::Bool {
+            let register = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!(
+                "  %{register} = icmp ne {} {value}, 0",
+                Self::gen_type(source.clone())
+            ));
+            let result = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!("  %{result} = zext i1 %{register} to i8"));
+            return format!("%{result}");
+        }
+        let operation = match (source.integer_info(), target.integer_info()) {
+            (Some((sb, signed)), Some((tb, _))) if sb < tb => {
+                if signed {
+                    "sext"
+                } else {
+                    "zext"
+                }
+            }
+            (Some((sb, _)), Some((tb, _))) if sb > tb => "trunc",
             _ => return value,
         };
         let register = options.new_register();
@@ -525,7 +551,7 @@ impl<'a> IrGenerator<'a> {
                 if *target == Type::Void {
                     options.register_queue.push("0".to_string());
                 } else {
-                    let value = self.convert_integer(
+                    let value = Self::convert_integer(
                         value,
                         &operand.resolve_type().unwrap(),
                         target,
@@ -579,13 +605,13 @@ impl<'a> IrGenerator<'a> {
                         .get(node.args.len() - i - 1)
                         .cloned()
                         .unwrap_or_else(|| {
-                            if source == Type::I8 {
-                                Type::I32
+                            if source.integer_info().is_some() {
+                                source.promoted()
                             } else {
                                 source.clone()
                             }
                         });
-                    let value = self.convert_integer(value, &source, &ty, options, &mut lines);
+                    let value = Self::convert_integer(value, &source, &ty, options, &mut lines);
                     arguments.push(format!("{} {}", Self::gen_type(ty), value));
                 }
                 arguments.reverse();
@@ -652,7 +678,7 @@ impl<'a> IrGenerator<'a> {
                 let source_ty = node.resolve_type().unwrap();
                 let target_ty = options.return_ty.clone();
                 let value =
-                    self.convert_integer(value, &source_ty, &target_ty, options, &mut lines);
+                    Self::convert_integer(value, &source_ty, &target_ty, options, &mut lines);
                 lines.push(format!(
                     "  ret {} {}",
                     Self::gen_type_with_opaque_ptr(target_ty),
@@ -672,7 +698,7 @@ impl<'a> IrGenerator<'a> {
                 let address = options.register_queue.pop().unwrap();
                 let ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
                 let source_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
-                let value = self.convert_integer(value, &source_ty, &ty, options, &mut lines);
+                let value = Self::convert_integer(value, &source_ty, &ty, options, &mut lines);
                 lines.push(format!(
                     "  store {} {}, ptr {}, align {}",
                     Self::gen_type_with_opaque_ptr(ty.clone()),
@@ -761,16 +787,17 @@ impl<'a> IrGenerator<'a> {
                 let operand = node.lhs.as_ref().unwrap();
                 let mut lines = self.gen_node(operand, options);
                 let value = options.register_queue.pop().unwrap();
-                let value = self.convert_integer(
+                let value = Self::convert_integer(
                     value,
                     &operand.resolve_type().unwrap(),
-                    &Type::I32,
+                    &node.resolve_type().unwrap(),
                     options,
                     &mut lines,
                 );
                 lines.push(format!(
-                    "  %{} = xor i32 {}, -1",
+                    "  %{} = xor {} {}, -1",
                     options.new_register(),
+                    Self::gen_type(node.resolve_type().unwrap()),
                     value
                 ));
                 return lines;
@@ -778,10 +805,17 @@ impl<'a> IrGenerator<'a> {
             NodeType::Switch => {
                 let mut lines = self.gen_node(node.cond.as_ref().unwrap(), options);
                 let value = options.register_queue.pop().unwrap();
-                let value = self.convert_integer(
+                let selector_ty = node
+                    .cond
+                    .as_ref()
+                    .unwrap()
+                    .resolve_type()
+                    .unwrap()
+                    .promoted();
+                let value = Self::convert_integer(
                     value,
                     &node.cond.as_ref().unwrap().resolve_type().unwrap(),
-                    &Type::I32,
+                    &selector_ty,
                     options,
                     &mut lines,
                 );
@@ -792,12 +826,18 @@ impl<'a> IrGenerator<'a> {
                     .find(|case| case.value.is_none())
                     .map(|case| format!("case.{}", case.token.as_ref().unwrap().pos))
                     .unwrap_or(end.clone());
-                lines.push(format!("  switch i32 {}, label %{} [", value, default));
+                lines.push(format!(
+                    "  switch {} {}, label %{} [",
+                    Self::gen_type(selector_ty.clone()),
+                    value,
+                    default
+                ));
                 for case in &node.children {
                     if let Some(value) = case.value {
                         lines.push(format!(
-                            "    i32 {}, label %case.{}",
-                            value as i32,
+                            "    {} {}, label %case.{}",
+                            Self::gen_type(selector_ty.clone()),
+                            value as i64,
                             case.token.as_ref().unwrap().pos
                         ));
                     }
@@ -997,7 +1037,7 @@ impl<'a> IrGenerator<'a> {
                     lines.push(format!("{}:", label));
                     lines.extend(self.gen_node(branch, options));
                     let value = options.register_queue.pop().unwrap();
-                    let value = self.convert_integer(
+                    let value = Self::convert_integer(
                         value,
                         &branch.resolve_type().unwrap(),
                         &ty,
@@ -1143,24 +1183,41 @@ impl<'a> IrGenerator<'a> {
         let mut lhs_register = options.register_queue.pop().unwrap();
         let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
         let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
-        let operand_ty = if matches!(left_ty, Type::I8 | Type::I32)
-            && matches!(right_ty, Type::I8 | Type::I32)
-        {
-            Type::I32
+        let operand_ty = if left_ty.integer_info().is_some() && right_ty.integer_info().is_some() {
+            if matches!(node.nt, NodeType::BitLeft | NodeType::BitRight) {
+                left_ty.promoted()
+            } else {
+                Type::arithmetic_type(&left_ty, &right_ty)
+            }
         } else if let Type::Arr(child, _) = &left_ty {
             Type::Ptr(child.clone())
         } else {
             left_ty.clone()
         };
+        let operation = if operand_ty.integer_info().is_some_and(|(_, signed)| !signed) {
+            match node.nt {
+                NodeType::Div => "udiv",
+                NodeType::Mod => "urem",
+                NodeType::Lt => "icmp ult",
+                NodeType::Le => "icmp ule",
+                NodeType::BitRight => "lshr",
+                NodeType::Add => "add",
+                NodeType::Sub => "sub",
+                NodeType::Mul => "mul",
+                _ => operation,
+            }
+        } else {
+            operation
+        };
         let mut conversions = vec![];
-        rhs_register = self.convert_integer(
+        rhs_register = Self::convert_integer(
             rhs_register,
             &left_ty,
             &operand_ty,
             options,
             &mut conversions,
         );
-        lhs_register = self.convert_integer(
+        lhs_register = Self::convert_integer(
             lhs_register,
             &right_ty,
             &operand_ty,

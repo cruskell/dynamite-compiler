@@ -192,6 +192,16 @@ impl<'a> AsmGenerator<'a> {
                 }
             )
             .into(),
+            Type::Integer { .. } | Type::Bool => format!(
+                "  .{}byte {}",
+                ty.size_of(),
+                if let Some(GlobalVariableData::Elem(value)) = data {
+                    ty.convert_constant(value.parse().unwrap()).to_string()
+                } else {
+                    "0".into()
+                }
+            )
+            .into(),
             Type::I32 => format!(
                 "  .4byte {}",
                 if let Some(GlobalVariableData::Elem(s)) = data {
@@ -284,6 +294,28 @@ impl<'a> AsmGenerator<'a> {
         .into()
     }
 
+    fn normalize_integer(ty: &Type, register: Register) -> Assembly {
+        if *ty == Type::Bool {
+            let byte = if matches!(register, RDI) { DIL } else { AL };
+            return vec![
+                Assembly::inst2(CMP, register, 0),
+                Assembly::inst1(SETNE, byte),
+                Assembly::inst2(MOVZX, register, byte),
+            ]
+            .into();
+        }
+        if let Some((bits, signed)) = ty.integer_info() {
+            if bits < 64 {
+                return vec![
+                    Assembly::inst2(SHL, register, 64 - bits as usize),
+                    Assembly::inst2(if signed { SAR } else { SHR }, register, 64 - bits as usize),
+                ]
+                .into();
+            }
+        }
+        vec![].into()
+    }
+
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
             NodeType::Cast => {
@@ -291,15 +323,8 @@ impl<'a> AsmGenerator<'a> {
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
                     Assembly::inst1(POP, RAX),
                 ];
-                match node.cty {
-                    Some(Type::I8) => lines.push(Assembly::inst2(MOVSX, RAX, AL)),
-                    Some(Type::I32) => lines.push(Assembly::inst2(MOVSXD, RAX, EAX)),
-                    Some(Type::Ptr(_))
-                        if node.lhs.as_ref().unwrap().resolve_type() == Some(Type::I32) =>
-                    {
-                        lines.push(Assembly::inst2(MOVSXD, RAX, EAX))
-                    }
-                    _ => {}
+                if let Some(ty) = &node.cty {
+                    lines.push(Self::normalize_integer(ty, RAX));
                 }
                 lines.push(Assembly::inst1(PUSH, RAX));
                 return lines.into();
@@ -361,11 +386,10 @@ impl<'a> AsmGenerator<'a> {
                     } else {
                         vec![].into()
                     },
-                    match node.cty {
-                        Some(Type::I8) => Assembly::inst2(MOVSX, RAX, AL),
-                        Some(Type::I32) => Assembly::inst2(MOVSXD, RAX, EAX),
-                        _ => vec![].into(),
-                    },
+                    node.cty
+                        .as_ref()
+                        .map(|ty| Self::normalize_integer(ty, RAX))
+                        .unwrap_or_else(|| vec![].into()),
                     Assembly::inst1(PUSH, RAX),
                 ]
                 .into();
@@ -398,7 +422,8 @@ impl<'a> AsmGenerator<'a> {
                 for case in &node.children {
                     let label = format!(".Lcase.{}", case.token.as_ref().unwrap().pos);
                     if let Some(value) = case.value {
-                        lines.push(Assembly::inst2(CMP, EAX, (value as i32).to_string()));
+                        lines.push(Assembly::inst2(MOV, RDI, value));
+                        lines.push(Assembly::inst2(CMP, RAX, RDI));
                         lines.push(Assembly::inst1(JE, label));
                     } else {
                         default = label;
@@ -596,7 +621,13 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst2(
                         match node.nt {
                             NodeType::BitLeft => SHL,
-                            NodeType::BitRight => SAR,
+                            NodeType::BitRight => {
+                                if node.resolve_type().unwrap().integer_info().unwrap().1 {
+                                    SAR
+                                } else {
+                                    SHR
+                                }
+                            }
                             _ => {
                                 unreachable!()
                             }
@@ -604,6 +635,7 @@ impl<'a> AsmGenerator<'a> {
                         RAX,
                         CL,
                     ),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), RAX),
                     Assembly::inst1(PUSH, RAX),
                 ]
                 .into();
@@ -675,11 +707,29 @@ impl<'a> AsmGenerator<'a> {
             }
             _ => {}
         }
+        let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+        let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+        let arithmetic = if left_ty.integer_info().is_some() && right_ty.integer_info().is_some() {
+            Some(Type::arithmetic_type(&left_ty, &right_ty))
+        } else {
+            None
+        };
+        let unsigned = arithmetic
+            .as_ref()
+            .is_some_and(|ty| ty.integer_info().is_some_and(|(_, signed)| !signed));
         vec![
             self.gen_node(node.rhs.as_ref().unwrap(), offset, breakable_branch_num),
             self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
             Assembly::inst1(POP, RAX),
             Assembly::inst1(POP, RDI),
+            arithmetic
+                .as_ref()
+                .map(|ty| Self::normalize_integer(ty, RAX))
+                .unwrap_or_else(|| vec![].into()),
+            arithmetic
+                .as_ref()
+                .map(|ty| Self::normalize_integer(ty, RDI))
+                .unwrap_or_else(|| vec![].into()),
             match node.nt {
                 NodeType::Add => vec![
                     if let Some(t) = node.lhs.as_ref().unwrap().dest_type() {
@@ -716,10 +766,22 @@ impl<'a> AsmGenerator<'a> {
                 ]
                 .into(),
                 NodeType::Mul => Assembly::inst2(IMUL, RAX, RDI),
-                NodeType::Div => vec![Assembly::inst0(CQO), Assembly::inst1(IDIV, RDI)].into(),
+                NodeType::Div => vec![
+                    if unsigned {
+                        Assembly::inst2(XOR, RDX, RDX)
+                    } else {
+                        Assembly::inst0(CQO)
+                    },
+                    Assembly::inst1(if unsigned { DIV } else { IDIV }, RDI),
+                ]
+                .into(),
                 NodeType::Mod => vec![
-                    Assembly::inst0(CQO),
-                    Assembly::inst1(IDIV, RDI),
+                    if unsigned {
+                        Assembly::inst2(XOR, RDX, RDX)
+                    } else {
+                        Assembly::inst0(CQO)
+                    },
+                    Assembly::inst1(if unsigned { DIV } else { IDIV }, RDI),
                     Assembly::inst2(MOV, RAX, RDX),
                 ]
                 .into(),
@@ -729,8 +791,20 @@ impl<'a> AsmGenerator<'a> {
                         match node.nt {
                             NodeType::Eq => SETE,
                             NodeType::Ne => SETNE,
-                            NodeType::Lt => SETL,
-                            NodeType::Le => SETLE,
+                            NodeType::Lt => {
+                                if unsigned {
+                                    SETB
+                                } else {
+                                    SETL
+                                }
+                            }
+                            NodeType::Le => {
+                                if unsigned {
+                                    SETBE
+                                } else {
+                                    SETLE
+                                }
+                            }
                             _ => unreachable!(),
                         },
                         AL,
@@ -811,6 +885,16 @@ impl<'a> AsmGenerator<'a> {
         match c_type {
             Some(Type::I8) => Assembly::inst2(operator, Ptr(from, 1), DIL),
             Some(Type::I32) => Assembly::inst2(operator, Ptr(from, 4), EDI),
+            Some(ty) if ty.integer_info().is_some() => Assembly::inst2(
+                operator,
+                Ptr(from, ty.size_of()),
+                match ty.size_of() {
+                    1 => DIL,
+                    2 => DI,
+                    4 => EDI,
+                    _ => RDI,
+                },
+            ),
             _ => Assembly::inst2(operator, Ptr(from, 8), RDI),
         }
     }
@@ -819,6 +903,20 @@ impl<'a> AsmGenerator<'a> {
         match node.resolve_type() {
             Some(Type::I32) => Assembly::inst2(MOVSXD, RAX, Ptr(RAX, 4)),
             Some(Type::I8) => Assembly::inst2(MOVSX, RAX, Ptr(RAX, 1)),
+            Some(ty) if ty.integer_info().is_some() => {
+                let (bits, signed) = ty.integer_info().unwrap();
+                if bits == 64 {
+                    Assembly::inst2(MOV, RAX, Ptr(RAX, 8))
+                } else if bits == 32 && !signed {
+                    Assembly::inst2(MOV, EAX, Ptr(RAX, 4))
+                } else {
+                    Assembly::inst2(
+                        if signed { MOVSX } else { MOVZX },
+                        RAX,
+                        Ptr(RAX, ty.size_of()),
+                    )
+                }
+            }
             _ => Assembly::inst2(MOV, RAX, Ptr(RAX, 8)),
         }
     }

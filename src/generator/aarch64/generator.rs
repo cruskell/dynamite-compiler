@@ -192,6 +192,16 @@ impl<'a> AsmGenerator<'a> {
                 }
             )
             .into(),
+            Type::Integer { .. } | Type::Bool => format!(
+                "  .{}byte {}",
+                ty.size_of(),
+                if let Some(GlobalVariableData::Elem(value)) = data {
+                    ty.convert_constant(value.parse().unwrap()).to_string()
+                } else {
+                    "0".into()
+                }
+            )
+            .into(),
             Type::I32 => format!(
                 "  .4byte {}",
                 if let Some(GlobalVariableData::Elem(s)) = data {
@@ -364,6 +374,31 @@ impl<'a> AsmGenerator<'a> {
         ])
     }
 
+    fn normalize_integer(ty: &Type, register: Register) -> Assembly {
+        if *ty == Type::Bool {
+            return vec![
+                Assembly::inst2(CMP, register, 0),
+                Assembly::inst2(CSET, register, "ne"),
+            ]
+            .into();
+        }
+        if let Some((bits, signed)) = ty.integer_info() {
+            if bits < 64 {
+                return vec![
+                    Assembly::inst3(SHL, register, register, 64 - bits as usize),
+                    Assembly::inst3(
+                        if signed { SAR } else { SHR },
+                        register,
+                        register,
+                        64 - bits as usize,
+                    ),
+                ]
+                .into();
+            }
+        }
+        vec![].into()
+    }
+
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
             NodeType::Cast => {
@@ -371,15 +406,8 @@ impl<'a> AsmGenerator<'a> {
                     self.gen_node(node.lhs.as_ref().unwrap(), options),
                     Self::pop(X8),
                 ];
-                match node.cty {
-                    Some(Type::I8) => lines.push(Assembly::inst2(SXTB, X8, W8)),
-                    Some(Type::I32) => lines.push(Assembly::inst2(SXTW, X8, W8)),
-                    Some(Type::Ptr(_))
-                        if node.lhs.as_ref().unwrap().resolve_type() == Some(Type::I32) =>
-                    {
-                        lines.push(Assembly::inst2(SXTW, X8, W8))
-                    }
-                    _ => {}
+                if let Some(ty) = &node.cty {
+                    lines.push(Self::normalize_integer(ty, X8));
                 }
                 lines.push(Self::push(X8));
                 return lines.into();
@@ -463,11 +491,10 @@ impl<'a> AsmGenerator<'a> {
                         (node.args.len() + usize::from(node.lhs.is_some())) * 8,
                     ),
                     Assembly::inst2(MOV, SP, X29),
-                    match node.cty {
-                        Some(Type::I8) => Assembly::inst2(SXTB, X0, W0),
-                        Some(Type::I32) => Assembly::inst2(SXTW, X0, W0),
-                        _ => vec![].into(),
-                    },
+                    node.cty
+                        .as_ref()
+                        .map(|ty| Self::normalize_integer(ty, X0))
+                        .unwrap_or_else(|| vec![].into()),
                     Self::push(X0),
                 ]);
                 return lines.into();
@@ -500,7 +527,7 @@ impl<'a> AsmGenerator<'a> {
                 for case in &node.children {
                     let label = format!(".Lcase.{}", case.token.as_ref().unwrap().pos);
                     if let Some(value) = case.value {
-                        lines.push(Assembly::inst2(MOV, X9, value as i32 as isize as usize));
+                        lines.push(Assembly::inst2(MOV, X9, value));
                         lines.push(Assembly::inst2(CMP, X8, X9));
                         lines.push(Assembly::inst1(JE, label));
                     } else {
@@ -697,13 +724,16 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst3(
                         if matches!(node.nt, NodeType::BitLeft) {
                             SHL
-                        } else {
+                        } else if node.resolve_type().unwrap().integer_info().unwrap().1 {
                             SAR
+                        } else {
+                            SHR
                         },
                         X8,
                         X8,
                         X10,
                     ),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), X8),
                     Self::push(X8),
                 ]
                 .into();
@@ -778,11 +808,29 @@ impl<'a> AsmGenerator<'a> {
             }
             _ => {}
         }
+        let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+        let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+        let arithmetic = if left_ty.integer_info().is_some() && right_ty.integer_info().is_some() {
+            Some(Type::arithmetic_type(&left_ty, &right_ty))
+        } else {
+            None
+        };
+        let unsigned = arithmetic
+            .as_ref()
+            .is_some_and(|ty| ty.integer_info().is_some_and(|(_, signed)| !signed));
         vec![
             self.gen_node(node.rhs.as_ref().unwrap(), options),
             self.gen_node(node.lhs.as_ref().unwrap(), options),
             Self::pop(X8),
             Self::pop(X13),
+            arithmetic
+                .as_ref()
+                .map(|ty| Self::normalize_integer(ty, X8))
+                .unwrap_or_else(|| vec![].into()),
+            arithmetic
+                .as_ref()
+                .map(|ty| Self::normalize_integer(ty, X13))
+                .unwrap_or_else(|| vec![].into()),
             match node.nt {
                 NodeType::Add => vec![
                     if let Some(t) = node.lhs.as_ref().unwrap().dest_type() {
@@ -826,9 +874,9 @@ impl<'a> AsmGenerator<'a> {
                 ]
                 .into(),
                 NodeType::Mul => Assembly::inst3(MUL, X8, X8, X13),
-                NodeType::Div => Assembly::inst3(SDIV, X8, X8, X13),
+                NodeType::Div => Assembly::inst3(if unsigned { UDIV } else { SDIV }, X8, X8, X13),
                 NodeType::Mod => vec![
-                    Assembly::inst3(SDIV, X10, X8, X13),
+                    Assembly::inst3(if unsigned { UDIV } else { SDIV }, X10, X8, X13),
                     Assembly::inst4(MSUB, X8, X10, X13, X8),
                 ]
                 .into(),
@@ -840,8 +888,20 @@ impl<'a> AsmGenerator<'a> {
                         match node.nt {
                             NodeType::Eq => "eq",
                             NodeType::Ne => "ne",
-                            NodeType::Lt => "lt",
-                            NodeType::Le => "le",
+                            NodeType::Lt => {
+                                if unsigned {
+                                    "lo"
+                                } else {
+                                    "lt"
+                                }
+                            }
+                            NodeType::Le => {
+                                if unsigned {
+                                    "ls"
+                                } else {
+                                    "le"
+                                }
+                            }
                             _ => unreachable!(),
                         },
                     ),
@@ -856,6 +916,7 @@ impl<'a> AsmGenerator<'a> {
                     unreachable!();
                 }
             },
+            Self::normalize_integer(&node.resolve_type().unwrap(), X8),
             Self::push(X8),
         ]
         .into()
@@ -974,6 +1035,15 @@ impl<'a> AsmGenerator<'a> {
         match node.resolve_type() {
             Some(Type::I8) => Assembly::inst2(LDR, X8, Ptr(X8, 1)),
             Some(Type::I32) => Assembly::inst2(LDR, X8, Ptr(X8, 4)),
+            Some(ty) if ty.integer_info().is_some() => Assembly::inst2(
+                if ty.integer_info().unwrap().1 {
+                    LDR
+                } else {
+                    LDRU
+                },
+                X8,
+                Ptr(X8, ty.size_of()),
+            ),
             _ => Assembly::inst2(LDR, X8, Ptr(X8, 8)),
         }
     }

@@ -539,3 +539,19 @@ fn it_supports_enumerations(code: &str, output_option: &str) {
 fn it_supports_goto_labels(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "int main(){return sizeof(short)+sizeof(long)+sizeof(unsigned char)+sizeof(_Bool)-12;}",
+    "int main(){unsigned int x=4294967295U;return (x/3==1431655765U && x>1)-1;}",
+    "int main(){long x=4294967296L;return (x+3==4294967299L)-1;}",
+    "short g=-3; unsigned short h=65535; int main(){return g+h-65532;}",
+    "_Bool f(int x){return x;} int main(){_Bool x=9;return x+f(-3)-2;}",
+    "int main(){unsigned long x=18446744073709551615UL;return (x/3==6148914691236517205UL)-1;}",
+    "int main(){long x=4294967296L;switch(x){case 4294967296L:return 0;default:return 9;}}",
+    "int main(){unsigned int x=4294967295U;return (x>>31)-1;}",
+    "int main(){int x;_Bool b=&x;return b-1;}",
+    "int main(){unsigned int x=4294967295U;return (x+1==0)-1;}",
+], ["asm", "llvm"])]
+fn it_supports_extended_integers(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
