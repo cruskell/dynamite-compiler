@@ -9,6 +9,7 @@ use crate::ctype::Type;
 use crate::error;
 use crate::func::Func;
 use crate::generator::Os;
+use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use std::fmt::Display;
@@ -233,6 +234,16 @@ impl<'a> AsmGenerator<'a> {
                 }
             )
             .into(),
+            Type::Float(_) => format!(
+                "  .{}byte {}",
+                ty.size_of(),
+                if let Some(GlobalVariableData::Elem(value)) = data {
+                    value.as_str()
+                } else {
+                    "0"
+                }
+            )
+            .into(),
             Type::Integer { .. } | Type::Bool => format!(
                 "  .{}byte {}",
                 ty.size_of(),
@@ -313,7 +324,13 @@ impl<'a> AsmGenerator<'a> {
             .iter()
             .map(|arg| arg.resolve_type().unwrap())
             .collect::<Vec<_>>();
-        let (stack_slots, _) = self.stack_arguments(&types, types.len());
+        let (locations, _, _) = scalar_arguments(
+            &types,
+            8,
+            matches!(self.target_os, Os::MacOS),
+            types.len(),
+            false,
+        );
         vec![
             if func.internal {
                 vec![].into()
@@ -336,27 +353,30 @@ impl<'a> AsmGenerator<'a> {
                     if let NodeType::LocalVar = arg.nt {
                         vec![
                             Assembly::inst3(ADD, X10, X29, offset - arg.offset.unwrap()),
-                            if let Some(register) = ARGS_REG.get(i) {
-                                Assembly::inst2(
+                            match locations[i] {
+                                ScalarLocation::General(register) => Assembly::inst2(
                                     STR,
-                                    *register,
-                                    Ptr(X10, arg.resolve_type().unwrap().size_of()),
-                                )
-                            } else {
-                                let (_, slot, size) = stack_slots
-                                    .iter()
-                                    .find(|(index, _, _)| *index == i)
-                                    .unwrap();
-                                vec![
+                                    ARGS_REG[register],
+                                    Ptr(X10, types[i].size_of()),
+                                ),
+                                ScalarLocation::Floating(register) => {
+                                    let bits = types[i].float_bits().unwrap();
+                                    vec![
+                                        Assembly::inst2(
+                                            FMOV,
+                                            if bits == 32 { W8 } else { X8 },
+                                            Float(register, bits),
+                                        ),
+                                        Assembly::inst2(STR, X8, Ptr(X10, types[i].size_of())),
+                                    ]
+                                    .into()
+                                }
+                                ScalarLocation::Stack(slot, size) => vec![
                                     Assembly::inst3(ADD, X11, X29, offset + 32 + slot),
-                                    Assembly::inst2(LDR, X8, Ptr(X11, *size)),
-                                    Assembly::inst2(
-                                        STR,
-                                        X8,
-                                        Ptr(X10, arg.resolve_type().unwrap().size_of()),
-                                    ),
+                                    Assembly::inst2(LDRU, X8, Ptr(X11, size)),
+                                    Assembly::inst2(STR, X8, Ptr(X10, types[i].size_of())),
                                 ]
-                                .into()
+                                .into(),
                             },
                         ]
                         .into()
@@ -444,6 +464,205 @@ impl<'a> AsmGenerator<'a> {
         vec![].into()
     }
 
+    fn float_conversion(source: &Type, target: &Type) -> Assembly {
+        if source == target || *target == Type::Void {
+            return vec![].into();
+        }
+        if *target == Type::Bool && source.float_bits().is_some() {
+            return vec![
+                Assembly::inst3(SHL, X8, X8, 65 - source.float_bits().unwrap() as usize),
+                Assembly::inst2(CMP, X8, 0),
+                Assembly::inst2(CSET, X8, "ne"),
+            ]
+            .into();
+        }
+        let working_bits = if source.integer_info().is_some() && target.float_bits() == Some(32) {
+            32
+        } else {
+            64
+        };
+        let mut lines = vec![];
+        if let Some(bits) = source.float_bits() {
+            lines.push(Assembly::inst2(
+                FMOV,
+                Float(16, bits),
+                if bits == 32 { W8 } else { X8 },
+            ));
+            if bits == 32 {
+                lines.push(Assembly::inst2(FCVT, Float(16, 64), Float(16, 32)));
+            }
+        } else {
+            lines.push(Self::normalize_integer(source, X8));
+            lines.push(Assembly::inst2(
+                if source.integer_info().unwrap().1 {
+                    SCVTF
+                } else {
+                    UCVTF
+                },
+                Float(16, working_bits),
+                X8,
+            ));
+        }
+        if let Some(bits) = target.float_bits() {
+            if bits == 32 && working_bits != 32 {
+                lines.push(Assembly::inst2(FCVT, Float(16, 32), Float(16, 64)));
+            }
+            lines.push(Assembly::inst2(
+                FMOV,
+                if bits == 32 { W8 } else { X8 },
+                Float(16, bits),
+            ));
+        } else {
+            lines.push(Assembly::inst2(
+                if target.integer_info().unwrap().1 {
+                    FCVTZS
+                } else {
+                    FCVTZU
+                },
+                X8,
+                Float(16, 64),
+            ));
+            lines.push(Self::normalize_integer(target, X8));
+        }
+        lines.into()
+    }
+    fn float_operation(&self, node: &Node, options: Options) -> Assembly {
+        let bits = node
+            .lhs
+            .as_ref()
+            .unwrap()
+            .resolve_type()
+            .unwrap()
+            .float_bits()
+            .unwrap();
+        let mut lines = vec![
+            self.gen_node(node.rhs.as_ref().unwrap(), options),
+            self.gen_node(node.lhs.as_ref().unwrap(), options),
+            Self::pop(X8),
+            Assembly::inst2(FMOV, Float(16, bits), if bits == 32 { W8 } else { X8 }),
+            Self::pop(X8),
+            Assembly::inst2(FMOV, Float(17, bits), if bits == 32 { W8 } else { X8 }),
+        ];
+        if matches!(
+            node.nt,
+            NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le
+        ) {
+            lines.push(Assembly::inst2(FCMP, Float(16, bits), Float(17, bits)));
+            lines.push(Assembly::inst2(
+                CSET,
+                X8,
+                match node.nt {
+                    NodeType::Eq => "eq",
+                    NodeType::Ne => "ne",
+                    NodeType::Lt => "mi",
+                    NodeType::Le => "ls",
+                    _ => unreachable!(),
+                },
+            ));
+        } else {
+            lines.push(Assembly::inst3(
+                match node.nt {
+                    NodeType::Add => FADD,
+                    NodeType::Sub => FSUB,
+                    NodeType::Mul => FMUL,
+                    NodeType::Div => FDIV,
+                    _ => unreachable!(),
+                },
+                Float(16, bits),
+                Float(16, bits),
+                Float(17, bits),
+            ));
+            lines.push(Assembly::inst2(
+                FMOV,
+                if bits == 32 { W8 } else { X8 },
+                Float(16, bits),
+            ));
+        }
+        lines.push(Self::push(X8));
+        lines.into()
+    }
+    fn float_call(&self, node: &Node, options: Options) -> Assembly {
+        let types = node
+            .args
+            .iter()
+            .rev()
+            .map(|arg| arg.resolve_type().unwrap())
+            .collect::<Vec<_>>();
+        let macos = matches!(self.target_os, Os::MacOS);
+        let (locations, stack_size, _) = scalar_arguments(
+            &types,
+            8,
+            macos,
+            node.parameter_types.len(),
+            macos && node.variadic,
+        );
+        let mut lines = vec![];
+        if let Some(callee) = &node.lhs {
+            lines.push(self.gen_node(callee, options));
+        }
+        for arg in &node.args {
+            lines.push(self.gen_node(arg, options));
+        }
+        lines.extend([
+            Assembly::inst3(SUB, X10, X19, stack_size),
+            Assembly::inst3(AND, X10, X10, "#-16"),
+            Assembly::inst2(MOV, SP, X10),
+        ]);
+        for (index, location) in locations.iter().enumerate() {
+            let source = PtrAdd(X19, format!("#{}", index * 8));
+            lines.push(match *location {
+                ScalarLocation::General(register) => {
+                    Assembly::inst2(LDR, ARGS_REG[register], source)
+                }
+                ScalarLocation::Floating(register) => {
+                    let bits = types[index].float_bits().unwrap();
+                    vec![
+                        Assembly::inst2(LDR, X8, source),
+                        Assembly::inst2(
+                            FMOV,
+                            Float(register, bits),
+                            if bits == 32 { W8 } else { X8 },
+                        ),
+                    ]
+                    .into()
+                }
+                ScalarLocation::Stack(slot, size) => vec![
+                    Assembly::inst2(LDR, X8, source),
+                    Assembly::inst3(ADD, X11, SP, slot),
+                    Assembly::inst2(STR, X8, Ptr(X11, size)),
+                ]
+                .into(),
+            });
+        }
+        if node.lhs.is_some() {
+            lines.extend([
+                Assembly::inst2(LDR, X12, PtrAdd(X19, format!("#{}", node.args.len() * 8))),
+                Assembly::inst1(BLR, X12),
+            ]);
+        } else {
+            lines.push(Assembly::inst1(BL, self.with_prefix(&node.global_name)));
+        }
+        lines.extend([
+            Assembly::inst3(
+                ADD,
+                X19,
+                X19,
+                (node.args.len() + usize::from(node.lhs.is_some())) * 8,
+            ),
+            Assembly::inst2(MOV, SP, X29),
+        ]);
+        if let Some(bits) = node.resolve_type().unwrap().float_bits() {
+            lines.push(Assembly::inst2(
+                FMOV,
+                if bits == 32 { W0 } else { X0 },
+                Float(0, bits),
+            ));
+        } else if let Some(ty) = &node.cty {
+            lines.push(Self::normalize_integer(ty, X0));
+        }
+        lines.push(Self::push(X0));
+        lines.into()
+    }
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
             NodeType::Cast => {
@@ -452,7 +671,14 @@ impl<'a> AsmGenerator<'a> {
                     Self::pop(X8),
                 ];
                 if let Some(ty) = &node.cty {
-                    lines.push(Self::normalize_integer(ty, X8));
+                    let source = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+                    lines.push(
+                        if source.float_bits().is_some() || ty.float_bits().is_some() {
+                            Self::float_conversion(&source, ty)
+                        } else {
+                            Self::normalize_integer(ty, X8)
+                        },
+                    );
                 }
                 lines.push(Self::push(X8));
                 return lines.into();
@@ -473,6 +699,14 @@ impl<'a> AsmGenerator<'a> {
                 return vec![self.gen_statements(&node.children, options), Self::push(0)].into();
             }
             NodeType::CallFunc => {
+                if node.resolve_type().unwrap().float_bits().is_some()
+                    || node
+                        .args
+                        .iter()
+                        .any(|arg| arg.resolve_type().unwrap().float_bits().is_some())
+                {
+                    return self.float_call(node, options);
+                }
                 let fixed = if matches!(self.target_os, Os::MacOS) && node.variadic {
                     node.parameter_types.len()
                 } else {
@@ -719,6 +953,11 @@ impl<'a> AsmGenerator<'a> {
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), options),
                     Self::pop(X0),
+                    if let Some(bits) = node.resolve_type().and_then(|ty| ty.float_bits()) {
+                        Assembly::inst2(FMOV, Float(0, bits), if bits == 32 { W0 } else { X0 })
+                    } else {
+                        vec![].into()
+                    },
                     Self::epilogue(options.offset),
                 ]
                 .into();
@@ -869,6 +1108,13 @@ impl<'a> AsmGenerator<'a> {
                 .into();
             }
             _ => {}
+        }
+        if node
+            .lhs
+            .as_ref()
+            .is_some_and(|lhs| lhs.resolve_type().unwrap().float_bits().is_some())
+        {
+            return self.float_operation(node, options);
         }
         let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
         let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
@@ -1098,6 +1344,7 @@ impl<'a> AsmGenerator<'a> {
     fn deref(&self, node: &Node) -> Assembly {
         match node.resolve_type() {
             Some(Type::I8) => Assembly::inst2(LDR, X8, Ptr(X8, 1)),
+            Some(Type::Float(32)) => Assembly::inst2(LDRU, X8, Ptr(X8, 4)),
             Some(Type::I32) => Assembly::inst2(LDR, X8, Ptr(X8, 4)),
             Some(ty) if ty.integer_info().is_some() => Assembly::inst2(
                 if ty.integer_info().unwrap().1 {

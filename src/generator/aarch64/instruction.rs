@@ -2,6 +2,18 @@ use crate::generator::Os;
 
 #[derive(Default)]
 pub enum InstOperator {
+    FMOV,
+    FADD,
+    FSUB,
+    FMUL,
+    FDIV,
+    FCMP,
+    FCVT,
+    SCVTF,
+    UCVTF,
+    FCVTZS,
+    FCVTZU,
+
     MOV,
     CSET,
     SXTB,
@@ -56,6 +68,17 @@ impl InstOperator {
             return "movzb";
         }
         match self {
+            FMOV => "fmov",
+            FADD => "fadd",
+            FSUB => "fsub",
+            FMUL => "fmul",
+            FDIV => "fdiv",
+            FCMP => "fcmp",
+            FCVT => "fcvt",
+            SCVTF => "scvtf",
+            UCVTF => "ucvtf",
+            FCVTZS => "fcvtzs",
+            FCVTZU => "fcvtzu",
             MOV => "mov",
             CSET => "cset",
             SXTB => "sxtb",
@@ -104,6 +127,8 @@ impl InstOperator {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Register {
+    Float(usize, u8),
+
     X0,
     W0,
     X1,
@@ -139,7 +164,12 @@ use Register::*;
 
 impl Display for Register {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        if let Self::Float(index, bits) = self {
+            return write!(f, "{}{index}", if *bits == 32 { "s" } else { "d" });
+        }
         f.write_str(match self {
+            Self::Float(_, _) => unreachable!(),
+
             X0 => "x0",
             W0 => "w0",
             X1 => "x1",

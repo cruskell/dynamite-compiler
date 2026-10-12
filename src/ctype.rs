@@ -83,6 +83,7 @@ pub enum Type {
     I32,
     Integer { bits: u8, signed: bool },
     Bool,
+    Float(u8),
     Ptr(Box<Type>),
     Arr(Box<Type>, usize),
     Func(Vec<Type>, Box<Type>),
@@ -90,6 +91,30 @@ pub enum Type {
 }
 
 impl Type {
+    pub fn float_bits(&self) -> Option<u8> {
+        match self.unqualified() {
+            Self::Float(bits) => Some(*bits),
+            _ => None,
+        }
+    }
+    pub fn is_arithmetic(&self) -> bool {
+        self.integer_info().is_some() || self.float_bits().is_some()
+    }
+    pub fn float_value(&self, bits: usize) -> f64 {
+        if self.float_bits() == Some(32) {
+            f32::from_bits(bits as u32) as f64
+        } else {
+            f64::from_bits(bits as u64)
+        }
+    }
+    pub fn float_constant(&self, value: f64) -> usize {
+        if self.float_bits() == Some(32) {
+            (value as f32).to_bits() as usize
+        } else {
+            value.to_bits() as usize
+        }
+    }
+
     pub fn integer(bits: u8, signed: bool) -> Self {
         match (bits, signed) {
             (8, true) => Self::I8,
@@ -115,6 +140,13 @@ impl Type {
         }
     }
     pub fn arithmetic_type(lhs: &Self, rhs: &Self) -> Self {
+        if lhs.float_bits().is_some() || rhs.float_bits().is_some() {
+            return Self::Float(
+                lhs.float_bits()
+                    .unwrap_or(0)
+                    .max(rhs.float_bits().unwrap_or(0)),
+            );
+        }
         let lhs = lhs.promoted();
         let rhs = rhs.promoted();
         let (Some((lb, ls)), Some((rb, rs))) = (lhs.integer_info(), rhs.integer_info()) else {
@@ -200,6 +232,7 @@ impl Type {
             Type::I32 => 4,
             Type::Integer { bits, .. } => (*bits as usize) / 8,
             Type::Bool => 1,
+            Type::Float(bits) => usize::from(*bits) / 8,
             Type::Ptr(_) => 8,
             Type::Arr(t, s) => t.size_of() * s,
             Type::Func(..) | Type::VariadicFunc(..) => 1,

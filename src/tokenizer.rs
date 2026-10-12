@@ -3,8 +3,9 @@ use crate::token::{Token, TokenType};
 use crate::trie::Trie;
 use std::collections::HashSet;
 
-pub const TYPES: [&str; 9] = [
-    "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool",
+pub const TYPES: [&str; 11] = [
+    "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool", "float",
+    "double",
 ];
 const RESERVED_WORDS: [&str; 21] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
@@ -95,6 +96,124 @@ impl Tokenizer {
             ..Token::default()
         }
     }
+    fn float_token(code: &str, start: usize) -> Result<Option<(Token, usize)>, error::SyntaxError> {
+        let bytes = code.as_bytes();
+        let hexadecimal = code[start..].starts_with("0x") || code[start..].starts_with("0X");
+        let mut pos = start + if hexadecimal { 2 } else { 0 };
+        let digits_start = pos;
+        while bytes.get(pos).is_some_and(|b| {
+            if hexadecimal {
+                b.is_ascii_hexdigit()
+            } else {
+                b.is_ascii_digit()
+            }
+        }) {
+            pos += 1;
+        }
+        let mut fractional = false;
+        if bytes.get(pos) == Some(&b'.') {
+            fractional = true;
+            pos += 1;
+            while bytes.get(pos).is_some_and(|b| {
+                if hexadecimal {
+                    b.is_ascii_hexdigit()
+                } else {
+                    b.is_ascii_digit()
+                }
+            }) {
+                pos += 1;
+            }
+        }
+        let mantissa_end = pos;
+        if !code[digits_start..mantissa_end]
+            .bytes()
+            .any(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(error::SyntaxError::new(
+                start,
+                "floating literal requires digits",
+            ));
+        }
+        let exponent = bytes.get(pos).is_some_and(|b| {
+            if hexadecimal {
+                matches!(b, b'p' | b'P')
+            } else {
+                matches!(b, b'e' | b'E')
+            }
+        });
+        if !fractional && !exponent {
+            return Ok(None);
+        }
+        if hexadecimal && !exponent {
+            return Err(error::SyntaxError::new(
+                start,
+                "hexadecimal float requires an exponent",
+            ));
+        }
+        let mut exponent_value = 0i32;
+        if exponent {
+            pos += 1;
+            let exponent_start = pos;
+            if bytes.get(pos).is_some_and(|b| matches!(b, b'+' | b'-')) {
+                pos += 1;
+            }
+            let exponent_digits = pos;
+            while bytes.get(pos).is_some_and(u8::is_ascii_digit) {
+                pos += 1;
+            }
+            if pos == exponent_digits {
+                return Err(error::SyntaxError::new(
+                    start,
+                    "floating exponent requires digits",
+                ));
+            }
+            exponent_value = code[exponent_start..pos]
+                .parse()
+                .map_err(|_| error::SyntaxError::new(start, "floating exponent is out of range"))?;
+        }
+        let numeric_end = pos;
+        let single = bytes.get(pos).is_some_and(|b| matches!(b, b'f' | b'F'));
+        if single {
+            pos += 1;
+        }
+        if bytes
+            .get(pos)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        {
+            return Err(error::SyntaxError::new(start, "invalid floating literal"));
+        }
+        let value = if hexadecimal {
+            let mut value = 0.0f64;
+            let mut fractional_digits = 0i32;
+            let mut after_point = false;
+            for b in code[digits_start..mantissa_end].bytes() {
+                if b == b'.' {
+                    after_point = true;
+                    continue;
+                }
+                value = value * 16.0 + f64::from((b as char).to_digit(16).unwrap());
+                fractional_digits += i32::from(after_point);
+            }
+            value * 2.0f64.powi(exponent_value.saturating_sub(fractional_digits.saturating_mul(4)))
+        } else {
+            code[start..numeric_end]
+                .parse::<f64>()
+                .map_err(|_| error::SyntaxError::new(start, "invalid floating literal"))?
+        };
+        Ok(Some((
+            Token {
+                tt: TokenType::Float,
+                pos: start,
+                i_value: if single {
+                    (value as f32).to_bits() as usize
+                } else {
+                    value.to_bits() as usize
+                },
+                s_value: if single { "f" } else { "d" }.into(),
+            },
+            pos,
+        )))
+    }
     pub fn tokenize(code: &str, is_debug: bool) -> Result<Vec<Token>, error::SyntaxError> {
         let mut tokens = vec![];
         let reserved_words = RESERVED_WORDS.into_iter().collect::<HashSet<_>>();
@@ -103,6 +222,15 @@ impl Tokenizer {
         let mut pos = 0;
         while pos < bytes.len() {
             let start = pos;
+            if bytes[pos].is_ascii_digit()
+                || (bytes[pos] == b'.' && bytes.get(pos + 1).is_some_and(u8::is_ascii_digit))
+            {
+                if let Some((token, end)) = Self::float_token(code, pos)? {
+                    tokens.push(token);
+                    pos = end;
+                    continue;
+                }
+            }
             match bytes[pos] {
                 byte if byte.is_ascii_whitespace() => pos += 1,
                 b'0'..=b'9' => {

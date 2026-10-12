@@ -693,3 +693,63 @@ fn it_interoperates_with_clang_bit_fields(output_option: &str) {
 fn it_supports_bit_field_boundaries(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "int main(){double x=1.5;float y=2.25f;return (int)(x+y)-3;}",
+    "double x=1.5+2.25;float y=0x1.8p1f;int main(){return (x==3.75 && y==3.0f)-1;}",
+    "double f(float x,int y){return x+y;}int main(){return (int)f(1.25f,3)-4;}",
+    "int main(){double x=-0.0;if(x)return 1;return (x==0.0)-1;}",
+    "int main(){double x=2.5;double old=x++;return (x==3.5 && old==2.5)-1;}",
+    "int main(){double x=1.0;x+=2.5;return (x==3.5)-1;}",
+    "int main(){float x=.5e1F;return (int)(x*2.0f/4.0f)-2;}",
+    "int x=(int)3.75;double y=7;int main(){return x+(int)y-10;}",
+], ["asm", "llvm"])]
+fn it_supports_floating_point(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){double n=0.0/0.0;return (n!=n && !(n<n) && !(n==n) && !(n<=n))-1;}",
+    "int main(){double z=-0.0;return (_Bool)z;}",
+    "double f(double a,double b,double c,double d,double e,double f,double g,double h,double i){return a+b+c+d+e+f+g+h+i;}int main(){return (int)f(1,2,3,4,5,6,7,8,9)-45;}",
+    "double f(int a,float b,int c,double d,int e,float f,int g,double h,int i,float j,int k,double l,int m,float n){return a+b+c+d+e+f+g+h+i+j+k+l+m+n;}int main(){return (int)f(1,2,3,4,5,6,7,8,9,10,11,12,13,14)-105;}",
+    "int main(){unsigned long x=18446744073709549568UL;double y=x;return ((unsigned long)y==x)-1;}",
+    "int main(){unsigned long x=18014398509481987UL;double y=x;return (y==18014398509481988.0)-1;}",
+    "double f(double x){return x+1.5;}int main(){double (*p)(double)=f;return (p(2.5)==4.0)-1;}",
+    "struct S{float x;double y;};struct S s={1.5f,2.25};int main(){return (s.x+s.y==3.75)-1;}",
+], ["asm", "llvm"])]
+fn it_supports_floating_abi_and_edges(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+#[test_matrix(["asm", "llvm"])]
+fn it_promotes_variadic_floats(output_option: &str) {
+    let output = compile_and_run(
+        "int main(){float x=1.5f;printf(\"%.2f %.2f %.2f\\n\",x,2.25,3.0);return 0;}",
+        output_option,
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "1.50 2.25 3.00\n");
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_interoperates_with_clang_floating_point(output_option: &str) {
+    let code = "double foreign(float x,double y,long z);float local(double x,int y,float z){return x+y+z;}int main(){return (foreign(1.5f,2.25,3)==10.75)-1;}";
+    let companion = "float local(double,int,float);double foreign(float x,double y,long z){return x+y+z+local(1.5,1,1.5f);}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "float x=16777217-16777216.0f;int main(){return (x==0.0f)-1;}",
+    "int main(){long x=9007199791611905L;float f=x;return (f==9007200328482816.0f)-1;}",
+    "int main(){double x=-0.0;return (1.0/x<0.0)-1;}",
+    "int main(){double x=1.5;while(x){x-=.5;}return (_Bool)x;}",
+    "int main(){float a[2]={1.5f,2.5f};float *p=a;float old=p[0]++;return (old==1.5f && a[0]==2.5f && p[1]==2.5f)-1;}",
+], ["asm", "llvm"])]
+fn it_rounds_and_updates_floating_values(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

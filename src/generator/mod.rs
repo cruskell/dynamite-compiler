@@ -39,3 +39,43 @@ pub fn new<'a>(
         )),
     }
 }
+
+#[derive(Clone, Copy)]
+pub enum ScalarLocation {
+    General(usize),
+    Floating(usize),
+    Stack(usize, usize),
+}
+
+pub fn scalar_arguments(
+    types: &[crate::ctype::Type],
+    general_limit: usize,
+    compact_stack: bool,
+    fixed: usize,
+    stack_variadic: bool,
+) -> (Vec<ScalarLocation>, usize, usize) {
+    let (mut general, mut floating, mut stack) = (0usize, 0usize, 0usize);
+    let mut locations = vec![];
+    for (index, ty) in types.iter().enumerate() {
+        let forced_stack = stack_variadic && index >= fixed;
+        let location = if !forced_stack && ty.float_bits().is_some() && floating < 8 {
+            let register = floating;
+            floating += 1;
+            ScalarLocation::Floating(register)
+        } else if !forced_stack && ty.float_bits().is_none() && general < general_limit {
+            let register = general;
+            general += 1;
+            ScalarLocation::General(register)
+        } else {
+            let compact = compact_stack && index < fixed;
+            let size = if compact { ty.size_of() } else { 8 };
+            let align = if compact { ty.align_of() } else { 8 };
+            stack = stack.div_ceil(align) * align;
+            let location = ScalarLocation::Stack(stack, size);
+            stack += size;
+            location
+        };
+        locations.push(location);
+    }
+    (locations, stack, floating)
+}

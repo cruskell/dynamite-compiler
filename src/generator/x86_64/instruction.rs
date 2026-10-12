@@ -1,6 +1,27 @@
 use crate::generator::Os;
 
 pub enum InstOperator {
+    MOVD,
+    MOVQ,
+    ADDSS,
+    ADDSD,
+    SUBSS,
+    SUBSD,
+    MULSS,
+    MULSD,
+    DIVSS,
+    DIVSD,
+    UCOMISS,
+    UCOMISD,
+    CVTSS2SD,
+    CVTSD2SS,
+    CVTSI2SD,
+    CVTSI2SS,
+    CVTTSD2SI,
+    CVTTSS2SI,
+    SETNP,
+    SETP,
+
     PUSH,
     POP,
     MOV,
@@ -12,6 +33,7 @@ pub enum InstOperator {
     JMP,
     JE,
     JNE,
+    JGE,
     IMUL,
     IDIV,
     DIV,
@@ -44,6 +66,26 @@ impl InstOperator {
         //     return "movzb";
         // }
         match self {
+            MOVD => "movd",
+            MOVQ => "movq",
+            ADDSS => "addss",
+            ADDSD => "addsd",
+            SUBSS => "subss",
+            SUBSD => "subsd",
+            MULSS => "mulss",
+            MULSD => "mulsd",
+            DIVSS => "divss",
+            DIVSD => "divsd",
+            UCOMISS => "ucomiss",
+            UCOMISD => "ucomisd",
+            CVTSS2SD => "cvtss2sd",
+            CVTSD2SS => "cvtsd2ss",
+            CVTSI2SD => "cvtsi2sd",
+            CVTSI2SS => "cvtsi2ss",
+            CVTTSD2SI => "cvttsd2si",
+            CVTTSS2SI => "cvttss2si",
+            SETNP => "setnp",
+            SETP => "setp",
             PUSH => "push",
             POP => "pop",
             MOV => "mov",
@@ -55,6 +97,7 @@ impl InstOperator {
             JMP => "jmp",
             JE => "je",
             JNE => "jne",
+            JGE => "jge",
             IMUL => "imul",
             IDIV => "idiv",
             DIV => "div",
@@ -82,6 +125,10 @@ impl InstOperator {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Register {
+    Xmm(usize),
+    R11,
+    DL,
+
     RAX,
     EAX,
     RBX,
@@ -105,7 +152,14 @@ use Register::*;
 
 impl Display for Register {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        if let Self::Xmm(index) = self {
+            return write!(f, "xmm{index}");
+        }
         f.write_str(match self {
+            Self::Xmm(_) => unreachable!(),
+            R11 => "r11",
+            DL => "dl",
+
             RAX => "rax",
             EAX => "eax",
             RBX => "rbx",

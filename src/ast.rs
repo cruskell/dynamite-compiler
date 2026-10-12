@@ -516,6 +516,11 @@ impl<'a> AstBuilderImpl<'a> {
         {
             return Some(self.struct_type(token));
         }
+        for (name, bits) in [("float", 32), ("double", 64)] {
+            if self.attempt_reserved(name).is_some() {
+                return Some(Type::Float(bits));
+            }
+        }
         if self.attempt_reserved("void").is_some() {
             return Some(Type::Void);
         }
@@ -1030,12 +1035,12 @@ impl<'a> AstBuilderImpl<'a> {
                     self.validate_global_initializer(ty, element, token);
                 }
             }
-            (ty, GlobalVariableData::Address { .. }) if ty.integer_info().is_some() => {
+            (ty, GlobalVariableData::Address { .. }) if ty.is_arithmetic() => {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be an address");
             }
             (ty, GlobalVariableData::Elem(value))
-                if ty.integer_info().is_some() && value.starts_with('@') =>
+                if ty.is_arithmetic() && value.starts_with('@') =>
             {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be a string");
@@ -1180,34 +1185,29 @@ impl<'a> AstBuilderImpl<'a> {
             }
             return data;
         }
-        self.global_data()
+        if self.attempt_reserved("{").is_some() {
+            let value = self.global_initializer(ty);
+            self.attempt_reserved(",");
+            self.expect_reserved("}");
+            return GlobalVariableData::Arr(vec![value]);
+        }
+        let expression = self.ternary();
+        if let Some((symbol, offset)) = self.constant_address(&expression) {
+            return GlobalVariableData::Address { symbol, offset };
+        }
+        let value = if ty.float_bits().is_some() {
+            ty.float_constant(self.eval_float(&expression)) as i64
+        } else if expression
+            .resolve_type()
+            .is_some_and(|ty| ty.float_bits().is_some())
+        {
+            self.eval_float(&expression) as i64
+        } else {
+            self.eval(&expression)
+        };
+        GlobalVariableData::Elem(value.to_string())
     }
 
-    fn global_data(&mut self) -> GlobalVariableData {
-        if self.attempt_reserved("{").is_some() {
-            let mut vec = Vec::new();
-            if self.attempt_reserved("}").is_none() {
-                loop {
-                    vec.push(self.global_data());
-                    if self.attempt_reserved(",").is_none() {
-                        self.expect_reserved("}");
-                        break;
-                    }
-                    if self.attempt_reserved("}").is_some() {
-                        break;
-                    }
-                }
-            }
-            GlobalVariableData::Arr(vec)
-        } else {
-            let expression = self.ternary();
-            if let Some((symbol, offset)) = self.constant_address(&expression) {
-                GlobalVariableData::Address { symbol, offset }
-            } else {
-                GlobalVariableData::Elem(format!("{}", self.eval(&expression)))
-            }
-        }
-    }
     fn constant_address(&mut self, node: &Node) -> Option<(String, i64)> {
         match node.nt {
             NodeType::GlobalVar
@@ -1253,11 +1253,95 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn eval_float_as(&mut self, node: &Node, ty: &Type) -> f64 {
+        let value = self.eval_float(node);
+        ty.float_value(ty.float_constant(value))
+    }
+    fn eval_float(&mut self, node: &Node) -> f64 {
+        let ty = node.resolve_type().unwrap();
+        if ty.integer_info().is_some() {
+            return if ty.integer_info().unwrap().1 {
+                self.eval(node) as f64
+            } else {
+                self.eval(node) as u64 as f64
+            };
+        }
+        let value = match node.nt {
+            NodeType::Num => ty.float_value(node.value.unwrap()),
+            NodeType::Cast => self.eval_float(node.lhs.as_ref().unwrap()),
+            NodeType::Add => {
+                self.eval_float_as(node.lhs.as_ref().unwrap(), &ty)
+                    + self.eval_float_as(node.rhs.as_ref().unwrap(), &ty)
+            }
+            NodeType::Sub => {
+                self.eval_float_as(node.lhs.as_ref().unwrap(), &ty)
+                    - self.eval_float_as(node.rhs.as_ref().unwrap(), &ty)
+            }
+            NodeType::Mul => {
+                self.eval_float_as(node.lhs.as_ref().unwrap(), &ty)
+                    * self.eval_float_as(node.rhs.as_ref().unwrap(), &ty)
+            }
+            NodeType::Div => {
+                self.eval_float_as(node.lhs.as_ref().unwrap(), &ty)
+                    / self.eval_float_as(node.rhs.as_ref().unwrap(), &ty)
+            }
+            NodeType::Conditional => {
+                if self.eval_float(node.cond.as_ref().unwrap()) != 0.0 {
+                    self.eval_float(node.then.as_ref().unwrap())
+                } else {
+                    self.eval_float(node.els.as_ref().unwrap())
+                }
+            }
+            _ => {
+                self.error_logger.print_error_position(
+                    node.token.as_ref().unwrap().pos,
+                    "floating initializer is not constant",
+                );
+                unreachable!()
+            }
+        };
+        ty.float_value(ty.float_constant(value))
+    }
     fn eval(&mut self, node: &Node) -> i64 {
+        if node
+            .resolve_type()
+            .is_some_and(|ty| ty.float_bits().is_some())
+        {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "integer constant expression required",
+            );
+        }
+        if matches!(
+            node.nt,
+            NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le
+        ) && node
+            .lhs
+            .as_ref()
+            .is_some_and(|lhs| lhs.resolve_type().unwrap().float_bits().is_some())
+        {
+            let lhs = self.eval_float(node.lhs.as_ref().unwrap());
+            let rhs = self.eval_float(node.rhs.as_ref().unwrap());
+            return i64::from(match node.nt {
+                NodeType::Eq => lhs == rhs,
+                NodeType::Ne => lhs != rhs,
+                NodeType::Lt => lhs < rhs,
+                NodeType::Le => lhs <= rhs,
+                _ => unreachable!(),
+            });
+        }
         match node.nt {
             NodeType::Num => return node.value.unwrap() as i64,
             NodeType::Cast => {
-                let value = self.eval(node.lhs.as_ref().unwrap());
+                let child = node.lhs.as_ref().unwrap();
+                let value = if child
+                    .resolve_type()
+                    .is_some_and(|ty| ty.float_bits().is_some())
+                {
+                    self.eval_float(child) as i64
+                } else {
+                    self.eval(child)
+                };
                 return match node.cty.as_ref().unwrap() {
                     ty if ty.integer_info().is_some() => ty.convert_constant(value),
                     Type::Ptr(_) => value,
@@ -1407,7 +1491,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn cast_integer(node: &mut Node, target: &Type) {
-        if target.integer_info().is_some() && node.resolve_type().as_ref() != Some(target) {
+        if target.is_arithmetic() && node.resolve_type().as_ref() != Some(target) {
             let operand = std::mem::take(node);
             *node = Node {
                 nt: NodeType::Cast,
@@ -1436,6 +1520,61 @@ impl<'a> AstBuilderImpl<'a> {
         for child in node.children.iter_mut().chain(&mut node.args) {
             Self::insert_integer_conversions(child);
         }
+        if matches!(
+            node.nt,
+            NodeType::Add
+                | NodeType::Sub
+                | NodeType::Mul
+                | NodeType::Div
+                | NodeType::Eq
+                | NodeType::Ne
+                | NodeType::Lt
+                | NodeType::Le
+        ) {
+            let lhs = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+            let rhs = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+            if lhs.float_bits().is_some() || rhs.float_bits().is_some() {
+                let common = Type::arithmetic_type(&lhs, &rhs);
+                Self::cast_integer(node.lhs.as_mut().unwrap(), &common);
+                Self::cast_integer(node.rhs.as_mut().unwrap(), &common);
+            }
+        }
+        if matches!(
+            node.nt,
+            NodeType::If
+                | NodeType::Conditional
+                | NodeType::While
+                | NodeType::DoWhile
+                | NodeType::For
+        ) {
+            if let Some(condition) = &mut node.cond {
+                if condition
+                    .resolve_type()
+                    .is_some_and(|ty| ty.float_bits().is_some())
+                {
+                    Self::cast_integer(condition, &Type::Bool);
+                }
+            }
+        }
+        if matches!(node.nt, NodeType::LogicalAnd | NodeType::LogicalOr) {
+            for operand in [&mut node.lhs, &mut node.rhs].into_iter().flatten() {
+                if operand
+                    .resolve_type()
+                    .is_some_and(|ty| ty.float_bits().is_some())
+                {
+                    Self::cast_integer(operand, &Type::Bool);
+                }
+            }
+        }
+        if node.nt == NodeType::Conditional
+            && node
+                .resolve_type()
+                .is_some_and(|ty| ty.float_bits().is_some())
+        {
+            let common = node.resolve_type().unwrap();
+            Self::cast_integer(node.then.as_mut().unwrap(), &common);
+            Self::cast_integer(node.els.as_mut().unwrap(), &common);
+        }
         match node.nt {
             NodeType::Assign => {
                 let target = node.lhs.as_ref().unwrap().resolve_type().unwrap();
@@ -1443,11 +1582,14 @@ impl<'a> AstBuilderImpl<'a> {
             }
             NodeType::CallFunc => {
                 for (index, arg) in node.args.iter_mut().rev().enumerate() {
-                    let target = node
-                        .parameter_types
-                        .get(index)
-                        .cloned()
-                        .unwrap_or_else(|| arg.resolve_type().unwrap().promoted());
+                    let target = node.parameter_types.get(index).cloned().unwrap_or_else(|| {
+                        let ty = arg.resolve_type().unwrap().promoted();
+                        if ty == Type::Float(32) {
+                            Type::Float(64)
+                        } else {
+                            ty
+                        }
+                    });
                     Self::cast_integer(arg, &target);
                 }
             }
@@ -1458,11 +1600,7 @@ impl<'a> AstBuilderImpl<'a> {
     fn expect_conversion(&self, expected: &Type, operand: &Node) {
         let actual = operand.resolve_type();
         let compatible = match (expected.unqualified(), actual.as_ref()) {
-            (target, Some(source))
-                if target.integer_info().is_some() && source.integer_info().is_some() =>
-            {
-                true
-            }
+            (target, Some(source)) if target.is_arithmetic() && source.is_arithmetic() => true,
             (Type::Bool, Some(Type::Ptr(_) | Type::Arr(..))) => true,
             (Type::Ptr(target), Some(Type::Ptr(source) | Type::Arr(source, _))) => {
                 (!source.qualifiers().constant || target.qualifiers().constant)
@@ -1489,6 +1627,51 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn validate_void_expressions(&self, node: &Node) {
+        if matches!(
+            node.nt,
+            NodeType::Mod
+                | NodeType::BitAnd
+                | NodeType::BitOr
+                | NodeType::BitXor
+                | NodeType::BitLeft
+                | NodeType::BitRight
+                | NodeType::BitNot
+        ) {
+            for operand in [&node.lhs, &node.rhs].into_iter().flatten() {
+                if operand
+                    .resolve_type()
+                    .is_some_and(|ty| ty.float_bits().is_some())
+                {
+                    self.error_logger.print_error_position(
+                        node.token.as_ref().unwrap().pos,
+                        "operation requires integer operands",
+                    );
+                }
+            }
+        }
+
+        if matches!(
+            node.nt,
+            NodeType::Add
+                | NodeType::Sub
+                | NodeType::Mul
+                | NodeType::Div
+                | NodeType::Eq
+                | NodeType::Ne
+                | NodeType::Lt
+                | NodeType::Le
+        ) {
+            let lhs = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+            let rhs = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+            if (lhs.float_bits().is_some() || rhs.float_bits().is_some())
+                && !(lhs.is_arithmetic() && rhs.is_arithmetic())
+            {
+                self.error_logger.print_error_position(
+                    node.token.as_ref().unwrap().pos,
+                    "floating operation requires arithmetic operands",
+                );
+            }
+        }
         let no_value = |operand: &Node| {
             if operand.resolve_type() == Some(Type::Void) {
                 self.error_logger.print_error_position(
@@ -1883,7 +2066,7 @@ impl<'a> AstBuilderImpl<'a> {
                             .collect(),
                     ))
                 } else {
-                    Some(self.global_data())
+                    Some(self.global_initializer(&ty))
                 }
             } else {
                 None
@@ -2530,7 +2713,14 @@ impl<'a> AstBuilderImpl<'a> {
                     return self.postfix(literal);
                 }
                 let operand = self.unary();
-                if !(ty.integer_info().is_some() || matches!(ty, Type::Void | Type::Ptr(_)))
+                let source = operand.resolve_type().unwrap();
+                if (ty.float_bits().is_some() && source.dest_type().is_some())
+                    || (source.float_bits().is_some() && matches!(ty.unqualified(), Type::Ptr(_)))
+                {
+                    self.error_logger
+                        .print_error_position(token.pos, "invalid floating pointer cast");
+                }
+                if !(ty.is_arithmetic() || matches!(ty, Type::Void | Type::Ptr(_)))
                     || (!matches!(
                         operand.resolve_type(),
                         Some(
@@ -2538,6 +2728,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 | Type::I32
                                 | Type::Integer { .. }
                                 | Type::Bool
+                                | Type::Float(_)
                                 | Type::Ptr(_)
                                 | Type::Arr(..)
                                 | Type::Func(..)
@@ -2594,11 +2785,24 @@ impl<'a> AstBuilderImpl<'a> {
         if self.attempt_reserved("+").is_some() {
             return self.unary();
         } else if let Some(t) = self.attempt_reserved("-") {
+            let operand = self.unary();
+            if let Some(ty) = operand
+                .resolve_type()
+                .filter(|ty| ty.float_bits().is_some())
+            {
+                let minus_one = Node {
+                    cty: Some(ty.clone()),
+                    value: Some(ty.float_constant(-1.0)),
+                    token: Some(t.clone()),
+                    ..Node::default()
+                };
+                return Node::new_with_op(Some(t), NodeType::Mul, operand, minus_one);
+            }
             return Node::new_with_op(
                 Some(t.clone()),
                 NodeType::Sub,
-                Node::new_with_num(Some(t.clone()), 0),
-                self.unary(),
+                Node::new_with_num(Some(t), 0),
+                operand,
             );
         }
         if let Some(token) = self.attempt_reserved("&") {
@@ -2683,6 +2887,14 @@ impl<'a> AstBuilderImpl<'a> {
                 lhs: Some(Box::new(node)),
                 ..Node::default()
             }
+        } else if let Some(t) = self.attempt(TokenType::Float) {
+            Node {
+                nt: NodeType::Num,
+                value: Some(t.i_value),
+                cty: Some(Type::Float(if t.s_value == "f" { 32 } else { 64 })),
+                token: Some(t),
+                ..Node::default()
+            }
         } else if let Some(t) = self.attempt(TokenType::Num) {
             // Number literal
             Node {
@@ -2739,6 +2951,72 @@ impl<'a> AstBuilderImpl<'a> {
             unreachable!();
         };
         self.postfix(node)
+    }
+    fn suffix_update(&mut self, token: Token, operand: Node, increment: bool) -> Node {
+        self.expect_assignable(&operand);
+        let ty = operand.resolve_type().unwrap();
+        if ty.float_bits().is_none() {
+            return Node::new_with_op_and_lhs(
+                Some(token),
+                if increment {
+                    NodeType::SuffixIncr
+                } else {
+                    NodeType::SuffixDecr
+                },
+                operand,
+            );
+        }
+        let pointer = self.register_local_variable(
+            Token {
+                s_value: format!(".suffix.pointer.{}", token.pos),
+                ..token.clone()
+            },
+            Type::Ptr(Box::new(ty.clone())),
+        );
+        let previous = self.register_local_variable(
+            Token {
+                s_value: format!(".suffix.value.{}", token.pos),
+                ..token.clone()
+            },
+            ty.clone(),
+        );
+        let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, operand);
+        let save = Node::new_with_op(
+            Some(token.clone()),
+            NodeType::Assign,
+            pointer.clone(),
+            address,
+        );
+        let target = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, pointer);
+        let old = Node::new_with_op(
+            Some(token.clone()),
+            NodeType::Assign,
+            previous.clone(),
+            target.clone(),
+        );
+        let one = Node {
+            cty: Some(ty.clone()),
+            value: Some(ty.float_constant(1.0)),
+            token: Some(token.clone()),
+            ..Node::default()
+        };
+        let value = Node::new_with_op(
+            Some(token.clone()),
+            if increment {
+                NodeType::Add
+            } else {
+                NodeType::Sub
+            },
+            previous.clone(),
+            one,
+        );
+        let store = Node::new_with_op(Some(token.clone()), NodeType::Assign, target, value);
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children: vec![save, old, store, previous],
+            ..Node::default()
+        }
     }
     fn postfix(&mut self, mut node: Node) -> Node {
         loop {
@@ -2846,12 +3124,10 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             } else if let Some(token) = self.attempt_reserved("++") {
                 // Suffix increment
-                self.expect_assignable(&node);
-                node = Node::new_with_op_and_lhs(Some(token), NodeType::SuffixIncr, node);
+                node = self.suffix_update(token, node, true);
             } else if let Some(token) = self.attempt_reserved("--") {
                 // Suffix decrement
-                self.expect_assignable(&node);
-                node = Node::new_with_op_and_lhs(Some(token), NodeType::SuffixDecr, node);
+                node = self.suffix_update(token, node, false);
             } else {
                 return node;
             }
@@ -2907,6 +3183,11 @@ mod tests {
                 "struct S{int x:3;};int main(){struct S s;int *p=&s.x;}",
                 "address of a bit-field",
             ),
+            ("int main(){return 1.5%2;}", "integer operands"),
+            ("int main(){return 1.0<<2;}", "integer operands"),
+            ("int main(){int *p;return p+1.5;}", "incompatible value"),
+            ("int a[1.5];", "integer constant"),
+            ("int main(){return (int*)1.5;}", "floating pointer cast"),
             ("int a[2](int);", "invalid array element"),
             ("int x; char x;", "incompatible object redeclaration"),
             ("int x=1; int x=2;", "already initialized"),
