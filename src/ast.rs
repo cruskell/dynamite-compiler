@@ -616,7 +616,7 @@ impl<'a> AstBuilderImpl<'a> {
                 Some(assign_token.clone()),
                 NodeType::Assign,
                 node.clone(),
-                self.expr(),
+                self.assign(),
             )
         }
     }
@@ -640,7 +640,20 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     pub fn expr(&mut self) -> Node {
-        self.assign()
+        let first = self.assign();
+        let Some(token) = self.attempt_reserved(",") else {
+            return first;
+        };
+        let mut children = vec![first, self.assign()];
+        while self.attempt_reserved(",").is_some() {
+            children.push(self.assign());
+        }
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children,
+            ..Node::default()
+        }
     }
     fn expect_assignable(&self, node: &Node) {
         if !matches!(
@@ -998,10 +1011,10 @@ impl<'a> AstBuilderImpl<'a> {
                     };
                 let mut args: Vec<Node> = Vec::new();
                 if self.attempt_reserved(")").is_none() {
-                    args.push(self.expr());
+                    args.push(self.assign());
                     while self.attempt_reserved(")").is_none() {
                         self.expect_reserved(",");
-                        args.push(self.expr());
+                        args.push(self.assign());
                     }
                     if args.len() >= 7 {
                         self.error_logger
