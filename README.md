@@ -62,3 +62,6 @@ Commas in declarations, initializers, and argument lists remain separators.
 Its expression operand is not evaluated.
 
 Fixed array dimensions accept positive integer constant expressions.
+
+Local and global arrays may omit the outer dimension when a nonempty brace
+initializer supplies its size. Array parameters also accept an omitted outer dimension.
