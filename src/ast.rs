@@ -682,6 +682,7 @@ impl<'a> AstBuilderImpl<'a> {
             let mut members: Vec<StructMember> = vec![];
             let mut size = 0usize;
             let mut bit_address = 0usize;
+            let mut has_bit_fields = false;
             let mut align = 1;
             while self.attempt_reserved("}").is_none() {
                 let base = self.expect_type();
@@ -690,6 +691,7 @@ impl<'a> AstBuilderImpl<'a> {
                     let position = name.as_ref().unwrap_or(&token);
                     self.expect_object_type(&member_type, position);
                     let (field, offset) = if self.attempt_reserved(":").is_some() {
+                        has_bit_fields = true;
                         let expression = self.ternary();
                         let width = self.eval(&expression);
                         let Some((bits, _)) = member_type.integer_info() else {
@@ -768,6 +770,7 @@ impl<'a> AstBuilderImpl<'a> {
             *ty.definition().borrow_mut() = StructDefinition {
                 members,
                 is_union,
+                has_bit_fields,
                 size: size.div_ceil(align) * align,
                 align,
                 complete: true,
