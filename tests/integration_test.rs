@@ -608,6 +608,7 @@ fn it_supports_unions(code: &str, output_option: &str) {
     "int main(){int x=7;int *const p=&x;return *p-7;}",
     "int main(){const char s[]=\"abc\";return s[2]-99;}",
     "typedef int A[2];int main(){const A a={7};return a[0]-7;}",
+    "int main(){const char *s=\"ok\";puts(s);return 0;}",
 ], ["asm", "llvm"])]
 fn it_supports_type_qualifiers(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));

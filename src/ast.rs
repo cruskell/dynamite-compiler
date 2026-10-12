@@ -129,14 +129,26 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
         (
             String::from("printf"),
             Identifier::Static(Type::VariadicFunc(
-                vec![Type::Ptr(Box::new(Type::I8))],
+                vec![Type::Ptr(Box::new(Type::Qualified(
+                    Box::new(Type::I8),
+                    Qualifiers {
+                        constant: true,
+                        volatile: false,
+                    },
+                )))],
                 Box::new(Type::I32),
             )),
         ),
         (
             String::from("puts"),
             Identifier::Static(Type::Func(
-                vec![Type::Ptr(Box::new(Type::I8))],
+                vec![Type::Ptr(Box::new(Type::Qualified(
+                    Box::new(Type::I8),
+                    Qualifiers {
+                        constant: true,
+                        volatile: false,
+                    },
+                )))],
                 Box::new(Type::I32),
             )),
         ),
