@@ -354,6 +354,12 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn initializer_count(&mut self) -> usize {
+        if let Some(token) = self.attempt(TokenType::Str) {
+            return crate::tokenizer::decode_string_literal(&token.s_value)
+                .unwrap()
+                .len()
+                + 1;
+        }
         self.expect_reserved("{");
         let mut depth = 0;
         let mut count = 0;
@@ -635,7 +641,35 @@ impl<'a> AstBuilderImpl<'a> {
                 );
                 return;
             }
-            let data = self.attempt_reserved("=").map(|_| self.global_data());
+            let data = if self.attempt_reserved("=").is_some() {
+                if matches!(&ty, Type::Arr(child, _) if **child == Type::I8)
+                    && self.tokens[self.cur].tt == TokenType::Str
+                {
+                    let token = self.attempt(TokenType::Str).unwrap();
+                    let mut bytes =
+                        crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
+                    let Type::Arr(_, size) = &ty else {
+                        unreachable!()
+                    };
+                    if *size != 0 && bytes.len() > *size {
+                        self.error_logger
+                            .print_error_position(token.pos, "string initializer is too long");
+                    }
+                    if *size == 0 || bytes.len() < *size {
+                        bytes.push(0);
+                    }
+                    Some(GlobalVariableData::Arr(
+                        bytes
+                            .into_iter()
+                            .map(|b| GlobalVariableData::Elem(b.to_string()))
+                            .collect(),
+                    ))
+                } else {
+                    Some(self.global_data())
+                }
+            } else {
+                None
+            };
             let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
                 elements.len()
             } else {
@@ -1242,6 +1276,37 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
+        if matches!(node.resolve_type(), Some(Type::Arr(child, _)) if *child == Type::I8)
+            && self.tokens[self.cur].tt == TokenType::Str
+        {
+            let token = self.attempt(TokenType::Str).unwrap();
+            let bytes = crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
+            let Type::Arr(_, size) = node.resolve_type().unwrap() else {
+                unreachable!()
+            };
+            if bytes.len() > size {
+                self.error_logger
+                    .print_error_position(token.pos, "string initializer is too long");
+            }
+            return Node {
+                nt: NodeType::Block,
+                token: Some(token.clone()),
+                children: (0..size)
+                    .map(|index| {
+                        Node::new_with_op(
+                            Some(token.clone()),
+                            NodeType::Assign,
+                            Self::array_element(node, index, &token),
+                            Node::new_with_num(
+                                Some(token.clone()),
+                                bytes.get(index).copied().unwrap_or(0) as usize,
+                            ),
+                        )
+                    })
+                    .collect(),
+                ..Node::default()
+            };
+        }
         if let Some(token) = self.attempt_reserved("{") {
             let elements = Self::aggregate_elements(node, &token);
             if elements.is_none() {
