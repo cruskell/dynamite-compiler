@@ -601,8 +601,9 @@ fn it_supports_storage_classes(code: &str, output_option: &str) {
 ], ["asm", "llvm"])]
 fn it_supports_unions(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
-    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
     "int main(){const int x=7;const int *p=&x;return *p-7;}",
     "int main(){volatile int x=7;volatile int *p=&x;*p=9;return x-9;}",
     "int main(){int x=7;int *const p=&x;return *p-7;}",
@@ -626,4 +627,14 @@ fn it_preserves_volatile_accesses_in_llvm() {
         false,
     );
     assert!(ir.contains("load volatile i32"));
+}
+
+#[test_matrix([
+    "typedef int A[3];const A a={[2]=7};int main(){return a[0]+a[2]-7;}",
+    "struct S{unsigned long x;};const struct S s={.x=4294967296UL};int main(){return (s.x==4294967296UL)-1;}",
+    "int main(){const unsigned long *p=(const unsigned long[]){[1]=4294967296UL};return (p[1]==4294967296UL)-1;}",
+    "int f(){static const unsigned short x=65535;return x;}int main(){return f()-65535;}",
+], ["asm", "llvm"])]
+fn it_combines_qualified_extended_features(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }

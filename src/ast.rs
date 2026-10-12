@@ -980,11 +980,13 @@ impl<'a> AstBuilderImpl<'a> {
                     self.validate_global_initializer(ty, element, token);
                 }
             }
-            (Type::I8 | Type::I32, GlobalVariableData::Address { .. }) => {
+            (ty, GlobalVariableData::Address { .. }) if ty.integer_info().is_some() => {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be an address");
             }
-            (Type::I8 | Type::I32, GlobalVariableData::Elem(value)) if value.starts_with('@') => {
+            (ty, GlobalVariableData::Elem(value))
+                if ty.integer_info().is_some() && value.starts_with('@') =>
+            {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be a string");
             }
@@ -993,7 +995,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn aggregate_type(ty: &Type, index: usize) -> Option<Type> {
-        match ty {
+        match ty.unqualified() {
             Type::Arr(child, size) if *size == 0 || index < *size => Some(*child.clone()),
             Type::Struct(st) => st.members().get(index).map(|member| member.ty.clone()),
             _ => None,
@@ -1007,7 +1009,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let expression = self.ternary();
                 let index = self.eval(&expression);
                 self.expect_reserved("]");
-                if index < 0 || !matches!(current, Type::Arr(..)) {
+                if index < 0 || !matches!(current.unqualified(), Type::Arr(..)) {
                     self.error_logger
                         .print_error_position(token.pos, "invalid array designator");
                 }
@@ -1018,7 +1020,7 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(token.pos, "member designator expected");
                     unreachable!()
                 });
-                let Type::Struct(st) = &current else {
+                let Type::Struct(st) = current.unqualified() else {
                     self.error_logger
                         .print_error_position(token.pos, "member designator requires an aggregate");
                     unreachable!()
@@ -1089,7 +1091,9 @@ impl<'a> AstBuilderImpl<'a> {
                     .collect(),
             );
         }
-        if matches!(ty.unqualified(), Type::Arr(..) | Type::Struct(_)) && self.attempt_reserved("{").is_some() {
+        if matches!(ty.unqualified(), Type::Arr(..) | Type::Struct(_))
+            && self.attempt_reserved("{").is_some()
+        {
             let mut data = GlobalVariableData::Arr(vec![]);
             let mut cursor = 0;
             if self.attempt_reserved("}").is_none() {

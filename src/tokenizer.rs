@@ -8,7 +8,8 @@ pub const TYPES: [&str; 9] = [
 ];
 const RESERVED_WORDS: [&str; 21] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
-    "default", "typedef", "struct", "enum", "goto", "static", "extern", "union", "const", "volatile",
+    "default", "typedef", "struct", "enum", "goto", "static", "extern", "union", "const",
+    "volatile",
 ];
 
 const RESERVED_SYMBOLS: [&str; 51] = [
