@@ -86,6 +86,7 @@ pub struct Node {
     pub args: Vec<Node>,
     pub parameter_types: Vec<Type>,
     pub variadic: bool,
+    pub vla_scope: Vec<usize>,
     // for declaration of local variables
     pub offset: Option<usize>,
 }
@@ -194,6 +195,12 @@ impl Node {
                         *size,
                     );
                 }
+                if let Type::Vla(element, offset) = child.unqualified() {
+                    return Type::Vla(
+                        Box::new(Type::Qualified(element.clone(), ty.qualifiers())),
+                        *offset,
+                    );
+                }
             }
             ty.unqualified().clone()
         })
@@ -218,8 +225,8 @@ impl Node {
                     ))
                 } else {
                     match (then, otherwise) {
-                        (Some(Type::Ptr(child) | Type::Arr(child, _)), _)
-                        | (_, Some(Type::Ptr(child) | Type::Arr(child, _))) => {
+                        (Some(Type::Ptr(child) | Type::Arr(child, _) | Type::Vla(child, _)), _)
+                        | (_, Some(Type::Ptr(child) | Type::Arr(child, _) | Type::Vla(child, _))) => {
                             Some(Type::Ptr(child))
                         }
                         (then, _) => then,

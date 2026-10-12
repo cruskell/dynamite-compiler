@@ -167,6 +167,7 @@ impl<'a> IrGenerator<'a> {
             Type::Bool => "i8".to_string(),
             Type::Ptr(_) => "ptr".to_string(),
             Type::Arr(child, size) => format!("[{} x {}]", size, Self::gen_type(*child)),
+            Type::Vla(child, _) => format!("[0 x {}]", Self::gen_type(*child)),
             Type::VariadicFunc(args, result) => format!(
                 "{} ({}, ...)",
                 Self::gen_type(*result),
@@ -201,6 +202,7 @@ impl<'a> IrGenerator<'a> {
             data
         };
         match ty {
+            Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
             Type::Float(_) => {
                 let bits = if let Some(GlobalVariableData::Elem(value)) = data {
                     value.parse::<i64>().unwrap() as usize
@@ -968,7 +970,7 @@ impl<'a> IrGenerator<'a> {
             lines.push(format!("  %{register} = inttoptr i64 {wide_value} to ptr"));
             return format!("%{register}");
         }
-        if *target == Type::Bool && matches!(source, Type::Ptr(_) | Type::Arr(..)) {
+        if *target == Type::Bool && matches!(source, Type::Ptr(_) | Type::Arr(..) | Type::Vla(..)) {
             let predicate = options.new_register();
             options.register_queue.pop();
             lines.push(format!("  %{predicate} = icmp ne ptr {value}, null"));
@@ -977,7 +979,9 @@ impl<'a> IrGenerator<'a> {
             lines.push(format!("  %{result} = zext i1 %{predicate} to i8"));
             return format!("%{result}");
         }
-        if matches!(source, Type::Ptr(_) | Type::Arr(..)) && target.integer_info().is_some() {
+        if matches!(source, Type::Ptr(_) | Type::Arr(..) | Type::Vla(..))
+            && target.integer_info().is_some()
+        {
             let register = options.new_register();
             options.register_queue.pop();
             lines.push(format!(
@@ -1028,7 +1032,7 @@ impl<'a> IrGenerator<'a> {
         lines.extend(self.gen_node(node, options));
         let value = options.register_queue.pop().unwrap();
         let ty = node.resolve_type().unwrap();
-        let pointer = matches!(ty, Type::Ptr(_) | Type::Arr(..));
+        let pointer = matches!(ty, Type::Ptr(_) | Type::Arr(..) | Type::Vla(..));
         let register = options.new_register();
         options.register_queue.pop();
         lines.push(format!(
@@ -1199,7 +1203,7 @@ impl<'a> IrGenerator<'a> {
                     let value = options.register_queue.pop().unwrap();
                     let source = arg.resolve_type().unwrap();
                     let source = match source {
-                        Type::Arr(child, _) => Type::Ptr(child),
+                        Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
                         Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(source)),
                         _ => source,
                     };
@@ -1330,7 +1334,10 @@ impl<'a> IrGenerator<'a> {
             NodeType::Deref | NodeType::LocalVar | NodeType::GlobalVar => {
                 let mut lines = self.gen_addr(node, options);
                 let ty = node.resolve_type().unwrap();
-                if !matches!(ty, Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) {
+                if !matches!(
+                    ty,
+                    Type::Arr(..) | Type::Vla(..) | Type::Func(..) | Type::VariadicFunc(..)
+                ) {
                     let address = options.register_queue.pop().unwrap();
                     lines.push(format!(
                         "  %{} = load {}{}, ptr {}, align {}",

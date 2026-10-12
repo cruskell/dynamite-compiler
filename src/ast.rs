@@ -9,6 +9,8 @@ use std::{cell::RefCell, rc::Rc};
 
 #[path = "varargs.rs"]
 mod varargs;
+#[path = "vla.rs"]
+mod vla;
 
 type Parameters = Vec<(Option<Token>, Type)>;
 
@@ -16,6 +18,7 @@ enum Declarator {
     Name(Option<Token>),
     Pointer(Box<Declarator>, Qualifiers),
     Array(Box<Declarator>, usize),
+    VariableArray(Box<Declarator>, usize),
     Function(Box<Declarator>, Parameters, bool),
 }
 
@@ -32,6 +35,7 @@ impl Declarator {
                 })
             }
             Self::Array(inner, size) => inner.resolve(Type::Arr(Box::new(base), size)),
+            Self::VariableArray(inner, offset) => inner.resolve(Type::Vla(Box::new(base), offset)),
             Self::Function(inner, parameters, variadic) => {
                 let types = parameters.iter().map(|(_, ty)| ty.clone()).collect();
                 let ty = if variadic {
@@ -66,6 +70,12 @@ pub struct AstBuilderImpl<'a> {
     return_pointer: Option<usize>,
     variadic_parameters: Option<Vec<Type>>,
     variadic_last: Option<usize>,
+    pending_bounds: Vec<Node>,
+    dynamic_objects: Vec<Node>,
+    vla_active: Vec<usize>,
+    jump_depths: Vec<usize>,
+    continue_depths: HashMap<usize, usize>,
+    switch_vla_depths: Vec<usize>,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
@@ -84,6 +94,7 @@ pub enum Identifier {
     Constant(i64),
     StaticObject(Type, String),
     Local(Type, usize),
+    Dynamic(Type, usize),
     Static(Type),
 }
 
@@ -108,6 +119,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
             if let Some(body) = &mut function.body {
                 Self::erase_qualifiers(body);
+                Self::lower_variable_arithmetic(body);
                 Self::insert_integer_conversions(body);
                 crate::bitfield::lower(body, &mut function.offset_size);
             }
@@ -133,6 +145,20 @@ impl AstBuilder for AstBuilderImpl<'_> {
 
 pub fn reserved_functions() -> HashMap<String, Identifier> {
     [
+        (
+            String::from("malloc"),
+            Identifier::Static(Type::Func(
+                vec![Type::integer(64, false)],
+                Box::new(Type::Ptr(Box::new(Type::Void))),
+            )),
+        ),
+        (
+            String::from("free"),
+            Identifier::Static(Type::Func(
+                vec![Type::Ptr(Box::new(Type::Void))],
+                Box::new(Type::Void),
+            )),
+        ),
         (
             String::from("printf"),
             Identifier::Static(Type::VariadicFunc(
@@ -188,6 +214,12 @@ impl<'a> AstBuilderImpl<'a> {
             return_pointer: None,
             variadic_parameters: None,
             variadic_last: None,
+            pending_bounds: vec![],
+            dynamic_objects: vec![],
+            vla_active: vec![],
+            jump_depths: vec![],
+            continue_depths: HashMap::new(),
+            switch_vla_depths: vec![],
             struct_definitions: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
@@ -236,25 +268,11 @@ impl<'a> AstBuilderImpl<'a> {
     fn at_eof(&self) -> bool {
         self.cur >= self.tokens.len() || matches!(self.tokens[self.cur].tt, TokenType::EOF)
     }
-    fn constant_array_size(&mut self) -> Token {
-        let token = self.tokens[self.cur].clone();
-        let expression = self.ternary();
-        let value = self.eval(&expression);
-        if value <= 0 {
-            self.error_logger
-                .print_error_position(token.pos, "array size must be positive");
-        }
-        Token {
-            i_value: value as usize,
-            ..token
-        }
-    }
-
     fn validate_type_layout(&self, ty: &Type, token: &Token) {
         match ty {
             Type::Qualified(child, _) => self.validate_type_layout(child, token),
             Type::Ptr(child) => self.validate_type_layout(child, token),
-            Type::Arr(child, _) => {
+            Type::Arr(child, _) | Type::Vla(child, _) => {
                 if matches!(
                     **child,
                     Type::Void | Type::Func(..) | Type::VariadicFunc(..)
@@ -267,7 +285,7 @@ impl<'a> AstBuilderImpl<'a> {
             Type::Func(args, result) | Type::VariadicFunc(args, result) => {
                 if matches!(
                     **result,
-                    Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)
+                    Type::Arr(..) | Type::Vla(..) | Type::Func(..) | Type::VariadicFunc(..)
                 ) {
                     self.error_logger
                         .print_error_position(token.pos, "invalid function result type");
@@ -299,21 +317,50 @@ impl<'a> AstBuilderImpl<'a> {
         };
         loop {
             if self.attempt_reserved("[").is_some() {
-                let size = if self.attempt_reserved("]").is_some() {
-                    if matches!(direct, Declarator::Array(..)) {
+                if self.attempt_reserved("]").is_some() {
+                    if matches!(
+                        direct,
+                        Declarator::Array(..) | Declarator::VariableArray(..)
+                    ) {
                         self.error_logger.print_error_position(
                             self.tokens[self.cur - 1].pos,
                             "only the outer array dimension may be omitted",
                         );
                     }
-                    0
+                    direct = Declarator::Array(Box::new(direct), 0);
                 } else {
-                    let size = self.constant_array_size();
+                    let token = self.tokens[self.cur].clone();
+                    let expression = self.assign();
                     self.expect_reserved("]");
-                    size.i_value
-                };
-                direct = Declarator::Array(Box::new(direct), size);
+                    if Self::integer_constant(&expression) {
+                        let size = self.eval(&expression);
+                        if size <= 0 {
+                            self.error_logger
+                                .print_error_position(token.pos, "array size must be positive");
+                        }
+                        direct = Declarator::Array(Box::new(direct), size as usize);
+                    } else {
+                        if expression
+                            .resolve_type()
+                            .is_none_or(|ty| ty.integer_info().is_none())
+                        {
+                            self.error_logger.print_error_position(
+                                token.pos,
+                                "array bound requires an integer expression",
+                            );
+                        }
+                        let bound = self.vla_temporary(&token, Type::integer(64, false));
+                        self.pending_bounds.push(Node::new_with_op(
+                            Some(token),
+                            NodeType::Assign,
+                            bound.clone(),
+                            expression,
+                        ));
+                        direct = Declarator::VariableArray(Box::new(direct), bound.offset.unwrap());
+                    }
+                }
             } else if self.attempt_reserved("(").is_some() {
+                self.scope_stack.push(HashMap::new());
                 let mut parameters = vec![];
                 let mut variadic = false;
                 let saved = self.cur;
@@ -345,10 +392,16 @@ impl<'a> AstBuilderImpl<'a> {
                         let (name, ty, _) = self.declarator().resolve(base);
                         self.validate_type_layout(&ty, &self.tokens[self.cur]);
                         let ty = match ty {
-                            Type::Arr(child, _) => Type::Ptr(child),
+                            Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
                             Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
                             _ => ty,
                         };
+                        if let Some(name) = &name {
+                            self.scope_stack.last_mut().unwrap().insert(
+                                name.s_value.clone(),
+                                Identifier::Local(ty.clone(), usize::MAX - parameters.len()),
+                            );
+                        }
                         parameters.push((name, ty));
                         if self.attempt_reserved(")").is_some() {
                             break;
@@ -356,6 +409,7 @@ impl<'a> AstBuilderImpl<'a> {
                         self.expect_reserved(",");
                     }
                 }
+                self.scope_stack.pop();
                 direct = Declarator::Function(Box::new(direct), parameters, variadic);
             } else {
                 break;
@@ -467,6 +521,19 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn register_local_variable(&mut self, t: Token, ty: Type) -> Node {
+        if ty.is_variable_array() {
+            self.expect_object_type(&ty, &t);
+            self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
+            if self.scope_stack.last().unwrap().contains_key(&t.s_value) {
+                self.error_logger
+                    .print_error_position(t.pos, "invalid redeclaration");
+            }
+            self.scope_stack.last_mut().unwrap().insert(
+                t.s_value.clone(),
+                Identifier::Dynamic(ty.clone(), self.offset_size),
+            );
+            return Self::dynamic_node(ty, self.offset_size, t);
+        }
         self.expect_object_type(&ty, &t);
         self.offset_size += ty.size_of();
         self.offset_size = self.offset_size.div_ceil(ty.align_of()) * ty.align_of();
@@ -703,6 +770,12 @@ impl<'a> AstBuilderImpl<'a> {
                 loop {
                     let (name, member_type, _) = self.declarator().resolve(base.clone());
                     let position = name.as_ref().unwrap_or(&token);
+                    if member_type.is_variably_modified() {
+                        self.error_logger.print_error_position(
+                            position.pos,
+                            "struct member cannot have a variably modified type",
+                        );
+                    }
                     self.expect_object_type(&member_type, position);
                     let (field, offset) = if self.attempt_reserved(":").is_some() {
                         has_bit_fields = true;
@@ -824,6 +897,12 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(token.pos, "invalid redeclaration");
             }
+            if self.return_type.is_none() && ty.is_variably_modified() {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "variably modified typedef requires block scope",
+                );
+            }
             self.scope_stack
                 .last_mut()
                 .unwrap()
@@ -835,6 +914,9 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn global_definition(&mut self) {
+        self.offset_size = 0;
+        self.pending_bounds.clear();
+        self.vla_active.clear();
         let storage = self
             .attempt_reserved("static")
             .or_else(|| self.attempt_reserved("extern"));
@@ -857,12 +939,17 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             self.validate_type_layout(&ty, &token);
+            if ty.is_variably_modified() {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "variably modified declaration requires block scope",
+                );
+            }
             if ty.function_signature().is_some() {
                 if self.global_variables.contains_key(&token.s_value) {
                     self.error_logger
                         .print_error_position(token.pos, "function conflicts with object");
                 }
-                self.offset_size = 0;
                 self.scope_stack.push(HashMap::new());
                 let mut args = vec![];
                 for (i, (name, ty)) in parameters.into_iter().enumerate() {
@@ -877,7 +964,7 @@ impl<'a> AstBuilderImpl<'a> {
                     .unwrap()
                     .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
                 if let Some(existing) = self.functions.get(&token.s_value) {
-                    if existing.cty != ty {
+                    if !existing.cty.compatible(&ty) {
                         self.error_logger
                             .print_error_position(token.pos, "incompatible function redeclaration");
                     }
@@ -910,7 +997,15 @@ impl<'a> AstBuilderImpl<'a> {
                 self.return_type = Some(result);
                 self.labels.clear();
                 self.defined_labels.clear();
-                let body = self.consume_block();
+                let mut bounds = self.take_bounds();
+                Self::resolve_parameter_bounds(&mut bounds, &args);
+                let mut body = self.consume_block();
+                if let Some(body) = &mut body {
+                    bounds.append(&mut body.children);
+                    body.children = bounds;
+                    self.resolve_vla_gotos(body);
+                }
+                self.vla_active.clear();
                 for (name, position) in &self.labels {
                     if !self.defined_labels.contains(name) {
                         self.error_logger
@@ -1617,11 +1712,14 @@ impl<'a> AstBuilderImpl<'a> {
         let actual = operand.resolve_type();
         let compatible = match (expected.unqualified(), actual.as_ref()) {
             (target, Some(source)) if target.is_arithmetic() && source.is_arithmetic() => true,
-            (Type::Bool, Some(Type::Ptr(_) | Type::Arr(..))) => true,
-            (Type::Ptr(target), Some(Type::Ptr(source) | Type::Arr(source, _))) => {
+            (Type::Bool, Some(Type::Ptr(_) | Type::Arr(..) | Type::Vla(..))) => true,
+            (
+                Type::Ptr(target),
+                Some(Type::Ptr(source) | Type::Arr(source, _) | Type::Vla(source, _)),
+            ) => {
                 (!source.qualifiers().constant || target.qualifiers().constant)
                     && (!source.qualifiers().volatile || target.qualifiers().volatile)
-                    && (target.unqualified() == source.unqualified()
+                    && (target.compatible(source)
                         || *target.unqualified() == Type::Void
                         || *source.unqualified() == Type::Void)
             }
@@ -1776,6 +1874,7 @@ impl<'a> AstBuilderImpl<'a> {
                 .or_insert(token.pos);
             return Node {
                 nt: NodeType::Label,
+                vla_scope: self.vla_active.clone(),
                 value: Some(id),
                 token: Some(token),
                 lhs: Some(Box::new(self.stmt())),
@@ -1792,6 +1891,8 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(";");
             return Node {
                 nt: NodeType::Goto,
+                args: self.dynamic_objects.clone(),
+                vla_scope: self.vla_active.clone(),
                 value: Some(id),
                 token: Some(token),
                 ..Node::default()
@@ -1803,6 +1904,7 @@ impl<'a> AstBuilderImpl<'a> {
             return Node {
                 nt: NodeType::Block,
                 token: Some(token),
+                children: self.take_bounds(),
                 ..Node::default()
             };
         }
@@ -1824,12 +1926,16 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(t.pos, "switch requires an integer expression");
             }
+            self.switch_vla_depths.push(self.vla_active.len());
+            self.jump_depths.push(self.dynamic_objects.len());
             self.switch_stack.push(vec![]);
             self.switch_types
                 .push(cond.resolve_type().unwrap().promoted());
             let body = self.stmt();
             let cases = self.switch_stack.pop().unwrap();
             self.switch_types.pop();
+            self.switch_vla_depths.pop();
+            self.jump_depths.pop();
             return Node {
                 token: Some(t),
                 nt: NodeType::Switch,
@@ -1846,6 +1952,12 @@ impl<'a> AstBuilderImpl<'a> {
             if self.switch_stack.is_empty() {
                 self.error_logger
                     .print_error_position(t.pos, "case or default requires an enclosing switch");
+            }
+            if self.vla_active.len() > *self.switch_vla_depths.last().unwrap() {
+                self.error_logger.print_error_position(
+                    t.pos,
+                    "switch label enters the scope of a variably modified declaration",
+                );
             }
             let value = if t.s_value == "case" {
                 let expr = self.ternary();
@@ -1888,8 +2000,12 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if let Some(t) = self.attempt_reserved("do") {
             self.loop_stack.push(t.pos);
+            self.continue_depths
+                .insert(t.pos, self.dynamic_objects.len());
+            self.jump_depths.push(self.dynamic_objects.len());
             let body = self.stmt();
             self.loop_stack.pop();
+            self.jump_depths.pop();
             self.expect_reserved("while");
             self.expect_reserved("(");
             let cond = self.expr();
@@ -1904,11 +2020,17 @@ impl<'a> AstBuilderImpl<'a> {
             let cond = self.expr();
             self.expect_reserved(")");
             self.loop_stack.push(t.pos);
+            self.continue_depths
+                .insert(t.pos, self.dynamic_objects.len());
+            self.jump_depths.push(self.dynamic_objects.len());
             let body = self.stmt();
             self.loop_stack.pop();
+            self.jump_depths.pop();
             return Node::new_while_node(Some(t), cond, body);
         }
         if let Some(t) = self.attempt_reserved("for") {
+            let object_depth = self.dynamic_objects.len();
+            let bound_depth = self.vla_active.len();
             self.scope_stack.push(HashMap::new());
             self.expect_reserved("(");
             let mut ini: Option<Node> = None;
@@ -1931,10 +2053,23 @@ impl<'a> AstBuilderImpl<'a> {
                 self.expect_reserved(")");
             }
             self.loop_stack.push(t.pos);
+            self.continue_depths
+                .insert(t.pos, self.dynamic_objects.len());
+            self.jump_depths.push(self.dynamic_objects.len());
             let body = self.stmt();
             self.loop_stack.pop();
+            self.jump_depths.pop();
             self.scope_stack.pop();
-            return Node::new_for_node(Some(t), ini, cond, upd, body);
+            let loop_node = Node::new_for_node(Some(t), ini, cond, upd, body);
+            let mut children = vec![loop_node];
+            children.extend(self.cleanup_arrays(object_depth));
+            self.dynamic_objects.truncate(object_depth);
+            self.vla_active.truncate(bound_depth);
+            return Node {
+                nt: NodeType::Block,
+                children,
+                ..Node::default()
+            };
         }
         if let Some(node) = self.consume_block() {
             return node;
@@ -2012,12 +2147,21 @@ impl<'a> AstBuilderImpl<'a> {
             self.expr()
         };
         self.expect_reserved(";");
-        node
+        self.cleanup_jump(node)
     }
 
     fn local_static_definition(&mut self, base: Type, storage: &Token) -> Node {
+        let mut bounds = vec![];
         loop {
             let (token, mut ty) = self.expect_ident_with_type(base.clone());
+            if ty.is_variable_array() || (storage.s_value == "extern" && ty.is_variably_modified())
+            {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "variably modified static or extern declaration is invalid",
+                );
+            }
+            bounds.extend(self.take_bounds());
             let external = storage.s_value == "extern";
             let name = if external {
                 token.s_value.clone()
@@ -2032,7 +2176,7 @@ impl<'a> AstBuilderImpl<'a> {
                     );
                 }
                 if let Some(existing) = self.functions.get(&name) {
-                    if existing.cty != ty {
+                    if !existing.cty.compatible(&ty) {
                         self.error_logger
                             .print_error_position(token.pos, "incompatible function redeclaration");
                     }
@@ -2133,6 +2277,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         Node {
             nt: NodeType::Block,
+            children: bounds,
             ..Node::default()
         }
     }
@@ -2141,6 +2286,16 @@ impl<'a> AstBuilderImpl<'a> {
         let mut vec = Vec::new();
         loop {
             let node = self.new_local_variable(ty.clone());
+            vec.extend(self.take_bounds());
+            if node.resolve_type().unwrap().is_variable_array() {
+                if self.tokens[self.cur].s_value == "=" {
+                    self.error_logger.print_error_position(
+                        self.tokens[self.cur].pos,
+                        "variable length array cannot have an initializer",
+                    );
+                }
+                vec.push(self.allocate_variable_array(&node));
+            }
             if let Some(token) = self.attempt_reserved("=") {
                 // if initializer element exists, push into AST
                 vec.push(self.local_variable_initialization(&node, &token));
@@ -2399,10 +2554,15 @@ impl<'a> AstBuilderImpl<'a> {
     pub fn consume_block(&mut self) -> Option<Node> {
         if let Some(t) = self.attempt_reserved("{") {
             self.scope_stack.push(HashMap::new());
+            let object_depth = self.dynamic_objects.len();
+            let bound_depth = self.vla_active.len();
             let mut children: Vec<Node> = Vec::new();
             while self.attempt_reserved("}").is_none() {
                 children.push(self.stmt());
             }
+            children.extend(self.cleanup_arrays(object_depth));
+            self.dynamic_objects.truncate(object_depth);
+            self.vla_active.truncate(bound_depth);
             self.scope_stack.pop();
             Some(Node {
                 token: Some(t),
@@ -2447,7 +2607,8 @@ impl<'a> AstBuilderImpl<'a> {
             ))
             || matches!(
                 node.resolve_type(),
-                Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) | None
+                Some(Type::Arr(..) | Type::Vla(..) | Type::Func(..) | Type::VariadicFunc(..))
+                    | None
             )
         {
             self.error_logger.print_error_position(
@@ -2663,18 +2824,38 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn sizeof_expression(&mut self, token: &Token) -> usize {
+    fn sizeof_expression(&mut self, token: &Token) -> Node {
+        let pending_start = self.pending_bounds.len();
         let expression = self.unary();
         if expression.bit_field.is_some() {
             self.error_logger
                 .print_error_position(token.pos, "sizeof cannot be applied to a bit-field");
         }
-        expression.resolve_type().unwrap().size_of()
+        let ty = expression.resolve_type().unwrap();
+        if ty.is_variable_array() {
+            let mut children = self.pending_bounds.split_off(pending_start);
+            children.push(expression);
+            children.push(Self::runtime_size(&ty));
+            Node {
+                nt: NodeType::Sequence,
+                children,
+                token: Some(token.clone()),
+                ..Node::default()
+            }
+        } else {
+            Node {
+                token: Some(token.clone()),
+                value: Some(ty.size_of()),
+                cty: Some(Type::integer(64, false)),
+                ..Node::default()
+            }
+        }
     }
     fn unary(&mut self) -> Node {
         let saved = self.cur;
         if let Some(token) = self.attempt_reserved("(") {
             if let Some(base) = self.attempt_type() {
+                let pending_start = self.pending_bounds.len();
                 let (name, mut ty, _) = self.declarator().resolve(base);
                 self.validate_type_layout(&ty, &self.tokens[self.cur]);
                 if name.is_some() {
@@ -2748,6 +2929,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 | Type::Float(_)
                                 | Type::Ptr(_)
                                 | Type::Arr(..)
+                                | Type::Vla(..)
                                 | Type::Func(..)
                                 | Type::VariadicFunc(..)
                         )
@@ -2756,11 +2938,22 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "invalid cast");
                 }
-                return Node {
+                let result = Node {
                     nt: NodeType::Cast,
-                    token: Some(token),
+                    token: Some(token.clone()),
                     cty: Some(ty),
                     lhs: Some(Box::new(operand)),
+                    ..Node::default()
+                };
+                let mut bounds = self.pending_bounds.split_off(pending_start);
+                if bounds.is_empty() {
+                    return result;
+                }
+                bounds.push(result);
+                return Node {
+                    nt: NodeType::Sequence,
+                    token: Some(token),
+                    children: bounds,
                     ..Node::default()
                 };
             }
@@ -2769,10 +2962,11 @@ impl<'a> AstBuilderImpl<'a> {
 
         if let Some(t) = self.attempt_reserved("sizeof") {
             let saved = self.cur;
-            let size = if self.attempt_reserved("(").is_some() {
+            if self.attempt_reserved("(").is_some() {
                 if let Some(base) = self.attempt_type() {
+                    let pending_start = self.pending_bounds.len();
                     let (name, ty, _) = self.declarator().resolve(base);
-                    self.validate_type_layout(&ty, &self.tokens[self.cur]);
+                    self.validate_type_layout(&ty, &t);
                     if name.is_some() {
                         self.error_logger
                             .print_error_position(t.pos, "sizeof requires a type name");
@@ -2784,20 +2978,22 @@ impl<'a> AstBuilderImpl<'a> {
                         self.error_logger
                             .print_error_position(t.pos, "sizeof requires a complete object type");
                     }
-                    ty.size_of()
-                } else {
-                    self.cur = saved;
-                    self.sizeof_expression(&t)
+                    let mut children = self.pending_bounds.split_off(pending_start);
+                    children.push(Self::runtime_size(&ty));
+                    return if children.len() == 1 {
+                        children.pop().unwrap()
+                    } else {
+                        Node {
+                            nt: NodeType::Sequence,
+                            token: Some(t),
+                            children,
+                            ..Node::default()
+                        }
+                    };
                 }
-            } else {
-                self.sizeof_expression(&t)
-            };
-            return Node {
-                token: Some(t),
-                value: Some(size),
-                cty: Some(Type::I32),
-                ..Node::default()
-            };
+                self.cur = saved;
+            }
+            return self.sizeof_expression(&t);
         }
         if self.attempt_reserved("+").is_some() {
             return self.unary();
@@ -2930,6 +3126,9 @@ impl<'a> AstBuilderImpl<'a> {
             }
             if let Some(ident) = self.resolve_name(&t.s_value) {
                 match ident {
+                    Identifier::Dynamic(ty, offset) => {
+                        Self::dynamic_node(ty.clone(), *offset, t.clone())
+                    }
                     Identifier::Local(ty, offset) => Node {
                         token: Some(t.clone()),
                         nt: NodeType::LocalVar,
@@ -2975,7 +3174,11 @@ impl<'a> AstBuilderImpl<'a> {
     fn suffix_update(&mut self, token: Token, operand: Node, increment: bool) -> Node {
         self.expect_assignable(&operand);
         let ty = operand.resolve_type().unwrap();
-        if ty.float_bits().is_none() {
+        if ty.float_bits().is_none()
+            && !ty
+                .dest_type()
+                .is_some_and(|child| child.is_variable_array())
+        {
             return Node::new_with_op_and_lhs(
                 Some(token),
                 if increment {
@@ -3015,8 +3218,16 @@ impl<'a> AstBuilderImpl<'a> {
             target.clone(),
         );
         let one = Node {
-            cty: Some(ty.clone()),
-            value: Some(ty.float_constant(1.0)),
+            cty: Some(if ty.float_bits().is_some() {
+                ty.clone()
+            } else {
+                Type::I32
+            }),
+            value: Some(if ty.float_bits().is_some() {
+                ty.float_constant(1.0)
+            } else {
+                1
+            }),
             token: Some(token.clone()),
             ..Node::default()
         };
@@ -3219,7 +3430,7 @@ mod tests {
             ("int main(){return 1.5%2;}", "integer operands"),
             ("int main(){return 1.0<<2;}", "integer operands"),
             ("int main(){int *p;return p+1.5;}", "incompatible value"),
-            ("int a[1.5];", "integer constant"),
+            ("int a[1.5];", "integer expression"),
             ("int main(){return (int*)1.5;}", "floating pointer cast"),
             ("int a[2](int);", "invalid array element"),
             ("int x; char x;", "incompatible object redeclaration"),

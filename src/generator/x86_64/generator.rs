@@ -1311,7 +1311,11 @@ impl<'a> AsmGenerator<'a> {
                 return vec![
                     self.gen_addr(node, offset, breakable_branch_num),
                     if let Some(
-                        Type::Arr(..) | Type::Struct(_) | Type::Func(..) | Type::VariadicFunc(..),
+                        Type::Arr(..)
+                        | Type::Vla(..)
+                        | Type::Struct(_)
+                        | Type::Func(..)
+                        | Type::VariadicFunc(..),
                     ) = node.resolve_type()
                     {
                         vec![].into()
@@ -1333,7 +1337,11 @@ impl<'a> AsmGenerator<'a> {
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
                     if let Some(
-                        Type::Arr(..) | Type::Struct(_) | Type::Func(..) | Type::VariadicFunc(..),
+                        Type::Arr(..)
+                        | Type::Vla(..)
+                        | Type::Struct(_)
+                        | Type::Func(..)
+                        | Type::VariadicFunc(..),
                     ) = node.lhs.as_ref().unwrap().dest_type()
                     {
                         vec![].into()
