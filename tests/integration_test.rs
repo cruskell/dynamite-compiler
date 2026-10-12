@@ -558,3 +558,14 @@ fn it_supports_goto_labels(code: &str, output_option: &str) {
 fn it_supports_extended_integers(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "int main(){return ((int[]){7,9})[1]-9;}",
+    "struct S{int x;char y;}; int main(){return ((struct S){7,9}).y-9;}",
+    "int main(){int *p=&(int){7};*p=9;return *p-9;}",
+    "int *p=(int[]){7,9};int main(){return p[1]-9;}",
+    "int f(int x,int y){return x+y;}int main(){return f(3,((int[]){7,9})[1])-12;}",
+], ["asm", "llvm"])]
+fn it_supports_compound_literals(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

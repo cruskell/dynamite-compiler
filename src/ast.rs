@@ -1753,13 +1753,16 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn expect_assignable(&self, node: &Node) {
-        if !matches!(
-            node.nt,
-            NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref
-        ) || matches!(
-            node.resolve_type(),
-            Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) | None
-        ) {
+        if !(node.compound_literal
+            || matches!(
+                node.nt,
+                NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref
+            ))
+            || matches!(
+                node.resolve_type(),
+                Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) | None
+            )
+        {
             self.error_logger.print_error_position(
                 node.token.as_ref().unwrap().pos,
                 "expression is not assignable",
@@ -1961,17 +1964,72 @@ impl<'a> AstBuilderImpl<'a> {
             }
         }
     }
+    fn initializer_expressions(node: Node, expressions: &mut Vec<Node>) {
+        if matches!(node.nt, NodeType::Block | NodeType::DefVar) {
+            for child in node.children {
+                Self::initializer_expressions(child, expressions);
+            }
+        } else {
+            expressions.push(node);
+        }
+    }
+
     fn unary(&mut self) -> Node {
         let saved = self.cur;
         if let Some(token) = self.attempt_reserved("(") {
             if let Some(base) = self.attempt_type() {
-                let (name, ty, _) = self.declarator().resolve(base);
+                let (name, mut ty, _) = self.declarator().resolve(base);
                 self.validate_type_layout(&ty, &self.tokens[self.cur]);
                 if name.is_some() {
                     self.error_logger
                         .print_error_position(token.pos, "cast requires a type name");
                 }
                 self.expect_reserved(")");
+                if self.tokens[self.cur].s_value == "{" {
+                    if matches!(ty, Type::Arr(_, 0)) {
+                        let saved = self.cur;
+                        let count = self.initializer_count();
+                        self.cur = saved;
+                        ty = self.infer_array_size(ty, count, &token);
+                    }
+                    let name = Token {
+                        s_value: format!(".compound.{}", token.pos),
+                        ..token.clone()
+                    };
+                    let literal = if self.return_type.is_some() {
+                        let object = self.register_local_variable(name, ty);
+                        let initializer = self.local_variable_initialization(&object, &token);
+                        let mut children = vec![];
+                        Self::initializer_expressions(initializer, &mut children);
+                        children.push(object);
+                        Node {
+                            nt: NodeType::Sequence,
+                            token: Some(token.clone()),
+                            compound_literal: true,
+                            children,
+                            ..Node::default()
+                        }
+                    } else {
+                        self.expect_object_type(&ty, &token);
+                        let data = self.global_data();
+                        self.validate_global_initializer(&ty, &data, &token);
+                        self.global_variables.insert(
+                            name.s_value.clone(),
+                            GlobalVariable {
+                                ty: ty.clone(),
+                                data: Some(data),
+                            },
+                        );
+                        Node {
+                            nt: NodeType::GlobalVar,
+                            cty: Some(ty),
+                            token: Some(token.clone()),
+                            global_name: name.s_value,
+                            ..Node::default()
+                        }
+                    };
+                    return self.postfix(literal);
+                }
                 let operand = self.unary();
                 if !(ty.integer_info().is_some() || matches!(ty, Type::Void | Type::Ptr(_)))
                     || (!matches!(
@@ -2046,10 +2104,12 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if let Some(token) = self.attempt_reserved("&") {
             let operand = self.unary();
-            if !matches!(
-                operand.nt,
-                NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref
-            ) {
+            if !(operand.compound_literal
+                || matches!(
+                    operand.nt,
+                    NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref
+                ))
+            {
                 self.error_logger
                     .print_error_position(token.pos, "expression is not addressable");
             }
@@ -2101,7 +2161,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.prim()
     }
     fn prim(&mut self) -> Node {
-        let mut node = if self.attempt_reserved("(").is_some() {
+        let node = if self.attempt_reserved("(").is_some() {
             let node = self.expr();
             self.expect_reserved(")");
             node
@@ -2168,6 +2228,9 @@ impl<'a> AstBuilderImpl<'a> {
                 .print_error_position(self.tokens[self.cur].pos, "unexpected token");
             unreachable!();
         };
+        self.postfix(node)
+    }
+    fn postfix(&mut self, mut node: Node) -> Node {
         loop {
             if self.attempt_reserved("(").is_some() {
                 // Call function
