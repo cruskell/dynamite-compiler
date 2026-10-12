@@ -156,13 +156,19 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(t) = self.attempt_ident() {
             let mut dimensions = vec![];
             while self.attempt_reserved("[").is_some() {
-                let size = self.constant_array_size();
-                if size.i_value == 0 {
-                    self.error_logger
-                        .print_error_position(size.pos, "array size must be positive");
+                if self.attempt_reserved("]").is_some() {
+                    if !dimensions.is_empty() {
+                        self.error_logger.print_error_position(
+                            t.pos,
+                            "only the outer array dimension may be omitted",
+                        );
+                    }
+                    dimensions.push(0);
+                } else {
+                    let size = self.constant_array_size();
+                    dimensions.push(size.i_value);
+                    self.expect_reserved("]");
                 }
-                dimensions.push(size.i_value);
-                self.expect_reserved("]");
             }
             for size in dimensions.into_iter().rev() {
                 if ty.size_of().checked_mul(size).is_none() {
@@ -180,8 +186,70 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn new_local_variable(&mut self, ty: Type) -> Node {
         let (t, ty) = self.expect_ident_with_type(ty);
+        let ty = if matches!(ty, Type::Arr(_, 0)) {
+            let saved = self.cur;
+            self.expect_reserved("=");
+            let count = self.initializer_count();
+            self.cur = saved;
+            self.infer_array_size(ty, count, &t)
+        } else {
+            ty
+        };
         self.register_local_variable(t, ty)
     }
+
+    fn infer_array_size(&self, ty: Type, count: usize, token: &Token) -> Type {
+        if let Type::Arr(child, 0) = ty {
+            if count == 0 {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "incomplete array requires a nonempty initializer",
+                );
+            }
+            if child.size_of().checked_mul(count).is_none() {
+                self.error_logger
+                    .print_error_position(token.pos, "array size is too large");
+            }
+            Type::Arr(child, count)
+        } else {
+            ty
+        }
+    }
+
+    fn initializer_count(&mut self) -> usize {
+        self.expect_reserved("{");
+        let mut depth = 0;
+        let mut count = 0;
+        let mut element = false;
+        loop {
+            let token = &self.tokens[self.cur];
+            if token.tt == TokenType::EOF {
+                self.error_logger
+                    .print_error_position(token.pos, "unterminated initializer");
+            }
+            match token.s_value.as_str() {
+                "}" if depth == 0 => {
+                    return count + usize::from(element);
+                }
+                "," if depth == 0 => {
+                    count += usize::from(element);
+                    element = false;
+                }
+                "{" | "(" | "[" => {
+                    depth += 1;
+                    element = true;
+                }
+                "}" | ")" | "]" => {
+                    depth -= 1;
+                }
+                _ => {
+                    element = true;
+                }
+            }
+            self.cur += 1;
+        }
+    }
+
     fn register_local_variable(&mut self, t: Token, ty: Type) -> Node {
         self.offset_size += ty.size_of();
         self.offset_size = self.offset_size.div_ceil(ty.align_of()) * ty.align_of();
@@ -302,6 +370,12 @@ impl<'a> AstBuilderImpl<'a> {
             loop {
                 let (t, ty) = self.expect_ident_with_type(ty.clone());
                 let data = self.attempt_reserved("=").map(|_| self.global_data());
+                let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
+                    elements.len()
+                } else {
+                    0
+                };
+                let ty = self.infer_array_size(ty, count, &t);
                 if let Some(data) = &data {
                     self.validate_global_initializer(&ty, data, &t);
                 }
