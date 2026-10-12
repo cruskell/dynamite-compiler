@@ -360,7 +360,12 @@ impl<'a> AsmGenerator<'a> {
                 .into();
             }
             NodeType::Num => {
-                return Assembly::inst1(PUSH, node.value.unwrap());
+                let value = node.value.unwrap();
+                return if value <= i32::MAX as usize {
+                    Assembly::inst1(PUSH, value)
+                } else {
+                    vec![Assembly::inst2(MOV, RAX, value), Assembly::inst1(PUSH, RAX)].into()
+                };
             }
             NodeType::LocalVar | NodeType::GlobalVar => {
                 return vec![

@@ -52,3 +52,5 @@ control flow, arrays, strings, and scalar conversions. Source diagnostics cover
 truncated input, malformed literals, invalid lvalues, initializer sizes, and
 function argument counts. This remains a C-like subset, not a full C compiler;
 function calls currently support at most six arguments.
+
+Integer literals support decimal and hexadecimal (`0x` or `0X`) notation.
