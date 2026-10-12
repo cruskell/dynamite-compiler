@@ -123,20 +123,6 @@ impl<'a> AstBuilderImpl<'a> {
         );
         unreachable!()
     }
-    fn expect_number(&mut self) -> Token {
-        if let TokenType::Num = self.tokens[self.cur].tt {
-        } else {
-            self.error_logger.print_error_position(
-                self.tokens[self.cur].pos,
-                &format!(
-                    "number expected, but got {}",
-                    &self.tokens[self.cur].s_value
-                ),
-            )
-        }
-        self.cur += 1;
-        self.tokens[self.cur - 1].clone()
-    }
     fn attempt(&mut self, tt: TokenType) -> Option<Token> {
         if tt == self.tokens[self.cur].tt {
             self.cur += 1;
@@ -148,6 +134,20 @@ impl<'a> AstBuilderImpl<'a> {
     fn at_eof(&self) -> bool {
         self.cur >= self.tokens.len() || matches!(self.tokens[self.cur].tt, TokenType::EOF)
     }
+    fn constant_array_size(&mut self) -> Token {
+        let token = self.tokens[self.cur].clone();
+        let expression = self.ternary();
+        let value = self.eval(&expression);
+        if value <= 0 {
+            self.error_logger
+                .print_error_position(token.pos, "array size must be positive");
+        }
+        Token {
+            i_value: value as usize,
+            ..token
+        }
+    }
+
     fn expect_ident_with_type(&mut self, ty: Type) -> (Token, Type) {
         let mut ty = ty.clone();
         while self.attempt_reserved("*").is_some() {
@@ -156,7 +156,7 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(t) = self.attempt_ident() {
             let mut dimensions = vec![];
             while self.attempt_reserved("[").is_some() {
-                let size = self.expect_number();
+                let size = self.constant_array_size();
                 if size.i_value == 0 {
                     self.error_logger
                         .print_error_position(size.pos, "array size must be positive");
@@ -870,7 +870,7 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                     let mut dimensions = vec![];
                     while self.attempt_reserved("[").is_some() {
-                        let size = self.expect_number();
+                        let size = self.constant_array_size();
                         if size.i_value == 0 {
                             self.error_logger
                                 .print_error_position(size.pos, "array size must be positive");

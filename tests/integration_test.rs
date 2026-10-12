@@ -279,3 +279,13 @@ fn it_supports_sizeof_types(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int main() { int a[1 + 2]; return sizeof(a); }", 12),
+    ("int a[sizeof(int)][2 * 3]; int main() { return sizeof(a); }", 96),
+    ("int main() { return sizeof(char[1 ? 7 : 2]); }", 7),
+], ["asm", "llvm"])]
+fn it_supports_constant_array_dimensions(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}
