@@ -257,3 +257,14 @@ fn it_supports_hexadecimal_integers(output_option: &str) {
     );
     assert_eq!(output.status.code(), Some(1), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int main() { int x = 0; return (x = 3, x += 4, x); }", 7),
+    ("int main() { int x = 0; int y = 2; for (x = 0, y = 1; x < 3; x++, y += 2) {} return y; }", 7),
+    ("int add(int a, int b) { return a + b; } int main() { int a[2] = {2, 3}; return add((a[0] = 4, a[0]), a[1]); }", 7),
+    ("int main() { int x = 0; return 1 ? (x = 2, x + 5) : 0; }", 7),
+], ["asm", "llvm"])]
+fn it_supports_comma_expressions(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}

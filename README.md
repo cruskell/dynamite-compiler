@@ -54,3 +54,6 @@ function argument counts. This remains a C-like subset, not a full C compiler;
 function calls currently support at most six arguments.
 
 Integer literals support decimal and hexadecimal (`0x` or `0X`) notation.
+
+Comma expressions evaluate operands from left to right and produce the last value.
+Commas in declarations, initializers, and argument lists remain separators.
