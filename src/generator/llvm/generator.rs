@@ -17,6 +17,7 @@ pub struct Options<'a> {
     label_number: usize,
     terminated: bool,
     return_ty: Type,
+    return_pointer: Option<String>,
     break_labels: Vec<String>,
     expression_slots: HashMap<usize, usize>,
 }
@@ -304,7 +305,443 @@ impl<'a> IrGenerator<'a> {
         }
     }
 
+    fn target_arch() -> crate::generator::Arch {
+        if cfg!(target_arch = "aarch64") {
+            crate::generator::Arch::Aarch64
+        } else {
+            crate::generator::Arch::X86_64
+        }
+    }
+    fn target_os() -> crate::generator::Os {
+        if cfg!(target_os = "macos") {
+            crate::generator::Os::MacOS
+        } else {
+            crate::generator::Os::Linux
+        }
+    }
+    fn aggregate_result_type(ty: &Type) -> String {
+        let parts = crate::generator::abi::aggregate_parts(ty, &Self::target_arch());
+        if parts.is_empty() {
+            "void".into()
+        } else if parts.len() == 1 {
+            Self::gen_type(parts[0].ty.clone())
+        } else {
+            format!(
+                "{{ {} }}",
+                parts
+                    .iter()
+                    .map(|part| Self::gen_type(part.ty.clone()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    }
+    fn aggregate_parameter_types(
+        ty: &Type,
+        argument: &crate::generator::abi::Argument,
+    ) -> Vec<String> {
+        if argument.memory.is_some() {
+            return vec![format!(
+                "ptr byval({}) align {}",
+                Self::gen_type(ty.clone()),
+                ty.align_of()
+            )];
+        }
+        if argument.indirect {
+            return vec!["ptr".into()];
+        }
+        let parts = argument
+            .parts
+            .iter()
+            .map(|(part, _)| Self::gen_type(part.ty.clone()))
+            .collect::<Vec<_>>();
+        if cfg!(target_arch = "aarch64") && matches!(ty, Type::Struct(_)) && parts.len() > 1 {
+            vec![format!("[{} x {}]", parts.len(), parts[0])]
+        } else {
+            parts
+        }
+    }
+    fn aggregate_pointer(
+        base: &str,
+        offset: usize,
+        options: &mut Options,
+        lines: &mut Vec<String>,
+    ) -> String {
+        if offset == 0 {
+            return base.into();
+        }
+        let register = options.new_register();
+        options.register_queue.pop();
+        lines.push(format!(
+            "  %{register} = getelementptr i8, ptr {base}, i64 {offset}"
+        ));
+        format!("%{register}")
+    }
+    fn aggregate_function(&self, name: &str, func: &Func) -> String {
+        use crate::generator::abi;
+        let (types, result, variadic) = func.cty.function_signature().unwrap();
+        let signature = abi::signature(
+            &types,
+            &result,
+            Self::target_arch(),
+            Self::target_os(),
+            types.len(),
+            variadic,
+        );
+        let return_type = if matches!(result, Type::Struct(_)) {
+            Self::aggregate_result_type(&result)
+        } else {
+            Self::gen_type(result.clone())
+        };
+        let mut parameters = vec![];
+        if signature.indirect_result {
+            parameters.push(format!(
+                "ptr sret({}) align {} %abi.result",
+                Self::gen_type(result.clone()),
+                result.align_of()
+            ));
+        }
+        for (index, argument) in signature.arguments.iter().enumerate() {
+            for (part, ty) in Self::aggregate_parameter_types(&types[index], argument)
+                .into_iter()
+                .enumerate()
+            {
+                parameters.push(if func.body.is_some() {
+                    format!("{ty} %abi.arg.{index}.{part}")
+                } else {
+                    ty
+                });
+            }
+        }
+        if variadic {
+            parameters.push("...".into());
+        }
+        if func.body.is_none() {
+            return format!("declare {return_type} @{name}({})", parameters.join(", "));
+        }
+        let mut number = 0;
+        let mut registers = HashMap::new();
+        let mut queue = vec![];
+        let mut options = Options {
+            register_number: &mut number,
+            register_map: &mut registers,
+            register_queue: &mut queue,
+            label_number: 0,
+            terminated: false,
+            return_ty: result.clone(),
+            return_pointer: signature.indirect_result.then(|| "%abi.result".into()),
+            break_labels: vec![],
+            expression_slots: HashMap::new(),
+        };
+        let mut lines = vec![format!(
+            "define {}{return_type} @{name}({}) {{",
+            if func.internal { "internal " } else { "" },
+            parameters.join(", ")
+        )];
+        for (index, argument) in signature.arguments.iter().enumerate() {
+            let ty = &types[index];
+            let register = options.new_register();
+            options.register_queue.pop();
+            options
+                .register_map
+                .insert(func.args[index].offset.unwrap(), register);
+            lines.push(format!(
+                "  %{register} = alloca [{} x i8], align {}",
+                ty.size_of().div_ceil(8) * 8,
+                ty.align_of()
+            ));
+            if argument.memory.is_some() || argument.indirect {
+                let value = options.new_register();
+                options.register_queue.pop();
+                lines.push(format!(
+                    "  %{value} = load {}, ptr %abi.arg.{index}.0, align {}",
+                    Self::gen_type(ty.clone()),
+                    ty.align_of()
+                ));
+                lines.push(format!(
+                    "  store {} %{value}, ptr %{register}, align {}",
+                    Self::gen_type(ty.clone()),
+                    ty.align_of()
+                ));
+            } else {
+                let grouped = cfg!(target_arch = "aarch64")
+                    && matches!(ty, Type::Struct(_))
+                    && argument.parts.len() > 1;
+                let group_type = Self::aggregate_parameter_types(ty, argument)[0].clone();
+                for (part_index, (part, _)) in argument.parts.iter().enumerate() {
+                    let value = if grouped {
+                        let value = options.new_register();
+                        options.register_queue.pop();
+                        lines.push(format!("  %{value} = extractvalue {group_type} %abi.arg.{index}.0, {part_index}"));
+                        format!("%{value}")
+                    } else {
+                        format!("%abi.arg.{index}.{part_index}")
+                    };
+                    let pointer = Self::aggregate_pointer(
+                        &format!("%{register}"),
+                        part.offset,
+                        &mut options,
+                        &mut lines,
+                    );
+                    lines.push(format!(
+                        "  store {} {value}, ptr {pointer}, align 1",
+                        Self::gen_type(part.ty.clone())
+                    ));
+                }
+            }
+        }
+        lines.extend(Self::allocate_locals(
+            func.body.as_ref().unwrap(),
+            &mut options,
+        ));
+        lines.extend(self.gen_node(func.body.as_ref().unwrap(), &mut options));
+        if !options.terminated {
+            lines.push(if return_type == "void" {
+                "  ret void".into()
+            } else {
+                format!("  ret {return_type} zeroinitializer")
+            });
+        }
+        lines.push("}".into());
+        lines.join("\n")
+    }
+    fn aggregate_call(&self, node: &Node, options: &mut Options) -> Vec<String> {
+        use crate::generator::abi;
+        let types = node
+            .args
+            .iter()
+            .rev()
+            .map(|arg| arg.resolve_type().unwrap())
+            .collect::<Vec<_>>();
+        let result = node.resolve_type().unwrap();
+        let signature = abi::signature(
+            &types,
+            &result,
+            Self::target_arch(),
+            Self::target_os(),
+            node.parameter_types.len(),
+            node.variadic,
+        );
+        let mut lines = vec![];
+        let callee = if let Some(callee) = &node.lhs {
+            lines.extend(self.gen_node(callee, options));
+            options.register_queue.pop().unwrap()
+        } else {
+            format!("@{}", node.global_name)
+        };
+        let mut arguments = vec![];
+        for (index, arg) in node.args.iter().rev().enumerate() {
+            let argument = &signature.arguments[index];
+            let ty = &types[index];
+            let aggregate = matches!(ty, Type::Struct(_));
+            let value = if aggregate {
+                lines.extend(self.gen_addr(arg, options));
+                options.register_queue.pop().unwrap()
+            } else {
+                lines.extend(self.gen_node(arg, options));
+                options.register_queue.pop().unwrap()
+            };
+            let parameter_types = Self::aggregate_parameter_types(ty, argument);
+            if argument.memory.is_some() || argument.indirect {
+                arguments.push(format!("{} {value}", parameter_types[0]));
+            } else {
+                let mut values = vec![];
+                for (part, _) in &argument.parts {
+                    let value = if aggregate {
+                        let pointer =
+                            Self::aggregate_pointer(&value, part.offset, options, &mut lines);
+                        let register = options.new_register();
+                        options.register_queue.pop();
+                        lines.push(format!(
+                            "  %{register} = load {}, ptr {pointer}, align 1",
+                            Self::gen_type(part.ty.clone())
+                        ));
+                        format!("%{register}")
+                    } else {
+                        value.clone()
+                    };
+                    values.push(value);
+                }
+                if parameter_types.len() == 1 && values.len() > 1 {
+                    let mut group = "poison".to_string();
+                    for (index, value) in values.iter().enumerate() {
+                        let register = options.new_register();
+                        options.register_queue.pop();
+                        lines.push(format!(
+                            "  %{register} = insertvalue {} {group}, {} {value}, {index}",
+                            parameter_types[0],
+                            Self::gen_type(argument.parts[index].0.ty.clone())
+                        ));
+                        group = format!("%{register}");
+                    }
+                    arguments.push(format!("{} {group}", parameter_types[0]));
+                } else {
+                    arguments.extend(
+                        parameter_types
+                            .into_iter()
+                            .zip(values)
+                            .map(|(ty, value)| format!("{ty} {value}")),
+                    );
+                }
+            }
+        }
+        let result_slot = node
+            .offset
+            .map(|offset| format!("%{}", options.register_map[&offset]));
+        if signature.indirect_result {
+            arguments.insert(
+                0,
+                format!(
+                    "ptr sret({}) align {} {}",
+                    Self::gen_type(result.clone()),
+                    result.align_of(),
+                    result_slot.as_ref().unwrap()
+                ),
+            );
+        }
+        let return_type = if matches!(result, Type::Struct(_)) {
+            Self::aggregate_result_type(&result)
+        } else {
+            Self::gen_type(result.clone())
+        };
+        let variadic_signature = if node.variadic {
+            let fixed = abi::signature(
+                &node.parameter_types,
+                &result,
+                Self::target_arch(),
+                Self::target_os(),
+                node.parameter_types.len(),
+                true,
+            );
+            let mut parameters = vec![];
+            if fixed.indirect_result {
+                parameters.push("ptr".into());
+            }
+            for (index, argument) in fixed.arguments.iter().enumerate() {
+                parameters.extend(
+                    Self::aggregate_parameter_types(&node.parameter_types[index], argument)
+                        .into_iter()
+                        .map(|ty| ty.split(" byval").next().unwrap().to_string()),
+                );
+            }
+            parameters.push("...".into());
+            format!(" ({})", parameters.join(", "))
+        } else {
+            String::new()
+        };
+        let value = if return_type == "void" {
+            lines.push(format!(
+                "  call void{variadic_signature} {callee}({})",
+                arguments.join(", ")
+            ));
+            "0".into()
+        } else {
+            let register = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!(
+                "  %{register} = call {return_type}{variadic_signature} {callee}({})",
+                arguments.join(", ")
+            ));
+            format!("%{register}")
+        };
+        if matches!(result, Type::Struct(_)) {
+            let slot = result_slot.unwrap();
+            if !signature.indirect_result {
+                for (index, part) in signature.result.iter().enumerate() {
+                    let value = if signature.result.len() > 1 {
+                        let register = options.new_register();
+                        options.register_queue.pop();
+                        lines.push(format!(
+                            "  %{register} = extractvalue {return_type} {value}, {index}"
+                        ));
+                        format!("%{register}")
+                    } else {
+                        value.clone()
+                    };
+                    let pointer = Self::aggregate_pointer(&slot, part.offset, options, &mut lines);
+                    lines.push(format!(
+                        "  store {} {value}, ptr {pointer}, align 1",
+                        Self::gen_type(part.ty.clone())
+                    ));
+                }
+            }
+            let register = options.new_register();
+            lines.push(format!(
+                "  %{register} = load {}, ptr {slot}, align {}",
+                Self::gen_type(result.clone()),
+                result.align_of()
+            ));
+        } else {
+            options.register_queue.push(value);
+        }
+        lines
+    }
+    fn aggregate_return(&self, node: &Node, options: &mut Options) -> Vec<String> {
+        let ty = options.return_ty.clone();
+        let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
+        let address = options.register_queue.pop().unwrap();
+        let parts = crate::generator::abi::aggregate_parts(&ty, &Self::target_arch());
+        if let Some(pointer) = options.return_pointer.clone() {
+            let register = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!(
+                "  %{register} = load {}, ptr {address}, align {}",
+                Self::gen_type(ty.clone()),
+                ty.align_of()
+            ));
+            lines.push(format!(
+                "  store {} %{register}, ptr {pointer}, align {}",
+                Self::gen_type(ty.clone()),
+                ty.align_of()
+            ));
+            lines.push("  ret void".into());
+        } else {
+            let return_type = Self::aggregate_result_type(&ty);
+            let mut result = "poison".to_string();
+            for (index, part) in parts.iter().enumerate() {
+                let pointer = Self::aggregate_pointer(&address, part.offset, options, &mut lines);
+                let register = options.new_register();
+                options.register_queue.pop();
+                let remaining = ty.size_of() - part.offset;
+                let loaded_type = if remaining < part.ty.size_of() {
+                    format!("i{}", remaining * 8)
+                } else {
+                    Self::gen_type(part.ty.clone())
+                };
+                lines.push(format!(
+                    "  %{register} = load {loaded_type}, ptr {pointer}, align 1"
+                ));
+                let register = if remaining < part.ty.size_of() {
+                    let extended = options.new_register();
+                    options.register_queue.pop();
+                    lines.push(format!(
+                        "  %{extended} = zext {loaded_type} %{register} to {}",
+                        Self::gen_type(part.ty.clone())
+                    ));
+                    extended
+                } else {
+                    register
+                };
+                if parts.len() == 1 {
+                    result = format!("%{register}");
+                } else {
+                    let combined = options.new_register();
+                    options.register_queue.pop();
+                    lines.push(format!("  %{combined} = insertvalue {return_type} {result}, {} %{register}, {index}",Self::gen_type(part.ty.clone())));
+                    result = format!("%{combined}");
+                }
+            }
+            lines.push(format!("  ret {return_type} {result}"));
+        }
+        options.terminated = true;
+        lines
+    }
     fn gen_func(&self, name: &str, func: &Func) -> String {
+        let (types, result, _) = func.cty.function_signature().unwrap();
+        if matches!(result, Type::Struct(_)) || types.iter().any(|ty| matches!(ty, Type::Struct(_)))
+        {
+            return self.aggregate_function(name, func);
+        }
         if func.body.is_none() {
             let (args, result, variadic) = func.cty.function_signature().unwrap();
             let mut arguments = args
@@ -330,6 +767,7 @@ impl<'a> IrGenerator<'a> {
             label_number: 0,
             terminated: false,
             return_ty: *return_ty.clone(),
+            return_pointer: None,
             break_labels: vec![],
             expression_slots: HashMap::new(),
         };
@@ -403,7 +841,10 @@ impl<'a> IrGenerator<'a> {
 
     fn allocate_locals(node: &Node, options: &mut Options) -> Vec<String> {
         let mut lines = vec![];
-        if matches!(node.nt, NodeType::LocalVar) {
+        if matches!(node.nt, NodeType::LocalVar)
+            || (node.nt == NodeType::CallFunc
+                && matches!(node.resolve_type(), Some(Type::Struct(_))))
+        {
             let offset = node.offset.unwrap();
             if !options.register_map.contains_key(&offset) {
                 let register = options.register_from_offset(offset);
@@ -411,7 +852,11 @@ impl<'a> IrGenerator<'a> {
                 lines.push(format!(
                     "  %{} = alloca {}, align {}",
                     register,
-                    Self::gen_type_with_opaque_ptr(ty.clone()),
+                    if matches!(ty, Type::Struct(_)) {
+                        format!("[{} x i8]", ty.size_of().div_ceil(8) * 8)
+                    } else {
+                        Self::gen_type_with_opaque_ptr(ty.clone())
+                    },
                     Self::align(&ty)
                 ));
             }
@@ -609,6 +1054,14 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, options: &mut Options) -> Vec<String> {
         match node.nt {
+            NodeType::CallFunc => {
+                let lines = self.gen_node(node, options);
+                options.register_queue.pop();
+                options
+                    .register_queue
+                    .push(format!("%{}", options.register_map[&node.offset.unwrap()]));
+                lines
+            }
             NodeType::Conditional => {
                 let lines = self.gen_node(node, options);
                 options.register_queue.pop();
@@ -705,6 +1158,14 @@ impl<'a> IrGenerator<'a> {
                     .collect();
             }
             NodeType::CallFunc => {
+                if matches!(node.resolve_type(), Some(Type::Struct(_)))
+                    || node
+                        .args
+                        .iter()
+                        .any(|arg| matches!(arg.resolve_type(), Some(Type::Struct(_))))
+                {
+                    return self.aggregate_call(node, options);
+                }
                 let parameters = node.parameter_types.clone();
                 let result = node.cty.clone().unwrap();
                 let variadic = node.variadic;
@@ -780,6 +1241,9 @@ impl<'a> IrGenerator<'a> {
                     .concat();
             }
             NodeType::Return => {
+                if matches!(options.return_ty, Type::Struct(_)) {
+                    return self.aggregate_return(node, options);
+                }
                 if options.return_ty == Type::Void {
                     let mut lines = if let Some(operand) = &node.lhs {
                         self.gen_node(operand, options)

@@ -753,3 +753,70 @@ fn it_interoperates_with_clang_floating_point(output_option: &str) {
 fn it_rounds_and_updates_floating_values(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "struct S{int a;int b;};struct S f(struct S x){x.a+=2;return x;}int main(){struct S s={3,5};struct S t=f(s);return s.a+t.a+t.b-13;}",
+    "struct S{long a;long b;long c;};struct S f(struct S x){x.c+=7;return x;}int main(){struct S s={1,2,3};struct S t=f(s);return t.a+t.b+t.c+s.c-16;}",
+    "struct S{char a[3];};struct S f(struct S x){x.a[2]+=2;return x;}int main(){struct S s={{1,2,3}};return f(s).a[2]-5;}",
+    "struct S{double a;long b;};struct S f(struct S x){x.a+=1.5;x.b+=2;return x;}int main(){struct S s={2.5,3};struct S t=f(s);return (t.a==4.0 && t.b==5)-1;}",
+    "struct S{double a[4];};struct S f(struct S x){x.a[3]+=2;return x;}int main(){struct S s={{1,2,3,4}};return (f(s).a[3]==6.0)-1;}",
+    "union U{long x;double y;};union U f(union U x){x.x+=2;return x;}int main(){union U u={7};return f(u).x-9;}",
+    "struct S{long a;long b;};long f(long a,long b,long c,long d,long e,struct S s,long z){return a+b+c+d+e+s.a+s.b+z;}int main(){struct S s={6,7};return f(1,2,3,4,5,s,8)-36;}",
+], ["asm", "llvm"])]
+fn it_supports_aggregate_values(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    ("typedef struct{int a;int b;} S;", "{3,5}", "s.a+=1;", "s.b+=2;", "a.a==3 && a.b==5 && b.a==4 && b.b==7"),
+    ("typedef struct{long a;long b;long c;} S;", "{1,2,3}", "s.c+=4;", "s.a+=2;", "a.c==3 && b.a==3 && b.b==2 && b.c==7"),
+    ("typedef struct{char a[3];} S;", "{{1,2,3}}", "s.a[0]+=1;", "s.a[2]+=2;", "a.a[0]==1 && b.a[0]==2 && b.a[2]==5"),
+    ("typedef struct{double a;long b;} S;", "{2.5,3}", "s.a+=1.5;", "s.b+=2;", "a.a==2.5 && b.a==4.0 && b.b==5"),
+    ("typedef struct{float a[4];} S;", "{{1,2,3,4}}", "s.a[1]+=2;", "s.a[3]+=1;", "a.a[1]==2 && b.a[1]==4 && b.a[3]==5"),
+    ("typedef struct{double a[4];} S;", "{{1,2,3,4}}", "s.a[1]+=2;", "s.a[3]+=1;", "a.a[1]==2 && b.a[1]==4 && b.a[3]==5"),
+    ("typedef union{double x;double y;} S;", "{2.5}", "s.x+=1;", "s.x+=2;", "a.x==2.5 && b.x==5.5"),
+    ("typedef struct{unsigned a:3;int b;} S;", "{5,9}", "s.a+=1;", "s.b+=2;", "a.a==5 && a.b==9 && b.a==6 && b.b==11"),
+], ["asm", "llvm"])]
+fn it_interoperates_with_clang_aggregate_values(
+    case: (&str, &str, &str, &str, &str),
+    output_option: &str,
+) {
+    let (layout, initializer, local_update, foreign_update, comparison) = case;
+    let code = format!(
+        "{layout} S foreign(S s);int check(S a,S b);S local(S s){{{local_update}return s;}}int main(){{S s={initializer};S t=foreign(s);return check(s,t);}}"
+    );
+    let companion = format!(
+        "{layout} S local(S s);S foreign(S s){{s=local(s);{foreign_update}return s;}}int check(S a,S b){{return !({comparison});}}"
+    );
+    assert_eq!(
+        compile_and_run_with_c(&code, output_option, Some(&companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_interoperates_with_clang_aggregate_register_spills(output_option: &str) {
+    let layout = "typedef struct{double a[4];} S;";
+    let code = format!(
+        "{layout} double foreign(double a,double b,double c,double d,double e,double f,S s,int z);int main(){{S s={{{{1,2,3,4}}}};return (foreign(1,2,3,4,5,6,s,7)==38.0)-1;}}"
+    );
+    let companion = format!(
+        "{layout} double foreign(double a,double b,double c,double d,double e,double f,S s,int z){{return a+b+c+d+e+f+s.a[0]+s.a[1]+s.a[2]+s.a[3]+z;}}"
+    );
+    assert_eq!(
+        compile_and_run_with_c(&code, output_option, Some(&companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "struct S{int a;int b;int c;};struct S g={1,2,3};struct S f(){return g;}int main(){struct S (*p)()=f;return p().c-3;}",
+    "struct S{long a;long b;long c;};struct S f(int n,struct S s){if(n)return f(n-1,s);return s;}int main(){struct S s={1,2,3};return f(3,s).c-3;}",
+], ["asm", "llvm"])]
+fn it_returns_global_and_recursive_aggregates(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
