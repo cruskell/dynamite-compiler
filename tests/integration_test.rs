@@ -115,21 +115,31 @@ fn llvm_omits_unreachable_statements(code: &str) {
 }
 
 fn compile_and_run(code: &str, output_option: &str) -> Output {
+    compile_and_run_with_c(code, output_option, None)
+}
+
+fn compile_and_run_with_c(code: &str, output_option: &str, companion: Option<&str>) -> Output {
     let assembly = dynamite_compiler::generate(code, output_option, false);
     let mut rng = rand::thread_rng();
     fs::create_dir_all("./tests/temp").unwrap();
     let binary_name = &format!("./tests/temp/{}", Alphanumeric.sample_string(&mut rng, 32));
-    let child = Command::new("clang")
-        .args([
-            "-x",
-            match output_option {
-                "asm" => "assembler",
-                _ => "ir",
-            },
-            "-o",
-            binary_name,
-            "-",
-        ])
+    let mut command = Command::new("clang");
+    command.args([
+        "-x",
+        match output_option {
+            "asm" => "assembler",
+            _ => "ir",
+        },
+        "-o",
+        binary_name,
+        "-",
+    ]);
+    let companion_path = format!("{binary_name}.c");
+    if let Some(source) = companion {
+        fs::write(&companion_path, source).unwrap();
+        command.args(["-x", "c", &companion_path]);
+    }
+    let child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -142,6 +152,9 @@ fn compile_and_run(code: &str, output_option: &str) -> Output {
         .expect("Failed to open stdin")
         .expect("Failed to write to stdin");
     let cc_output = child.wait_with_output().unwrap();
+    if companion.is_some() {
+        remove_file(companion_path).unwrap();
+    }
     assert!(
         cc_output.status.success(),
         "clang failed:\n{}\nGenerated code:\n{}",
@@ -636,5 +649,47 @@ fn it_preserves_volatile_accesses_in_llvm() {
     "int f(){static const unsigned short x=65535;return x;}int main(){return f()-65535;}",
 ], ["asm", "llvm"])]
 fn it_combines_qualified_extended_features(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "struct S{unsigned a:3; signed b:5; int c;};int main(){struct S s={7,-3,9};return s.a+s.b+s.c-13;}",
+    "struct S{unsigned a:3;unsigned b:5;};struct S s={.b=17,.a=5};int main(){return s.a+s.b-22;}",
+    "struct S{unsigned a:3;unsigned b:5;};int main(){struct S s={7,17};int x=s.a++;int y=++s.b;return x+s.a+y+s.b-43;}",
+    "struct S{signed a:3;unsigned b:5;};int main(){struct S s={3,17};int x=(s.a=7);s.a+=2;return x+s.a+s.b-17;}",
+    "struct S{unsigned a:3;int:0;unsigned b:5;};int main(){struct S s={7,17};return sizeof(s)+s.a+s.b-32;}",
+    "union U{unsigned a:3;unsigned b:5;};union U u={7};int main(){return u.a+u.b-14;}",
+    "struct S{unsigned a:3;unsigned b:5;};int main(){struct S s[2]={{1,2},{3,4}};int i=0;s[i++].a+=2;return i+s[0].a+s[0].b-6;}",
+    "struct S{unsigned long a:40;unsigned long b:24;};struct S s={1099511627775UL,16777215};int main(){return (s.a==1099511627775UL && s.b==16777215)-1;}",
+    "struct S{unsigned a:3;int *p;};int x=7;struct S s={5,&x};int main(){return s.a+*s.p-12;}",
+], ["asm", "llvm"])]
+fn it_supports_bit_fields(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_interoperates_with_clang_bit_fields(output_option: &str) {
+    let layout =
+        "struct S{char c; unsigned a:3; signed b:5; int:0; unsigned long d:40; char tail;};";
+    let code = format!(
+        "{layout} int check(struct S *s);int main(){{struct S s={{2,7,-3,1099511627775UL,9}};return check(&s);}}"
+    );
+    let companion = format!(
+        "{layout} int check(struct S *s){{if(s->c!=2 || s->a!=7 || s->b!=-3 || s->d!=1099511627775UL || s->tail!=9)return 1;s->a=3;s->b=-2;return 0;}}"
+    );
+    assert_eq!(
+        compile_and_run_with_c(&code, output_option, Some(&companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "struct S{unsigned :2;unsigned a:3;char c;};int main(){struct S s={7,9};s.a=2;return s.a+s.c-11;}",
+    "struct S{unsigned long a:64;};struct S s={18446744073709551615UL};int main(){s.a++;return (s.a==0)-1;}",
+    "struct S{_Bool b:1;unsigned a:3;};int main(){struct S s={9,7};s.b--;return s.b+s.a-7;}",
+], ["asm", "llvm"])]
+fn it_supports_bit_field_boundaries(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }

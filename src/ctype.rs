@@ -20,9 +20,16 @@ pub struct StructType {
 pub struct StructDefinition {
     pub members: Vec<StructMember>,
     pub is_union: bool,
+    pub has_bit_fields: bool,
     pub size: usize,
     pub align: usize,
     pub complete: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BitField {
+    pub width: u8,
+    pub shift: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +37,7 @@ pub struct StructMember {
     pub name: String,
     pub ty: Type,
     pub offset: usize,
+    pub bit_field: Option<BitField>,
 }
 
 impl StructType {
@@ -47,6 +55,9 @@ impl StructType {
         self.definition
             .upgrade()
             .expect("struct definitions outlive the compiler pipeline")
+    }
+    pub fn has_bit_fields(&self) -> bool {
+        self.definition().borrow().has_bit_fields
     }
     pub fn members(&self) -> Vec<StructMember> {
         self.definition().borrow().members.clone()

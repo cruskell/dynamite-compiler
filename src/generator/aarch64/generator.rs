@@ -137,6 +137,30 @@ impl<'a> AsmGenerator<'a> {
             data
         };
         match ty {
+            Type::Struct(struct_type) if struct_type.has_bit_fields() => {
+                let mut bytes = vec![0; ty.size_of()];
+                let mut addresses = std::collections::HashMap::new();
+                crate::global::initializer_bytes(ty, data, 0, &mut bytes, &mut addresses);
+                let mut lines = vec![];
+                let mut index = 0;
+                while index < bytes.len() {
+                    if let Some((symbol, delta)) = addresses.get(&index) {
+                        let prefix = if symbol.starts_with(".str.") {
+                            "L_"
+                        } else if matches!(target_os, Os::MacOS) {
+                            "_"
+                        } else {
+                            ""
+                        };
+                        lines.push(format!("  .8byte {prefix}{symbol}{delta:+}").into());
+                        index += 8;
+                    } else {
+                        lines.push(format!("  .byte {}", bytes[index]).into());
+                        index += 1;
+                    }
+                }
+                lines.into()
+            }
             Type::Struct(struct_type) => {
                 let elements = if let Some(GlobalVariableData::Arr(elements)) = data {
                     Some(elements)

@@ -136,7 +136,7 @@ impl<'a> IrGenerator<'a> {
         match ty {
             Type::Qualified(child, _) => Self::gen_type(*child),
             Type::Void => "void".to_string(),
-            Type::Struct(ty) if ty.definition().borrow().is_union => {
+            Type::Struct(ty) if ty.definition().borrow().is_union || ty.has_bit_fields() => {
                 let ty = Type::Struct(ty);
                 format!(
                     "[{} x i{}]",
@@ -192,10 +192,12 @@ impl<'a> IrGenerator<'a> {
             data
         };
         match ty {
-            Type::Struct(struct_type) if struct_type.definition().borrow().is_union => {
+            Type::Struct(struct_type)
+                if struct_type.definition().borrow().is_union || struct_type.has_bit_fields() =>
+            {
                 let mut bytes = vec![0u8; ty.size_of()];
                 let mut addresses = HashMap::new();
-                Self::initializer_bytes(ty, data, 0, &mut bytes, &mut addresses);
+                crate::global::initializer_bytes(ty, data, 0, &mut bytes, &mut addresses);
                 let width = ty.align_of();
                 let elements = bytes
                     .chunks(width)
@@ -281,80 +283,6 @@ impl<'a> IrGenerator<'a> {
             ),
             Type::Void | Type::Func(_, _) | Type::VariadicFunc(_, _) => {
                 format!("{} zeroinitializer", Self::gen_type(ty.clone()))
-            }
-        }
-    }
-
-    fn initializer_bytes(
-        ty: &Type,
-        data: Option<&GlobalVariableData>,
-        offset: usize,
-        bytes: &mut [u8],
-        addresses: &mut HashMap<usize, (String, i64)>,
-    ) {
-        match ty {
-            Type::Struct(st) => {
-                let elements = if let Some(GlobalVariableData::Arr(v)) = data {
-                    Some(v)
-                } else {
-                    None
-                };
-                for (index, member) in st
-                    .members()
-                    .iter()
-                    .take(if st.definition().borrow().is_union {
-                        1
-                    } else {
-                        usize::MAX
-                    })
-                    .enumerate()
-                {
-                    Self::initializer_bytes(
-                        &member.ty,
-                        elements.and_then(|v| v.get(index)),
-                        offset + member.offset,
-                        bytes,
-                        addresses,
-                    );
-                }
-            }
-            Type::Arr(child, size) => {
-                let elements = if let Some(GlobalVariableData::Arr(v)) = data {
-                    Some(v)
-                } else {
-                    None
-                };
-                for index in 0..*size {
-                    Self::initializer_bytes(
-                        child,
-                        elements.and_then(|v| v.get(index)),
-                        offset + index * child.size_of(),
-                        bytes,
-                        addresses,
-                    );
-                }
-            }
-            _ => {
-                let mut data = data;
-                while let Some(GlobalVariableData::Arr(v)) = data {
-                    data = v.first();
-                }
-                match data {
-                    Some(GlobalVariableData::Address {
-                        symbol,
-                        offset: delta,
-                    }) => {
-                        addresses.insert(offset, (symbol.clone(), *delta));
-                    }
-                    Some(GlobalVariableData::Elem(value)) if value.starts_with('@') => {
-                        addresses.insert(offset, (value[1..].to_string(), 0));
-                    }
-                    Some(GlobalVariableData::Elem(value)) => {
-                        let word = value.parse::<i64>().unwrap().to_le_bytes();
-                        bytes[offset..offset + ty.size_of()].copy_from_slice(&word[..ty.size_of()]);
-                    }
-                    _ => {}
-                }
             }
         }
     }
