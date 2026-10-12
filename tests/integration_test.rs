@@ -855,3 +855,24 @@ fn it_receives_variadic_hfa_after_register_spill(output_option: &str) {
         Some(0)
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn it_forwards_va_list(output_option: &str) {
+    let code = "#include <stdarg.h>\nint take(va_list ap){return va_arg(ap,int)+va_arg(ap,int);}int local(int n,...){va_list ap;va_start(ap,n);int s=take(ap);va_end(ap);return s;}int main(){return local(2,4,7)-11;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_starts_after_named_stack_and_floating_parameters(output_option: &str) {
+    let code = "#include <stdarg.h>\ndouble local(int a,int b,int c,int d,int e,int f,int g,int h,int i,double x,...){va_list ap;va_start(ap,x);int y=va_arg(ap,int);double z=va_arg(ap,double);va_end(ap);return i+x+y+z;}int main(){return (local(1,2,3,4,5,6,7,8,9,1.5,3,2.5)==16.0)-1;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "#include <stdarg.h>\nint f(int n){va_list ap;va_start(ap,n);return 0;}",
+    "#include <stdarg.h>\nint f(int a,int b,...){va_list ap;va_start(ap,a);return 0;}",
+    "#include <stdarg.h>\nint f(int n,...){va_list ap;va_start(ap,n);return (int)va_arg(ap,float);}",
+])]
+fn it_diagnoses_invalid_variadic_builtins(code: &str) {
+    assert!(std::panic::catch_unwind(|| dynamite_compiler::generate(code, "asm", false)).is_err());
+}

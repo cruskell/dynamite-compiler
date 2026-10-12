@@ -184,3 +184,11 @@ Structures and unions can be passed and returned by value, including through
 function pointers. Each argument has its own copy. Native and LLVM output use
 the target calling convention, including register aggregates, AArch64
 homogeneous floating aggregates, stack arguments, and indirect large results.
+
+## Variadic argument access
+
+The bundled `stdarg.h` provides `va_list`, `va_start`, `va_arg`, `va_copy`, and
+`va_end`. Variadic definitions can receive promoted scalar values and aggregate
+values, including arguments that overflow the register banks. `va_start` must
+name the last fixed parameter. Retrieve `float` as `double`, and retrieve narrow
+integer types as their promoted integer type.
