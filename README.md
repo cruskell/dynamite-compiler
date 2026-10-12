@@ -140,3 +140,9 @@ Compound literals such as `(int[]){1, 2}` and `(struct S){3}` create addressable
 objects. Objects created inside a function use automatic storage; file-scope
 compound literals use static storage. Postfix subscripts and member access apply
 to compound literals directly.
+## Designated initializers
+
+Local and global aggregate initializers accept array indices and member names,
+including paths such as `.items[2].value = 7`. A following undesignated element
+continues after the designated outer element. Omitted elements are initialized
+to zero, and the highest initialized index determines an omitted array bound.
