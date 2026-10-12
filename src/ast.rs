@@ -925,6 +925,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.scope_stack.iter().rev().find_map(|map| map.get(s))
     }
     fn validate_global_initializer(&self, ty: &Type, data: &GlobalVariableData, token: &Token) {
+        let ty = ty.unqualified();
         match (ty, data) {
             (_, GlobalVariableData::Zero) => {}
             (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
