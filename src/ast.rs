@@ -14,6 +14,7 @@ pub struct AstBuilderImpl<'a> {
     cur: usize,
     offset_size: usize,
     loop_stack: Vec<usize>,
+    switch_stack: Vec<Vec<Node>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
     pub global_variables: HashMap<String, GlobalVariable>,
@@ -89,6 +90,7 @@ impl<'a> AstBuilderImpl<'a> {
             cur: 0,
             offset_size: 0,
             loop_stack: vec![],
+            switch_stack: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
             global_variables: HashMap::new(),
@@ -531,6 +533,61 @@ impl<'a> AstBuilderImpl<'a> {
                 token: Some(token),
                 ..Node::default()
             };
+        }
+        if let Some(t) = self.attempt_reserved("switch") {
+            self.expect_reserved("(");
+            let cond = self.expr();
+            self.expect_reserved(")");
+            if !matches!(cond.resolve_type(), Some(Type::I8 | Type::I32)) {
+                self.error_logger
+                    .print_error_position(t.pos, "switch requires an integer expression");
+            }
+            self.switch_stack.push(vec![]);
+            let body = self.stmt();
+            let cases = self.switch_stack.pop().unwrap();
+            return Node {
+                token: Some(t),
+                nt: NodeType::Switch,
+                cond: Some(Box::new(cond)),
+                then: Some(Box::new(body)),
+                children: cases,
+                ..Node::default()
+            };
+        }
+        if let Some(t) = self
+            .attempt_reserved("case")
+            .or_else(|| self.attempt_reserved("default"))
+        {
+            if self.switch_stack.is_empty() {
+                self.error_logger
+                    .print_error_position(t.pos, "case or default requires an enclosing switch");
+            }
+            let value = if t.s_value == "case" {
+                let expr = self.ternary();
+                Some(self.eval(&expr) as i32 as usize)
+            } else {
+                None
+            };
+            self.expect_reserved(":");
+            if self
+                .switch_stack
+                .last()
+                .unwrap()
+                .iter()
+                .any(|case| case.value == value)
+            {
+                self.error_logger
+                    .print_error_position(t.pos, "duplicate switch label");
+            }
+            let mut node = Node {
+                nt: NodeType::Case,
+                token: Some(t),
+                value,
+                ..Node::default()
+            };
+            self.switch_stack.last_mut().unwrap().push(node.clone());
+            node.lhs = Some(Box::new(self.stmt()));
+            return node;
         }
         if let Some(t) = self.attempt_reserved("if") {
             self.expect_reserved("(");

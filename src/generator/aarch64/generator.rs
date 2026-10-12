@@ -355,6 +355,43 @@ impl<'a> AsmGenerator<'a> {
                 ]
                 .into();
             }
+            NodeType::Switch => {
+                let branch_num = node.token.as_ref().unwrap().pos;
+                let mut lines = vec![
+                    self.gen_node(node.cond.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                ];
+                let mut default = format!("{}", EndFlag(branch_num));
+                for case in &node.children {
+                    let label = format!(".Lcase.{}", case.token.as_ref().unwrap().pos);
+                    if let Some(value) = case.value {
+                        lines.push(Assembly::inst2(MOV, X9, value as i32 as isize as usize));
+                        lines.push(Assembly::inst2(CMP, X8, X9));
+                        lines.push(Assembly::inst1(JE, label));
+                    } else {
+                        default = label;
+                    }
+                }
+                lines.push(Assembly::inst1(JMP, default));
+                lines.push(self.gen_node(
+                    node.then.as_ref().unwrap(),
+                    Options {
+                        breakable_branch_num: branch_num,
+                        ..options
+                    },
+                ));
+                lines.push(format!("{}:", EndFlag(branch_num)).into());
+                lines.push(Assembly::inst2(MOV, X19, X29));
+                return lines.into();
+            }
+            NodeType::Case => {
+                return vec![
+                    format!(".Lcase.{}:", node.token.as_ref().unwrap().pos).into(),
+                    Assembly::inst2(MOV, X19, X29),
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                ]
+                .into();
+            }
             NodeType::DoWhile => {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 let options = Options {
@@ -681,6 +718,8 @@ impl<'a> AsmGenerator<'a> {
                             | NodeType::While
                             | NodeType::DoWhile
                             | NodeType::For
+                            | NodeType::Switch
+                            | NodeType::Case
                             | NodeType::Break
                             | NodeType::Continue
                             | NodeType::Return
