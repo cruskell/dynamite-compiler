@@ -1290,9 +1290,9 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved("(");
             let cond = self.expr();
             self.expect_reserved(")");
-            if !cond
+            if cond
                 .resolve_type()
-                .is_some_and(|ty| ty.integer_info().is_some())
+                .is_none_or(|ty| ty.integer_info().is_none())
             {
                 self.error_logger
                     .print_error_position(t.pos, "switch requires an integer expression");
