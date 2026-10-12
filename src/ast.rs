@@ -375,8 +375,24 @@ impl<'a> AstBuilderImpl<'a> {
         self.expect_reserved("{");
         let mut depth = 0;
         let mut count = 0;
+        let mut maximum = 0;
         let mut element = false;
         loop {
+            if depth == 0 && !element && self.tokens[self.cur].s_value == "[" {
+                self.cur += 1;
+                let expression = self.ternary();
+                let index = self.eval(&expression);
+                if index < 0 {
+                    self.error_logger.print_error_position(
+                        self.tokens[self.cur].pos,
+                        "negative array designator",
+                    );
+                }
+                count = index as usize;
+                self.expect_reserved("]");
+                element = true;
+                continue;
+            }
             let token = &self.tokens[self.cur];
             if token.tt == TokenType::EOF {
                 self.error_logger
@@ -384,10 +400,11 @@ impl<'a> AstBuilderImpl<'a> {
             }
             match token.s_value.as_str() {
                 "}" if depth == 0 => {
-                    return count + usize::from(element);
+                    return maximum.max(count + usize::from(element));
                 }
                 "," if depth == 0 => {
                     count += usize::from(element);
+                    maximum = maximum.max(count);
                     element = false;
                 }
                 "{" | "(" | "[" => {
@@ -770,31 +787,7 @@ impl<'a> AstBuilderImpl<'a> {
                 return;
             }
             let data = if self.attempt_reserved("=").is_some() {
-                if matches!(&ty, Type::Arr(child, _) if **child == Type::I8)
-                    && self.tokens[self.cur].tt == TokenType::Str
-                {
-                    let token = self.attempt(TokenType::Str).unwrap();
-                    let mut bytes =
-                        crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
-                    let Type::Arr(_, size) = &ty else {
-                        unreachable!()
-                    };
-                    if *size != 0 && bytes.len() > *size {
-                        self.error_logger
-                            .print_error_position(token.pos, "string initializer is too long");
-                    }
-                    if *size == 0 || bytes.len() < *size {
-                        bytes.push(0);
-                    }
-                    Some(GlobalVariableData::Arr(
-                        bytes
-                            .into_iter()
-                            .map(|b| GlobalVariableData::Elem(b.to_string()))
-                            .collect(),
-                    ))
-                } else {
-                    Some(self.global_data())
-                }
+                Some(self.global_initializer(&ty))
             } else {
                 None
             };
@@ -843,6 +836,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn validate_global_initializer(&self, ty: &Type, data: &GlobalVariableData, token: &Token) {
         match (ty, data) {
+            (_, GlobalVariableData::Zero) => {}
             (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
                 let members = ty.members();
                 if elements.len() > members.len() {
@@ -888,6 +882,143 @@ impl<'a> AstBuilderImpl<'a> {
             }
             _ => {}
         }
+    }
+
+    fn aggregate_type(ty: &Type, index: usize) -> Option<Type> {
+        match ty {
+            Type::Arr(child, size) if *size == 0 || index < *size => Some(*child.clone()),
+            Type::Struct(st) => st.members().get(index).map(|member| member.ty.clone()),
+            _ => None,
+        }
+    }
+    fn designation(&mut self, ty: &Type) -> Vec<usize> {
+        let mut current = ty.clone();
+        let mut path = vec![];
+        loop {
+            let index = if let Some(token) = self.attempt_reserved("[") {
+                let expression = self.ternary();
+                let index = self.eval(&expression);
+                self.expect_reserved("]");
+                if index < 0 || !matches!(current, Type::Arr(..)) {
+                    self.error_logger
+                        .print_error_position(token.pos, "invalid array designator");
+                }
+                index as usize
+            } else if let Some(token) = self.attempt_reserved(".") {
+                let name = self.attempt_ident().unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(token.pos, "member designator expected");
+                    unreachable!()
+                });
+                let Type::Struct(st) = &current else {
+                    self.error_logger
+                        .print_error_position(token.pos, "member designator requires an aggregate");
+                    unreachable!()
+                };
+                st.members()
+                    .iter()
+                    .position(|m| m.name == name.s_value)
+                    .unwrap_or_else(|| {
+                        self.error_logger
+                            .print_error_position(name.pos, "unknown designated member");
+                        unreachable!()
+                    })
+            } else {
+                break;
+            };
+            current = Self::aggregate_type(&current, index).unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(self.tokens[self.cur].pos, "designator is out of bounds");
+                unreachable!()
+            });
+            path.push(index);
+        }
+        if !path.is_empty() {
+            self.expect_reserved("=");
+        }
+        path
+    }
+    fn set_global_element(
+        data: &mut GlobalVariableData,
+        path: &[usize],
+        value: GlobalVariableData,
+    ) {
+        if path.is_empty() {
+            *data = value;
+            return;
+        }
+        if !matches!(data, GlobalVariableData::Arr(_)) {
+            *data = GlobalVariableData::Arr(vec![]);
+        }
+        let GlobalVariableData::Arr(elements) = data else {
+            unreachable!()
+        };
+        while elements.len() <= path[0] {
+            elements.push(GlobalVariableData::Zero);
+        }
+        Self::set_global_element(&mut elements[path[0]], &path[1..], value);
+    }
+    fn global_initializer(&mut self, ty: &Type) -> GlobalVariableData {
+        if matches!(ty,Type::Arr(child,_) if **child==Type::I8)
+            && self.tokens[self.cur].tt == TokenType::Str
+        {
+            let token = self.attempt(TokenType::Str).unwrap();
+            let mut bytes = crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
+            let Type::Arr(_, size) = ty else {
+                unreachable!()
+            };
+            if *size != 0 && bytes.len() > *size {
+                self.error_logger
+                    .print_error_position(token.pos, "string initializer is too long");
+            }
+            if *size == 0 || bytes.len() < *size {
+                bytes.push(0);
+            }
+            return GlobalVariableData::Arr(
+                bytes
+                    .into_iter()
+                    .map(|b| GlobalVariableData::Elem(b.to_string()))
+                    .collect(),
+            );
+        }
+        if matches!(ty, Type::Arr(..) | Type::Struct(_)) && self.attempt_reserved("{").is_some() {
+            let mut data = GlobalVariableData::Arr(vec![]);
+            let mut cursor = 0;
+            if self.attempt_reserved("}").is_none() {
+                loop {
+                    let mut path = self.designation(ty);
+                    if path.is_empty() {
+                        path.push(cursor);
+                    }
+                    let mut child = ty.clone();
+                    for index in &path {
+                        child = Self::aggregate_type(&child, *index).unwrap_or_else(|| {
+                            self.error_logger.print_error_position(
+                                self.tokens[self.cur].pos,
+                                if matches!(ty, Type::Struct(_)) {
+                                    "too many struct initializer elements"
+                                } else {
+                                    "too many array initializer elements"
+                                },
+                            );
+                            unreachable!()
+                        });
+                    }
+                    let value = self.global_initializer(&child);
+                    cursor = path[0] + 1;
+                    Self::set_global_element(&mut data, &path, value);
+                    if self.attempt_reserved(",").is_none() {
+                        self.expect_reserved("}");
+                        break;
+                    }
+                    if self.attempt_reserved("}").is_some() {
+                        break;
+                    }
+                }
+            }
+            return data;
+        }
+        self.global_data()
     }
 
     fn global_data(&mut self) -> GlobalVariableData {
@@ -1613,19 +1744,27 @@ impl<'a> AstBuilderImpl<'a> {
                 self.expect_reserved("}");
                 return initializer;
             }
-            let elements = elements.unwrap();
-            let mut children = vec![];
+            let mut children = vec![Self::zero_initializer(node, assign_token)];
+            let mut cursor = 0;
             if self.attempt_reserved("}").is_none() {
                 loop {
-                    if children.len() >= elements.len() {
-                        self.error_logger.print_error_position(
-                            token.pos,
-                            "too many aggregate initializer elements",
-                        );
+                    let mut path = self.designation(&node.resolve_type().unwrap());
+                    if path.is_empty() {
+                        path.push(cursor);
                     }
-                    children.push(
-                        self.local_variable_initialization(&elements[children.len()], assign_token),
-                    );
+                    cursor = path[0] + 1;
+                    let mut target = node.clone();
+                    for index in path {
+                        let targets = Self::aggregate_elements(&target, &token).unwrap();
+                        target = targets.get(index).cloned().unwrap_or_else(|| {
+                            self.error_logger.print_error_position(
+                                token.pos,
+                                "too many aggregate initializer elements",
+                            );
+                            unreachable!()
+                        });
+                    }
+                    children.push(self.local_variable_initialization(&target, assign_token));
                     if self.attempt_reserved(",").is_none() {
                         self.expect_reserved("}");
                         break;
@@ -1634,9 +1773,6 @@ impl<'a> AstBuilderImpl<'a> {
                         break;
                     }
                 }
-            }
-            for element in &elements[children.len()..] {
-                children.push(Self::zero_initializer(element, assign_token));
             }
             Node {
                 token: Some(assign_token.clone()),
@@ -2011,7 +2147,7 @@ impl<'a> AstBuilderImpl<'a> {
                         }
                     } else {
                         self.expect_object_type(&ty, &token);
-                        let data = self.global_data();
+                        let data = self.global_initializer(&ty);
                         self.validate_global_initializer(&ty, &data, &token);
                         self.global_variables.insert(
                             name.s_value.clone(),

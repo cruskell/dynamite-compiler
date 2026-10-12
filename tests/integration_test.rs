@@ -540,6 +540,7 @@ fn it_supports_goto_labels(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+
 #[test_matrix([
     "int main(){return sizeof(short)+sizeof(long)+sizeof(unsigned char)+sizeof(_Bool)-12;}",
     "int main(){unsigned int x=4294967295U;return (x/3==1431655765U && x>1)-1;}",
@@ -567,5 +568,16 @@ fn it_supports_extended_integers(code: &str, output_option: &str) {
     "int f(int x,int y){return x+y;}int main(){return f(3,((int[]){7,9})[1])-12;}",
 ], ["asm", "llvm"])]
 fn it_supports_compound_literals(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){int a[4]={[2]=7,[0]=3};return a[0]+a[1]+a[2]+a[3]-10;}",
+    "int a[]={[3]=7,9};int main(){return sizeof(a)+a[0]+a[4]-29;}",
+    "struct S{int x;int y;};struct S s={.y=7,.x=3};int main(){return s.x+s.y-10;}",
+    "struct S{int a[3];int x;};int main(){struct S s={.a[2]=7,.x=9};return s.a[0]+s.a[2]+s.x-16;}",
+], ["asm", "llvm"])]
+fn it_supports_designated_initializers(code: &str, output_option: &str) {
+
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
