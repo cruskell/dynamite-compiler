@@ -58,6 +58,7 @@ impl Default for NodeType {
 pub struct Node {
     pub nt: NodeType,
     pub compound_literal: bool,
+    pub volatile_access: bool,
     pub cty: Option<Type>,
     pub token: Option<Token>,
     pub lhs: Option<Box<Node>>,
@@ -170,7 +171,28 @@ impl Node {
             .any(|node| node.contains_case())
     }
 
+    pub fn object_type(&self) -> Option<Type> {
+        match self.nt {
+            NodeType::LocalVar | NodeType::GlobalVar => self.cty.clone(),
+            NodeType::Deref => self.lhs.as_ref()?.resolve_type()?.dest_type(),
+            NodeType::SuffixIncr | NodeType::SuffixDecr => self.lhs.as_ref()?.object_type(),
+            _ => self.resolve_type(),
+        }
+    }
     pub fn resolve_type(&self) -> Option<Type> {
+        self.resolve_qualified_type().map(|ty| {
+            if let Type::Qualified(child, _) = &ty {
+                if let Type::Arr(element, size) = child.unqualified() {
+                    return Type::Arr(
+                        Box::new(Type::Qualified(element.clone(), ty.qualifiers())),
+                        *size,
+                    );
+                }
+            }
+            ty.unqualified().clone()
+        })
+    }
+    fn resolve_qualified_type(&self) -> Option<Type> {
         match self.nt {
             NodeType::Eq
             | NodeType::Ne
@@ -238,7 +260,7 @@ impl Node {
             ),
             NodeType::LocalVar | NodeType::CallFunc | NodeType::GlobalVar => self.cty.clone(),
             NodeType::Addr => {
-                if let Some(ty) = self.lhs.as_ref().unwrap().resolve_type() {
+                if let Some(ty) = self.lhs.as_ref().unwrap().object_type() {
                     Some(Type::Ptr(Box::new(ty)))
                 } else {
                     self.cty.clone()

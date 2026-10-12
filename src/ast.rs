@@ -1,4 +1,4 @@
-use crate::ctype::{StructDefinition, StructMember, StructType, Type};
+use crate::ctype::{Qualifiers, StructDefinition, StructMember, StructType, Type};
 use crate::error;
 use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
@@ -11,7 +11,7 @@ type Parameters = Vec<(Option<Token>, Type)>;
 
 enum Declarator {
     Name(Option<Token>),
-    Pointer(Box<Declarator>),
+    Pointer(Box<Declarator>, Qualifiers),
     Array(Box<Declarator>, usize),
     Function(Box<Declarator>, Parameters, bool),
 }
@@ -20,7 +20,14 @@ impl Declarator {
     fn resolve(self, base: Type) -> (Option<Token>, Type, Parameters) {
         match self {
             Self::Name(token) => (token, base, vec![]),
-            Self::Pointer(inner) => inner.resolve(Type::Ptr(Box::new(base))),
+            Self::Pointer(inner, q) => {
+                let ty = Type::Ptr(Box::new(base));
+                inner.resolve(if q == Qualifiers::default() {
+                    ty
+                } else {
+                    Type::Qualified(Box::new(ty), q)
+                })
+            }
             Self::Array(inner, size) => inner.resolve(Type::Arr(Box::new(base), size)),
             Self::Function(inner, parameters, variadic) => {
                 let types = parameters.iter().map(|(_, ty)| ty.clone()).collect();
@@ -89,8 +96,21 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
         }
         for function in self.functions.values_mut() {
+            function.cty = function.cty.without_qualifiers();
+            for arg in &mut function.args {
+                Self::erase_qualifiers(arg);
+            }
             if let Some(body) = &mut function.body {
+                Self::erase_qualifiers(body);
                 Self::insert_integer_conversions(body);
+            }
+        }
+        for global in self.global_variables.values_mut() {
+            global.ty = global.ty.without_qualifiers();
+        }
+        for definition in &self.struct_definitions {
+            for member in &mut definition.borrow_mut().members {
+                member.ty = member.ty.without_qualifiers();
             }
         }
         if is_debug {
@@ -109,14 +129,26 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
         (
             String::from("printf"),
             Identifier::Static(Type::VariadicFunc(
-                vec![Type::Ptr(Box::new(Type::I8))],
+                vec![Type::Ptr(Box::new(Type::Qualified(
+                    Box::new(Type::I8),
+                    Qualifiers {
+                        constant: true,
+                        volatile: false,
+                    },
+                )))],
                 Box::new(Type::I32),
             )),
         ),
         (
             String::from("puts"),
             Identifier::Static(Type::Func(
-                vec![Type::Ptr(Box::new(Type::I8))],
+                vec![Type::Ptr(Box::new(Type::Qualified(
+                    Box::new(Type::I8),
+                    Qualifiers {
+                        constant: true,
+                        volatile: false,
+                    },
+                )))],
                 Box::new(Type::I32),
             )),
         ),
@@ -210,6 +242,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn validate_type_layout(&self, ty: &Type, token: &Token) {
         match ty {
+            Type::Qualified(child, _) => self.validate_type_layout(child, token),
             Type::Ptr(child) => self.validate_type_layout(child, token),
             Type::Arr(child, _) => {
                 if matches!(
@@ -243,9 +276,9 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn declarator(&mut self) -> Declarator {
-        let mut pointers = 0;
+        let mut pointers = vec![];
         while self.attempt_reserved("*").is_some() {
-            pointers += 1;
+            pointers.push(self.attempt_qualifiers());
         }
         let mut direct = if self.attempt_reserved("(").is_some() {
             let inner = self.declarator();
@@ -318,8 +351,8 @@ impl<'a> AstBuilderImpl<'a> {
                 break;
             }
         }
-        for _ in 0..pointers {
-            direct = Declarator::Pointer(Box::new(direct));
+        for q in pointers.into_iter().rev() {
+            direct = Declarator::Pointer(Box::new(direct), q);
         }
         direct
     }
@@ -443,7 +476,36 @@ impl<'a> AstBuilderImpl<'a> {
             ..Node::default()
         }
     }
+    fn attempt_qualifiers(&mut self) -> Qualifiers {
+        let mut q = Qualifiers::default();
+        loop {
+            if self.attempt_reserved("const").is_some() {
+                q.constant = true;
+            } else if self.attempt_reserved("volatile").is_some() {
+                q.volatile = true;
+            } else {
+                break;
+            }
+        }
+        q
+    }
     fn attempt_type(&mut self) -> Option<Type> {
+        let saved = self.cur;
+        let mut q = self.attempt_qualifiers();
+        let Some(ty) = self.attempt_unqualified_type() else {
+            self.cur = saved;
+            return None;
+        };
+        let suffix = self.attempt_qualifiers();
+        q.constant |= suffix.constant;
+        q.volatile |= suffix.volatile;
+        Some(if q == Qualifiers::default() {
+            ty
+        } else {
+            Type::Qualified(Box::new(ty), q)
+        })
+    }
+    fn attempt_unqualified_type(&mut self) -> Option<Type> {
         if let Some(token) = self.attempt_reserved("enum") {
             return Some(self.enum_type(token));
         }
@@ -875,6 +937,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.scope_stack.iter().rev().find_map(|map| map.get(s))
     }
     fn validate_global_initializer(&self, ty: &Type, data: &GlobalVariableData, token: &Token) {
+        let ty = ty.unqualified();
         match (ty, data) {
             (_, GlobalVariableData::Zero) => {}
             (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
@@ -917,11 +980,13 @@ impl<'a> AstBuilderImpl<'a> {
                     self.validate_global_initializer(ty, element, token);
                 }
             }
-            (Type::I8 | Type::I32, GlobalVariableData::Address { .. }) => {
+            (ty, GlobalVariableData::Address { .. }) if ty.integer_info().is_some() => {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be an address");
             }
-            (Type::I8 | Type::I32, GlobalVariableData::Elem(value)) if value.starts_with('@') => {
+            (ty, GlobalVariableData::Elem(value))
+                if ty.integer_info().is_some() && value.starts_with('@') =>
+            {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be a string");
             }
@@ -930,7 +995,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn aggregate_type(ty: &Type, index: usize) -> Option<Type> {
-        match ty {
+        match ty.unqualified() {
             Type::Arr(child, size) if *size == 0 || index < *size => Some(*child.clone()),
             Type::Struct(st) => st.members().get(index).map(|member| member.ty.clone()),
             _ => None,
@@ -944,7 +1009,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let expression = self.ternary();
                 let index = self.eval(&expression);
                 self.expect_reserved("]");
-                if index < 0 || !matches!(current, Type::Arr(..)) {
+                if index < 0 || !matches!(current.unqualified(), Type::Arr(..)) {
                     self.error_logger
                         .print_error_position(token.pos, "invalid array designator");
                 }
@@ -955,7 +1020,7 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(token.pos, "member designator expected");
                     unreachable!()
                 });
-                let Type::Struct(st) = &current else {
+                let Type::Struct(st) = current.unqualified() else {
                     self.error_logger
                         .print_error_position(token.pos, "member designator requires an aggregate");
                     unreachable!()
@@ -1004,12 +1069,12 @@ impl<'a> AstBuilderImpl<'a> {
         Self::set_global_element(&mut elements[path[0]], &path[1..], value);
     }
     fn global_initializer(&mut self, ty: &Type) -> GlobalVariableData {
-        if matches!(ty,Type::Arr(child,_) if **child==Type::I8)
+        if matches!(ty.unqualified(),Type::Arr(child,_) if *child.unqualified()==Type::I8)
             && self.tokens[self.cur].tt == TokenType::Str
         {
             let token = self.attempt(TokenType::Str).unwrap();
             let mut bytes = crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
-            let Type::Arr(_, size) = ty else {
+            let Type::Arr(_, size) = ty.unqualified() else {
                 unreachable!()
             };
             if *size != 0 && bytes.len() > *size {
@@ -1026,7 +1091,9 @@ impl<'a> AstBuilderImpl<'a> {
                     .collect(),
             );
         }
-        if matches!(ty, Type::Arr(..) | Type::Struct(_)) && self.attempt_reserved("{").is_some() {
+        if matches!(ty.unqualified(), Type::Arr(..) | Type::Struct(_))
+            && self.attempt_reserved("{").is_some()
+        {
             let mut data = GlobalVariableData::Arr(vec![]);
             let mut cursor = 0;
             if self.attempt_reserved("}").is_none() {
@@ -1258,6 +1325,37 @@ impl<'a> AstBuilderImpl<'a> {
             ty.convert_constant(value)
         }
     }
+    fn erase_qualifiers(node: &mut Node) {
+        node.volatile_access = node
+            .object_type()
+            .is_some_and(|ty| ty.qualifiers().volatile);
+        if let Some(ty) = &mut node.cty {
+            *ty = ty.without_qualifiers();
+        }
+        node.parameter_types = node
+            .parameter_types
+            .iter()
+            .map(Type::without_qualifiers)
+            .collect();
+        for child in [
+            &mut node.lhs,
+            &mut node.rhs,
+            &mut node.cond,
+            &mut node.then,
+            &mut node.els,
+            &mut node.ini,
+            &mut node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            Self::erase_qualifiers(child);
+        }
+        for child in node.children.iter_mut().chain(&mut node.args) {
+            Self::erase_qualifiers(child);
+        }
+    }
+
     fn cast_integer(node: &mut Node, target: &Type) {
         if target.integer_info().is_some() && node.resolve_type().as_ref() != Some(target) {
             let operand = std::mem::take(node);
@@ -1309,7 +1407,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn expect_conversion(&self, expected: &Type, operand: &Node) {
         let actual = operand.resolve_type();
-        let compatible = match (expected, actual.as_ref()) {
+        let compatible = match (expected.unqualified(), actual.as_ref()) {
             (target, Some(source))
                 if target.integer_info().is_some() && source.integer_info().is_some() =>
             {
@@ -1317,7 +1415,11 @@ impl<'a> AstBuilderImpl<'a> {
             }
             (Type::Bool, Some(Type::Ptr(_) | Type::Arr(..))) => true,
             (Type::Ptr(target), Some(Type::Ptr(source) | Type::Arr(source, _))) => {
-                target == source || **target == Type::Void || **source == Type::Void
+                (!source.qualifiers().constant || target.qualifiers().constant)
+                    && (!source.qualifiers().volatile || target.qualifiers().volatile)
+                    && (target.unqualified() == source.unqualified()
+                        || *target.unqualified() == Type::Void
+                        || *source.unqualified() == Type::Void)
             }
             (Type::Ptr(target), Some(source @ (Type::Func(..) | Type::VariadicFunc(..)))) => {
                 **target == *source
@@ -1805,6 +1907,13 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn member_node(node: Node, member: &StructMember, token: &Token) -> Node {
+        let qualifiers = node
+            .object_type()
+            .map_or(Qualifiers::default(), |ty| ty.qualifiers());
+        let mut member = member.clone();
+        if qualifiers != Qualifiers::default() {
+            member.ty = Type::Qualified(Box::new(member.ty), qualifiers);
+        }
         let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, node);
         let bytes = Node {
             nt: NodeType::Cast,
@@ -1886,7 +1995,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
-        if matches!(node.resolve_type(), Some(Type::Arr(child, _)) if *child == Type::I8)
+        if matches!(node.resolve_type(), Some(Type::Arr(child, _)) if *child.unqualified() == Type::I8)
             && self.tokens[self.cur].tt == TokenType::Str
         {
             let token = self.attempt(TokenType::Str).unwrap();
@@ -2070,6 +2179,15 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn expect_assignable(&self, node: &Node) {
+        if node
+            .object_type()
+            .is_some_and(|ty| ty.qualifiers().constant)
+        {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "cannot modify a const object",
+            );
+        }
         if !(node.compound_literal
             || matches!(
                 node.nt,
@@ -2705,6 +2823,13 @@ mod tests {
             ("int main() { 3 = 4; }", "not assignable"),
             ("int main() { return *3; }", "non-pointer"),
             ("int x = 1 / 0;", "invalid arithmetic"),
+            ("int main(){const int x=1;x=2;}", "const object"),
+            (
+                "typedef int A[2];int main(){const A a={1};a[0]=2;}",
+                "const object",
+            ),
+            ("int main(){int x;int *const p=&x;p=0;}", "const object"),
+            ("int main(){const int x=1;int *p=&x;}", "incompatible value"),
             ("int a[2](int);", "invalid array element"),
             ("int x; char x;", "incompatible object redeclaration"),
             ("int x=1; int x=2;", "already initialized"),
