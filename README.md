@@ -97,3 +97,19 @@ Structs support tags, anonymous typedefs, aligned members, nested aggregates,
 self-referential pointers, member access (`.` and `->`), brace initialization,
 and assignment. Struct parameters and results currently require pointers;
 passing or returning structs by value is diagnosed. Bitfields are not supported.
+
+## Preprocessing
+
+Sources with directives or predefined macro names are preprocessed using `clang`
+from `PATH`. This supports includes, object-like and function-like macros,
+conditional compilation, token pasting, stringification, and predefined macros.
+Quoted includes in CLI input are resolved relative to the input file; library
+callers may use `generate_with_path` to supply that location. Ordinary source
+without directives or predefined macros does not invoke Clang.
+
+Compiler diagnostics retain source file names and original line numbers,
+including included files. Columns within macro-expanded lines are approximate.
+Preprocessing uses a small bundled include environment: `stdio.h` exposes the
+builtin `printf`, `puts`, and `putchar` API and `EOF`; `stdlib.h` exposes `exit`,
+`EXIT_SUCCESS`, and `EXIT_FAILURE`. Host system headers are not searched. Custom
+headers must use the compiler's supported C-like subset.

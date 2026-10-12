@@ -1,4 +1,4 @@
-use dynamite_compiler::generate;
+use dynamite_compiler::generate_with_path;
 use getopts::Options;
 use std::env;
 use std::fs::File;
@@ -47,5 +47,13 @@ fn main() {
         .unwrap_or_else(|e| panic!("file \"{}\" not found: {}", path, e))
         .read_to_string(&mut code)
         .unwrap_or_else(|e| panic!("failed to read file \"{}\": {}", path, e));
-    println!("{}", generate(&code, &output_option, is_debug));
+    println!(
+        "{}",
+        generate_with_path(
+            &code,
+            &output_option,
+            is_debug,
+            Some(std::path::Path::new(&path))
+        )
+    );
 }
