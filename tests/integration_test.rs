@@ -820,3 +820,38 @@ fn it_interoperates_with_clang_aggregate_register_spills(output_option: &str) {
 fn it_returns_global_and_recursive_aggregates(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "#include <stdarg.h>\nlong sum(int n,...){va_list ap;va_start(ap,n);long s=0;for(int i=0;i<n;i++)s+=va_arg(ap,int);va_end(ap);return s;}int main(){return sum(10,1,2,3,4,5,6,7,8,9,10)-55;}",
+    "#include <stdarg.h>\ndouble sum(int n,...){va_list ap;va_start(ap,n);double s=0;for(int i=0;i<n;i++)s+=va_arg(ap,double);va_end(ap);return s;}int main(){return (sum(10,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0)==55.0)-1;}",
+    "#include <stdarg.h>\nint sum(int n,...){va_list ap;va_list cp;va_start(ap,n);int a=va_arg(ap,int);va_copy(cp,ap);int b=va_arg(ap,int);int c=va_arg(cp,int);va_end(ap);va_end(cp);return a+b+c;}int main(){return sum(2,3,5)-13;}",
+    "#include <stdarg.h>\nstruct S{double a;long b;};long sum(int n,...){va_list ap;va_start(ap,n);struct S s=va_arg(ap,struct S);va_end(ap);return (long)s.a+s.b;}int main(){struct S s={2.0,3};return sum(1,s)-5;}",
+    "#include <stdarg.h>\nstruct S{long a[3];};long sum(int n,...){va_list ap;va_start(ap,n);struct S s=va_arg(ap,struct S);va_end(ap);return s.a[0]+s.a[2];}int main(){struct S s={{2,3,5}};return sum(1,s)-7;}",
+], ["asm", "llvm"])]
+fn it_receives_variadic_arguments(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_interoperates_with_clang_variadic_receivers(output_option: &str) {
+    let code = "#include <stdarg.h>\nstruct S{double a;long b;};struct B{long a[3];};double local(int n,...){va_list ap;va_start(ap,n);double s=0;for(int i=0;i<n;i++){s+=va_arg(ap,int);s+=va_arg(ap,double);}struct S a=va_arg(ap,struct S);struct B b=va_arg(ap,struct B);char *p=va_arg(ap,char*);va_end(ap);return s+a.a+a.b+b.a[2]+*p;}double foreign();int main(){return (foreign()==107.0)-1;}";
+    let companion = "struct S{double a;long b;};struct B{long a[3];};double local(int,...);double foreign(){struct S a={2.0,3};struct B b={{1,2,5}};return local(10,1,1.0,2,2.0,3,3.0,4,4.0,5,5.0,6,6.0,7,7.0,8,8.0,9,9.0,10,10.0,a,b,\"A\")-78;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_receives_variadic_hfa_after_register_spill(output_option: &str) {
+    let code = "#include <stdarg.h>\nstruct S{double a[4];};double local(int n,...){va_list ap;va_start(ap,n);double s=0;for(int i=0;i<6;i++)s+=va_arg(ap,double);struct S a=va_arg(ap,struct S);double b=va_arg(ap,double);va_end(ap);return s+a.a[0]+a.a[3]+b;}double foreign();int main(){return (foreign()==33.0)-1;}";
+    let companion = "struct S{double a[4];};double local(int,...);double foreign(){struct S a={{1,2,3,4}};return local(0,1.0,2.0,3.0,4.0,5.0,6.0,a,7.0);}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}

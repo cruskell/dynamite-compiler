@@ -45,6 +45,7 @@ impl IncludeDirectory {
         for (name, contents) in [
             ("stdio.h", include_str!("../include/stdio.h")),
             ("stdlib.h", include_str!("../include/stdlib.h")),
+            ("stdarg.h", include_str!("../include/stdarg.h")),
         ] {
             fs::write(directory.0.join(name), contents)
                 .map_err(|error| format!("failed to prepare builtin headers: {error}"))?;

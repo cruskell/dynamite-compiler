@@ -25,6 +25,7 @@ pub struct Signature {
     pub indirect_result: bool,
     pub stack_size: usize,
     pub floating: usize,
+    pub general: usize,
 }
 
 fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {
@@ -255,5 +256,23 @@ pub fn signature(
         indirect_result,
         stack_size: stack,
         floating,
+        general,
     }
+}
+
+pub fn variadic_state(node: &crate::node::Node, arch: Arch, os: Os) -> (usize, usize, usize) {
+    let result = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+    let signature = signature(
+        &node.parameter_types,
+        &result,
+        arch,
+        os,
+        node.parameter_types.len(),
+        true,
+    );
+    (
+        signature.general,
+        signature.floating,
+        signature.stack_size.div_ceil(8) * 8,
+    )
 }

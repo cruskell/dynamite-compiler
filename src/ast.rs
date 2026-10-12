@@ -7,6 +7,9 @@ use crate::token::{Token, TokenType};
 use std::collections::{HashMap, HashSet};
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "varargs.rs"]
+mod varargs;
+
 type Parameters = Vec<(Option<Token>, Type)>;
 
 enum Declarator {
@@ -61,6 +64,8 @@ pub struct AstBuilderImpl<'a> {
     switch_types: Vec<Type>,
     return_type: Option<Type>,
     return_pointer: Option<usize>,
+    variadic_parameters: Option<Vec<Type>>,
+    variadic_last: Option<usize>,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
@@ -181,6 +186,8 @@ impl<'a> AstBuilderImpl<'a> {
             switch_types: vec![],
             return_type: None,
             return_pointer: None,
+            variadic_parameters: None,
+            variadic_last: None,
             struct_definitions: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
@@ -894,6 +901,12 @@ impl<'a> AstBuilderImpl<'a> {
                 } else {
                     None
                 };
+                self.variadic_last = args.last().and_then(|arg| arg.offset);
+                self.variadic_parameters = ty
+                    .function_signature()
+                    .unwrap()
+                    .2
+                    .then(|| ty.function_signature().unwrap().0);
                 self.return_type = Some(result);
                 self.labels.clear();
                 self.defined_labels.clear();
@@ -905,6 +918,8 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                 }
                 self.return_type = None;
+                self.variadic_last = args.last().and_then(|arg| arg.offset);
+                self.variadic_parameters = None;
                 self.scope_stack.pop();
                 if body.is_none() {
                     self.expect_reserved(";");
@@ -2910,6 +2925,9 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
+            if t.s_value.starts_with("__builtin_va_") {
+                return self.varargs_builtin(t);
+            }
             if let Some(ident) = self.resolve_name(&t.s_value) {
                 match ident {
                     Identifier::Local(ty, offset) => Node {
