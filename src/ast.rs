@@ -862,9 +862,37 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn unary(&mut self) -> Node {
         if let Some(t) = self.attempt_reserved("sizeof") {
+            let saved = self.cur;
+            let size = if self.attempt_reserved("(").is_some() {
+                if let Some(mut ty) = self.attempt_type() {
+                    while self.attempt_reserved("*").is_some() {
+                        ty = Type::Ptr(Box::new(ty));
+                    }
+                    let mut dimensions = vec![];
+                    while self.attempt_reserved("[").is_some() {
+                        let size = self.expect_number();
+                        if size.i_value == 0 {
+                            self.error_logger
+                                .print_error_position(size.pos, "array size must be positive");
+                        }
+                        dimensions.push(size.i_value);
+                        self.expect_reserved("]");
+                    }
+                    for size in dimensions.into_iter().rev() {
+                        ty = Type::Arr(Box::new(ty), size);
+                    }
+                    self.expect_reserved(")");
+                    ty.size_of()
+                } else {
+                    self.cur = saved;
+                    self.unary().resolve_type().unwrap().size_of()
+                }
+            } else {
+                self.unary().resolve_type().unwrap().size_of()
+            };
             return Node {
                 token: Some(t),
-                value: Some(self.unary().resolve_type().unwrap().size_of()),
+                value: Some(size),
                 cty: Some(Type::I32),
                 ..Node::default()
             };
