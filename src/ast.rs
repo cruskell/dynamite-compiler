@@ -69,6 +69,7 @@ pub struct ProgramAst<'a> {
 pub enum Identifier {
     TypeDef(Type),
     Constant(i64),
+    StaticObject(Type, String),
     Local(Type, usize),
     Static(Type),
 }
@@ -694,6 +695,11 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn global_definition(&mut self) {
+        let storage = self
+            .attempt_reserved("static")
+            .or_else(|| self.attempt_reserved("extern"));
+        let internal = storage.as_ref().is_some_and(|s| s.s_value == "static");
+        let external = storage.as_ref().is_some_and(|s| s.s_value == "extern");
         if self.attempt_reserved("typedef").is_some() {
             self.typedef_definition();
             self.expect_reserved(";");
@@ -743,6 +749,11 @@ impl<'a> AstBuilderImpl<'a> {
                         token: Some(token.clone()),
                         ..Func::default()
                     });
+                let internal = internal
+                    || self
+                        .functions
+                        .get(&token.s_value)
+                        .is_some_and(|f| f.internal);
                 let (parameters, result, _) = ty.function_signature().unwrap();
                 if matches!(result, Type::Struct(_))
                     || parameters.iter().any(|ty| matches!(ty, Type::Struct(_)))
@@ -782,6 +793,7 @@ impl<'a> AstBuilderImpl<'a> {
                         token: Some(token),
                         args,
                         offset_size: self.offset_size,
+                        internal,
                     },
                 );
                 return;
@@ -806,6 +818,13 @@ impl<'a> AstBuilderImpl<'a> {
                 .unwrap()
                 .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
             if let Some(existing) = self.global_variables.get_mut(&token.s_value) {
+                if existing.internal != internal && !external {
+                    self.error_logger
+                        .print_error_position(token.pos, "conflicting object linkage");
+                }
+                if !external || data.is_some() {
+                    existing.declaration_only = false;
+                }
                 if existing.ty != ty {
                     self.error_logger
                         .print_error_position(token.pos, "incompatible object redeclaration");
@@ -822,8 +841,15 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "object conflicts with function");
                 }
-                self.global_variables
-                    .insert(token.s_value, GlobalVariable { ty, data });
+                self.global_variables.insert(
+                    token.s_value,
+                    GlobalVariable {
+                        ty,
+                        declaration_only: external && data.is_none(),
+                        internal,
+                        data,
+                    },
+                );
             }
             if self.attempt_reserved(",").is_none() {
                 break;
@@ -1543,6 +1569,15 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(node) = self.consume_block() {
             return node;
         }
+        let storage = self
+            .attempt_reserved("static")
+            .or_else(|| self.attempt_reserved("extern"));
+        if let Some(storage) = storage {
+            let ty = self.expect_type();
+            let declaration = self.local_static_definition(ty, &storage);
+            self.expect_reserved(";");
+            return declaration;
+        }
         let node = if let Some(ty) = self.attempt_type() {
             if self.tokens[self.cur].s_value == ";" {
                 Node {
@@ -1607,6 +1642,128 @@ impl<'a> AstBuilderImpl<'a> {
         };
         self.expect_reserved(";");
         node
+    }
+
+    fn local_static_definition(&mut self, base: Type, storage: &Token) -> Node {
+        loop {
+            let (token, mut ty) = self.expect_ident_with_type(base.clone());
+            let external = storage.s_value == "extern";
+            let name = if external {
+                token.s_value.clone()
+            } else {
+                format!(".static.{}.{}", token.pos, token.s_value)
+            };
+            if ty.function_signature().is_some() {
+                if !external {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "block static function declaration is invalid",
+                    );
+                }
+                if let Some(existing) = self.functions.get(&name) {
+                    if existing.cty != ty {
+                        self.error_logger
+                            .print_error_position(token.pos, "incompatible function redeclaration");
+                    }
+                } else {
+                    self.functions.insert(
+                        name.clone(),
+                        Func {
+                            cty: ty.clone(),
+                            token: Some(token.clone()),
+                            ..Func::default()
+                        },
+                    );
+                }
+                self.scope_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(token.s_value, Identifier::StaticObject(ty, name));
+                if self.attempt_reserved(",").is_none() {
+                    break;
+                }
+                continue;
+            }
+            let data = if self.attempt_reserved("=").is_some() {
+                if external {
+                    self.error_logger
+                        .print_error_position(token.pos, "block extern cannot have an initializer");
+                }
+                if matches!(&ty,Type::Arr(child,_) if **child==Type::I8)
+                    && self.tokens[self.cur].tt == TokenType::Str
+                {
+                    let string = self.attempt(TokenType::Str).unwrap();
+                    let mut bytes =
+                        crate::tokenizer::decode_string_literal(&string.s_value).unwrap();
+                    let Type::Arr(_, size) = &ty else {
+                        unreachable!()
+                    };
+                    if *size != 0 && bytes.len() > *size {
+                        self.error_logger
+                            .print_error_position(string.pos, "string initializer is too long");
+                    }
+                    if *size == 0 || bytes.len() < *size {
+                        bytes.push(0);
+                    }
+                    Some(GlobalVariableData::Arr(
+                        bytes
+                            .into_iter()
+                            .map(|byte| GlobalVariableData::Elem(byte.to_string()))
+                            .collect(),
+                    ))
+                } else {
+                    Some(self.global_data())
+                }
+            } else {
+                None
+            };
+            let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
+                elements.len()
+            } else {
+                0
+            };
+            ty = self.infer_array_size(ty, count, &token);
+            self.expect_object_type(&ty, &token);
+            if let Some(data) = &data {
+                self.validate_global_initializer(&ty, data, &token);
+            }
+            if self
+                .scope_stack
+                .last()
+                .unwrap()
+                .contains_key(&token.s_value)
+            {
+                self.error_logger
+                    .print_error_position(token.pos, "invalid redeclaration");
+            }
+            self.scope_stack.last_mut().unwrap().insert(
+                token.s_value,
+                Identifier::StaticObject(ty.clone(), name.clone()),
+            );
+            if let Some(existing) = self.global_variables.get(&name) {
+                if existing.ty != ty {
+                    self.error_logger
+                        .print_error_position(token.pos, "incompatible object redeclaration");
+                }
+            } else {
+                self.global_variables.insert(
+                    name,
+                    GlobalVariable {
+                        ty,
+                        data,
+                        internal: !external,
+                        declaration_only: external,
+                    },
+                );
+            }
+            if self.attempt_reserved(",").is_none() {
+                break;
+            }
+        }
+        Node {
+            nt: NodeType::Block,
+            ..Node::default()
+        }
     }
 
     pub fn local_variable_definition(&mut self, ty: Type) -> Node {
@@ -2154,6 +2311,8 @@ impl<'a> AstBuilderImpl<'a> {
                             GlobalVariable {
                                 ty: ty.clone(),
                                 data: Some(data),
+                                internal: true,
+                                declaration_only: false,
                             },
                         );
                         Node {
@@ -2336,6 +2495,13 @@ impl<'a> AstBuilderImpl<'a> {
                         nt: NodeType::LocalVar,
                         cty: Some(ty.clone()),
                         offset: Some(*offset),
+                        ..Node::default()
+                    },
+                    Identifier::StaticObject(ty, name) => Node {
+                        token: Some(t.clone()),
+                        nt: NodeType::GlobalVar,
+                        cty: Some(ty.clone()),
+                        global_name: name.clone(),
                         ..Node::default()
                     },
                     Identifier::Static(ty) => Node {
@@ -2643,6 +2809,8 @@ mod tests {
             map.insert(
                 "x".to_string(),
                 GlobalVariable {
+                    internal: false,
+                    declaration_only: false,
                     ty: Type::I32,
                     data: Some(GlobalVariableData::Elem("42".to_string())),
                 },

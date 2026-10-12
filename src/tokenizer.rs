@@ -6,9 +6,9 @@ use std::collections::HashSet;
 pub const TYPES: [&str; 9] = [
     "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool",
 ];
-const RESERVED_WORDS: [&str; 16] = [
+const RESERVED_WORDS: [&str; 18] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
-    "default", "typedef", "struct", "enum", "goto",
+    "default", "typedef", "struct", "enum", "goto", "static", "extern",
 ];
 
 const RESERVED_SYMBOLS: [&str; 51] = [

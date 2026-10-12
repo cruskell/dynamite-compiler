@@ -146,3 +146,9 @@ Local and global aggregate initializers accept array indices and member names,
 including paths such as `.items[2].value = 7`. A following undesignated element
 continues after the designated outer element. Omitted elements are initialized
 to zero, and the highest initialized index determines an omitted array bound.
+## Storage duration and linkage
+
+File-scope `static` objects and functions have internal linkage. `extern` object
+declarations do not allocate storage unless accompanied by an initializer.
+Block-scope `static` objects use constant initializers and retain their values
+across calls; `extern` declarations refer to externally linked objects or functions.
