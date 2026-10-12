@@ -31,6 +31,8 @@ pub enum NodeType {
     While,
     DoWhile,
     For,
+    Switch,
+    Case,
     Break,
     Continue,
     Block,
@@ -146,6 +148,22 @@ impl Node {
             ..Self::default()
         }
     }
+    pub fn contains_case(&self) -> bool {
+        if matches!(self.nt, NodeType::Switch) {
+            return false;
+        }
+        if matches!(self.nt, NodeType::Case) {
+            return true;
+        }
+        self.children.iter().any(Self::contains_case)
+            || [
+                &self.lhs, &self.rhs, &self.cond, &self.then, &self.els, &self.ini, &self.upd,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|node| node.contains_case())
+    }
+
     pub fn resolve_type(&self) -> Option<Type> {
         match self.nt {
             NodeType::Eq

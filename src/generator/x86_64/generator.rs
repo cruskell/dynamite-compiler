@@ -287,6 +287,36 @@ impl<'a> AsmGenerator<'a> {
                 ]
                 .into();
             }
+            NodeType::Switch => {
+                let branch_num = node.token.as_ref().unwrap().pos;
+                let mut lines = vec![
+                    self.gen_node(node.cond.as_ref().unwrap(), offset, breakable_branch_num),
+                    Assembly::inst1(POP, RAX),
+                ];
+                let mut default = format!("{}", EndFlag(branch_num));
+                for case in &node.children {
+                    let label = format!(".Lcase.{}", case.token.as_ref().unwrap().pos);
+                    if let Some(value) = case.value {
+                        lines.push(Assembly::inst2(CMP, EAX, (value as i32).to_string()));
+                        lines.push(Assembly::inst1(JE, label));
+                    } else {
+                        default = label;
+                    }
+                }
+                lines.push(Assembly::inst1(JMP, default));
+                lines.push(self.gen_node(node.then.as_ref().unwrap(), offset, branch_num));
+                lines.push(format!("{}:", EndFlag(branch_num)).into());
+                lines.push(Assembly::reset_stack(offset));
+                return lines.into();
+            }
+            NodeType::Case => {
+                return vec![
+                    format!(".Lcase.{}:", node.token.as_ref().unwrap().pos).into(),
+                    Assembly::reset_stack(offset),
+                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                ]
+                .into();
+            }
             NodeType::DoWhile => {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 return vec![

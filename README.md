@@ -71,3 +71,6 @@ update expression before testing the condition again.
 
 `do ... while` executes its body before testing the condition. Its `continue`
 statements jump to the condition and its `break` statements exit the loop.
+
+`switch` supports integer constant `case` labels, `default`, fall-through, and
+nested switches. `break` exits the nearest loop or switch; `continue` targets a loop.

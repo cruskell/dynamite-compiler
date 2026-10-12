@@ -436,8 +436,16 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn gen_node(&self, node: &Node, options: &mut Options) -> Vec<String> {
-        if options.terminated {
-            return vec![];
+        if options.terminated && !matches!(node.nt, NodeType::Block | NodeType::Case) {
+            if !node.contains_case() {
+                return vec![];
+            }
+            // A switch can enter a label inside an otherwise unreachable statement.
+            let label = options.new_label();
+            options.terminated = false;
+            let mut lines = vec![format!("{}:", label)];
+            lines.extend(self.gen_node(node, options));
+            return lines;
         }
         match node.nt {
             NodeType::Sequence => {
@@ -639,6 +647,56 @@ impl<'a> IrGenerator<'a> {
                     options.new_register(),
                     value
                 ));
+                return lines;
+            }
+            NodeType::Switch => {
+                let mut lines = self.gen_node(node.cond.as_ref().unwrap(), options);
+                let value = options.register_queue.pop().unwrap();
+                let value = self.convert_integer(
+                    value,
+                    &node.cond.as_ref().unwrap().resolve_type().unwrap(),
+                    &Type::I32,
+                    options,
+                    &mut lines,
+                );
+                let end = options.new_label();
+                let default = node
+                    .children
+                    .iter()
+                    .find(|case| case.value.is_none())
+                    .map(|case| format!("case.{}", case.token.as_ref().unwrap().pos))
+                    .unwrap_or(end.clone());
+                lines.push(format!("  switch i32 {}, label %{} [", value, default));
+                for case in &node.children {
+                    if let Some(value) = case.value {
+                        lines.push(format!(
+                            "    i32 {}, label %case.{}",
+                            value as i32,
+                            case.token.as_ref().unwrap().pos
+                        ));
+                    }
+                }
+                lines.push("  ]".to_string());
+                options.terminated = true;
+                options.break_labels.push(end.clone());
+                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
+                options.break_labels.pop();
+                if !options.terminated {
+                    lines.push(format!("  br label %{}", end));
+                }
+                lines.push(format!("{}:", end));
+                options.terminated = false;
+                return lines;
+            }
+            NodeType::Case => {
+                let label = format!("case.{}", node.token.as_ref().unwrap().pos);
+                let mut lines = vec![];
+                if !options.terminated {
+                    lines.push(format!("  br label %{}", label));
+                }
+                lines.push(format!("{}:", label));
+                options.terminated = false;
+                lines.extend(self.gen_node(node.lhs.as_ref().unwrap(), options));
                 return lines;
             }
             NodeType::DoWhile => {

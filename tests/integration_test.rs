@@ -321,3 +321,20 @@ fn it_supports_do_while(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int main() { int n = 0; switch (2) { case 1: n = 1; break; case 2: n = 7; break; default: n = 9; } return n; }", 7),
+    ("int main() { int n = 0; switch (1) { case 1: n += 2; case 2: n += 5; break; default: n = 9; } return n; }", 7),
+    ("int main() { switch (9) { case 1: return 3; default: return 7; } }", 7),
+    ("int main() { int n = 0; switch (9) { case 1: n = 3; } return n; }", 0),
+    ("int main() { int n = 0; for (int i = 0; i < 4; i++) { switch(i) { case 1: continue; case 2: break; default: n++; } n++; } return n; }", 5),
+    ("int main() { int n = 1; switch(n++) { case 1: switch(2) { case 2: n += 5; break; } break; default: n = 9; } return n; }", 7),
+    ("int main() { switch(-3) { case -3: case 1 + 2: return 7; default: return 1; } }", 7),
+    ("int main() { switch(1) { if(0) { case 1: return 7; } } return 3; }", 7),
+    ("int main() { switch(1) { while(0) { case 1: return 7; } } return 3; }", 7),
+    ("int main() { switch(305419896) { case 305419896: return 7; } return 3; }", 7),
+], ["asm", "llvm"])]
+fn it_supports_switch(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}
