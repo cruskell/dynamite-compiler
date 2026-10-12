@@ -6,6 +6,7 @@ use crate::token::Token;
 pub struct Func {
     pub body: Option<Node>,
     pub internal: bool,
+    pub return_pointer: Option<usize>,
     pub cty: Type,
     pub offset_size: usize,
     pub token: Option<Token>,

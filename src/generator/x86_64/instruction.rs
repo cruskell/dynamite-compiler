@@ -189,6 +189,7 @@ pub enum InstOperand {
     Label(String),
     Str(&'static str),
     Ptr(Register, usize),
+    PtrOffset(Register, usize, usize),
     PtrAdd(Register, String),
     ElseFlag(usize),
     BeginFlag(usize),
@@ -202,6 +203,18 @@ impl Display for InstOperand {
             InstOperand::Num(i) => format!("{}", i),
             InstOperand::Label(l) => l.clone(),
             InstOperand::Str(s) => String::from(*s),
+            InstOperand::PtrOffset(r, offset, size) => format!(
+                "{} ptr[{} + {}]",
+                match size {
+                    1 => "byte",
+                    2 => "word",
+                    4 => "dword",
+                    8 => "qword",
+                    _ => unreachable!(),
+                },
+                r,
+                offset
+            ),
             InstOperand::Ptr(r, i) => match i {
                 1 => format!("byte ptr[{}]", r),
                 2 => format!("word ptr[{}]", r),

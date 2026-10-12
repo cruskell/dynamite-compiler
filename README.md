@@ -159,7 +159,7 @@ across calls; `extern` declarations refer to externally linked objects or functi
 Union members share their starting address. The largest member and alignment
 requirements determine the union size, including trailing padding. Unions
 support tags, anonymous typedefs, member access, first-member brace initialization,
-and assignment. Like structs, function parameters and results use pointers.
+and assignment.
 ## Type qualifiers
 
 `const` and `volatile` qualify object types and pointer declarators. Writes to
@@ -177,3 +177,10 @@ access, and increment/decrement support floating values. Mixed expressions use
 the usual arithmetic conversions; variadic calls promote `float` to `double`.
 Native calls use the platform floating-register and stack conventions.
 `long double`, floating environment control, and complex types are not supported.
+
+## Aggregate function values
+
+Structures and unions can be passed and returned by value, including through
+function pointers. Each argument has its own copy. Native and LLVM output use
+the target calling convention, including register aggregates, AArch64
+homogeneous floating aggregates, stack arguments, and indirect large results.

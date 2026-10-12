@@ -60,6 +60,7 @@ pub struct AstBuilderImpl<'a> {
     switch_stack: Vec<Vec<Node>>,
     switch_types: Vec<Type>,
     return_type: Option<Type>,
+    return_pointer: Option<usize>,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
@@ -179,6 +180,7 @@ impl<'a> AstBuilderImpl<'a> {
             switch_stack: vec![],
             switch_types: vec![],
             return_type: None,
+            return_pointer: None,
             struct_definitions: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
@@ -885,15 +887,13 @@ impl<'a> AstBuilderImpl<'a> {
                         .functions
                         .get(&token.s_value)
                         .is_some_and(|f| f.internal);
-                let (parameters, result, _) = ty.function_signature().unwrap();
-                if matches!(result, Type::Struct(_))
-                    || parameters.iter().any(|ty| matches!(ty, Type::Struct(_)))
-                {
-                    self.error_logger.print_error_position(
-                        token.pos,
-                        "struct function arguments and results must use pointers",
-                    );
-                }
+                let (_, result, _) = ty.function_signature().unwrap();
+                self.return_pointer = if matches!(result, Type::Struct(_)) {
+                    self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
+                    Some(self.offset_size)
+                } else {
+                    None
+                };
                 self.return_type = Some(result);
                 self.labels.clear();
                 self.defined_labels.clear();
@@ -925,6 +925,7 @@ impl<'a> AstBuilderImpl<'a> {
                         args,
                         offset_size: self.offset_size,
                         internal,
+                        return_pointer: self.return_pointer,
                     },
                 );
                 return;
@@ -1988,6 +1989,7 @@ impl<'a> AstBuilderImpl<'a> {
             Node {
                 token: Some(t),
                 nt: NodeType::Return,
+                offset: self.return_pointer,
                 lhs: operand.map(Box::new),
                 ..Node::default()
             }
@@ -3034,16 +3036,6 @@ impl<'a> AstBuilderImpl<'a> {
                             .print_error_position(t.pos, "called expression is not a function");
                         unreachable!()
                     });
-                if matches!(return_type, Type::Struct(_))
-                    || parameter_types
-                        .iter()
-                        .any(|ty| matches!(ty, Type::Struct(_)))
-                {
-                    self.error_logger.print_error_position(
-                        t.pos,
-                        "struct function arguments and results must use pointers",
-                    );
-                }
                 let mut args: Vec<Node> = Vec::new();
                 if self.attempt_reserved(")").is_none() {
                     args.push(self.assign());
@@ -3064,6 +3056,28 @@ impl<'a> AstBuilderImpl<'a> {
                         "argument count does not match function declaration",
                     );
                 }
+                for argument in &mut args {
+                    if matches!(argument.resolve_type(), Some(Type::Struct(_))) {
+                        let ty = argument.resolve_type().unwrap();
+                        let temporary = self.register_local_variable(
+                            Token {
+                                s_value: format!(".argument.{}.{}", t.pos, self.offset_size),
+                                ..t.clone()
+                            },
+                            ty,
+                        );
+                        *argument =
+                            self.struct_assignment(temporary, std::mem::take(argument), t.clone());
+                    }
+                }
+                let result_offset = if matches!(return_type, Type::Struct(_)) {
+                    self.expect_object_type(&return_type, &t);
+                    self.offset_size =
+                        self.offset_size.div_ceil(8) * 8 + return_type.size_of().div_ceil(8) * 8;
+                    Some(self.offset_size)
+                } else {
+                    None
+                };
                 let direct = matches!(node.nt, NodeType::GlobalVar)
                     && node
                         .resolve_type()
@@ -3077,6 +3091,7 @@ impl<'a> AstBuilderImpl<'a> {
                 node = Node {
                     token: Some(t),
                     nt: NodeType::CallFunc,
+                    offset: result_offset,
                     global_name: s_value,
                     cty: Some(return_type),
                     args,
@@ -3252,10 +3267,6 @@ mod tests {
             (
                 "struct S { int x; }; struct S s = {1,2};",
                 "too many struct initializer",
-            ),
-            (
-                "struct S { int x; }; int f(struct S s) { return 0; }",
-                "struct function arguments",
             ),
         ] {
             let tokens = crate::tokenizer::Tokenizer::tokenize(code, false).unwrap();
