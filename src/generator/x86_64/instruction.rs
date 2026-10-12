@@ -75,6 +75,7 @@ impl InstOperator {
 #[derive(Copy, Clone, Debug)]
 pub enum Register {
     RAX,
+    EAX,
     RBX,
     RCX,
     RDX,
@@ -96,6 +97,7 @@ impl Display for Register {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         f.write_str(match self {
             RAX => "rax",
+            EAX => "eax",
             RBX => "rbx",
             RCX => "rcx",
             RDX => "rdx",

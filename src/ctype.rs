@@ -17,6 +17,12 @@ impl Type {
             Type::Func(..) => 1,
         }
     }
+    pub fn align_of(&self) -> usize {
+        match self {
+            Self::Arr(child, _) => child.align_of(),
+            _ => self.size_of(),
+        }
+    }
     pub fn dest_type(&self) -> Option<Type> {
         match self {
             Type::Ptr(c) => Some(*c.clone()),

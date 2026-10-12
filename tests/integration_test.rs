@@ -36,7 +36,6 @@ fn it_compiles_character_constant_c(output_option: &str) {
     assert_eq!(got, "k, ', \\, \n, %\n\t")
 }
 
-#[cfg(target_arch = "x86_64")]
 #[test_matrix(["asm", "llvm"])]
 fn it_compiles_string_c(output_option: &str) {
     let code = &fs::read_to_string("./tests/c/string.c").unwrap();
@@ -44,7 +43,6 @@ fn it_compiles_string_c(output_option: &str) {
     assert_eq!(got, "a = 777, b = 755, c = 222\n")
 }
 
-#[cfg(target_arch = "x86_64")]
 #[test_matrix(["asm", "llvm"])]
 fn it_compiles_simple_expr_c(output_option: &str) {
     let code = &fs::read_to_string("./tests/c/simple_expr.c").unwrap();
@@ -54,8 +52,7 @@ fn it_compiles_simple_expr_c(output_option: &str) {
         .for_each(|s| panic!("assertion failed:\n  {}\n", s));
 }
 
-#[cfg(target_arch = "x86_64")]
-#[test_matrix(["asm"])]
+#[test_matrix(["asm", "llvm"])]
 fn it_compiles_expr_c(output_option: &str) {
     let code = &fs::read_to_string("./tests/c/expr.c").unwrap();
     let got = compile_and_get_stdout(code, output_option);
@@ -64,8 +61,7 @@ fn it_compiles_expr_c(output_option: &str) {
         .for_each(|s| panic!("assertion failed:\n  {}\n", s));
 }
 
-#[cfg(target_arch = "x86_64")]
-#[test_matrix(["asm"])]
+#[test_matrix(["asm", "llvm"])]
 fn it_compiles_many_functions_c(output_option: &str) {
     let code = &fs::read_to_string("./tests/c/many_functions.c").unwrap();
     let got = compile_and_get_stdout(code, output_option);
@@ -82,6 +78,7 @@ fn compile_and_get_stdout(code: &str, output_option: &str) -> String {
 
 #[test_matrix([
     ("int main() { if (1) return 7; return 3; }", 7),
+    ("int main() { int a[2]; if (1) a[0] = 6; a[1] = 8; return a[0] + a[1]; }", 14),
     ("int main() { if (0) return 7; return 3; }", 3),
     ("int main() { int x = -2; if (x) return 7; else return 3; }", 7),
     ("int main() { int x = 0; if (x) return 7; else return 3; }", 3),
@@ -98,10 +95,10 @@ fn compile_and_get_stdout(code: &str, output_option: &str) -> String {
     ("int main() { return (1 < 2) + (3 == 3); }", 2),
     ("int main() { if ((1 < 2) == (3 < 4)) return 7; return 3; }", 7),
     ("int main() { return 7; printf(\"unreachable\"); }", 7),
-])]
-fn llvm_if_returns_expected_status(case: (&str, i32)) {
+], ["asm", "llvm"])]
+fn llvm_if_returns_expected_status(case: (&str, i32), output_option: &str) {
     let (code, expected) = case;
-    let output = compile_and_run(code, "llvm");
+    let output = compile_and_run(code, output_option);
     assert_eq!(output.status.code(), Some(expected), "{:?}", output);
     assert!(output.stdout.is_empty());
 }
@@ -151,7 +148,98 @@ fn compile_and_run(code: &str, output_option: &str) -> Output {
         String::from_utf8_lossy(&cc_output.stderr),
         assembly,
     );
-    let output = Command::new(binary_name).output().unwrap();
+    let mut child = Command::new(binary_name)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            remove_file(binary_name).unwrap();
+            panic!("generated program timed out:\n{}", assembly);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
     remove_file(binary_name).unwrap();
     output
+}
+
+#[test_matrix([
+    "int a[3];",
+    "int a[4] = {};",
+    "int a[3] = {7};",
+    "char a[3] = {7};",
+    "int a[2][3] = {{7}, {}};",
+], ["asm", "llvm"])]
+fn it_zero_fills_global_arrays(declaration: &str, output_option: &str) {
+    let code = format!("{} int main() {{ return 0; }}", declaration);
+    let output = compile_and_run(&code, output_option);
+    assert_eq!(output.status.code(), Some(0), "{:?}", output);
+}
+
+#[test_matrix([
+    ("int a[3]; int main() { return a[0] + a[1] + a[2]; }", 0),
+    ("int a[3] = {7}; int main() { return a[0] + a[1] + a[2]; }", 7),
+    ("char a[3] = {7}; int main() { return a[0] + a[1] + a[2]; }", 7),
+    ("int a[2][3] = {{7}, {}}; int main() { return a[0][0] + a[0][1] + a[1][2]; }", 7),
+    ("int a[3]; int main() { a[1] = 9; return a[0] + a[1] + a[2]; }", 9),
+    ("char a[3]; int main() { a[1] = 9; return a[0] + a[1] + a[2]; }", 9),
+    ("int main() { int a[3]; a[0] = 2; a[1] = 5; a[2] = 9; return a[0] + a[1] + a[2]; }", 16),
+    ("int a[3] = {2, 5, 9}; int main() { int *p = a; return *(p + 2) + *(p - 0); }", 11),
+    ("int a[2][3]; int main() { a[1][2] = 13; return a[1][2] + a[0][2]; }", 13),
+    ("int a[3] = {2, 5, 9}; int main() { int *p = &a[2]; return p[-1]; }", 5),
+
+], ["asm", "llvm"])]
+fn it_reads_and_writes_array_elements(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}
+
+#[test_matrix([
+    ("int main() { int n = 0; for (int i = 0; i < 5; i++) { if (i == 2) break; n += i; } return n; }", 1),
+    ("int main() { int n = 0; while (n < 5) { n++; if (n == 3) break; } return n; }", 3),
+    ("int main() { int n = 0; for (;;) { n++; break; } return n; }", 1),
+    ("int main() { int n = 0; if (0 && n++) n = 9; if (1 || n++) n += 2; return n; }", 2),
+    ("int main() { return (2 && 5) + (0 || 7); }", 2),
+    ("int main() { int n = 0; return (1 ? (0 ? 3 : 7) : n++) + n; }", 7),
+    ("int main() { int a[2][3] = {{4}, {5, 6,}}; return a[0][1] + a[1][0] + a[1][2]; }", 5),
+    ("int a[2][3] = {{4}, {5, 6,}}; int main() { return a[0][1] + a[1][0] + a[1][2]; }", 5),
+    ("int main() { char a = 100; char b = 100; return a + b; }", 200),
+    ("int add(char a, int b) { return a + b; } int main() { return add(-3, 7); }", 4),
+    ("int main() { return ~123 + 128; }", 4),
+    ("int main() { int a[4]; return &a[3] - &a[0]; }", 3),
+    ("int main() { int *p = 0; return p == 0; }", 1),
+    ("int main() { char a = 2; return 0 ? a : 200; }", 200),
+    ("int main() { return 0 ? 3 : 1 ? 5 : 9; }", 5),
+    ("int sum(int a[3]) { return a[0] + a[2]; } int main() { int a[3] = {2, 3, 7}; return sum(a); }", 9),
+    ("int abs(int n); int main() { return abs(-7); }", 7),
+    ("char f(int n) { return n; } int main() { return f(300); }", 44),
+    ("int main() { char c; int n = (c = 300); return n; }", 44),
+    ("int n = {7}; int main() { ; return n; }", 7),
+    ("int main() { int a[2] = {4, 7}; int i = 0; a[i++] += 3; return a[0] + a[1] + i; }", 15),
+    ("int main() { int a[2] = {4, 7}; int *p = a; int n = ++*p++; return n + a[0] + a[1] + (p - a); }", 18),
+    ("int main() { int a = 5; return -~a + +-a; }", 1),
+    ("int n = (2 << 3) | 1; int main() { return n; }", 17),
+    ("int main() { int a[2] = {3, 7}; int *p = 0 ? 0 : &a[1]; return *p; }", 7),
+    ("int main() { int a[2] = {3, 7}; int *p = 1 ? a : 0; return p[0]; }", 3),
+    ("int main() { int a[3000]; a[0] = 4; a[2999] = 9; return a[0] + a[2999]; }", 13),
+    ("int *f() { } int main() { return f() == 0; }", 1),
+    ("int n = 0 && (1 / 0); int m = 1 ? 5 : (1 / 0); int main() { return n + m; }", 5),
+], ["asm", "llvm"])]
+fn it_handles_control_flow_and_scalar_types(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_preserves_string_bytes(output_option: &str) {
+    let code = r#"char *message = "日本語\t\"\\\x0A"; int main() { printf("%s", message); puts("done"); return 0; }"#;
+    assert_eq!(
+        compile_and_get_stdout(code, output_option),
+        "日本語\t\"\\\ndone\n"
+    );
 }
