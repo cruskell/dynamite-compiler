@@ -385,3 +385,20 @@ fn it_supports_stack_arguments(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn it_supports_variadic_declarations(output_option: &str) {
+    let code = "int snprintf(char *s, int size, char *format, ...); int main() { char s[40]; char c = 7; snprintf(s, 40, \"%d %d %d %d %d %d %d %d\", c, 2, 3, 4, 5, 6, 7, 8); puts(s); return 0; }";
+    assert_eq!(
+        compile_and_get_stdout(code, output_option),
+        "7 2 3 4 5 6 7 8\n"
+    );
+}
+#[test_matrix(["asm", "llvm"])]
+fn it_defines_variadic_functions(output_option: &str) {
+    let output = compile_and_run(
+        "int first(int n, ...) { return n; } int main() { return first(7, 1, 2); }",
+        output_option,
+    );
+    assert_eq!(output.status.code(), Some(7), "{:?}", output);
+}

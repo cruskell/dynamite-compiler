@@ -6,9 +6,18 @@ pub enum Type {
     Ptr(Box<Type>),
     Arr(Box<Type>, usize),
     Func(Vec<Type>, Box<Type>),
+    VariadicFunc(Vec<Type>, Box<Type>),
 }
 
 impl Type {
+    pub fn function_signature(&self) -> Option<(Vec<Type>, Type, bool)> {
+        match self {
+            Self::Func(args, result) => Some((args.clone(), *result.clone(), false)),
+            Self::VariadicFunc(args, result) => Some((args.clone(), *result.clone(), true)),
+            _ => None,
+        }
+    }
+
     pub fn size_of(&self) -> usize {
         match self {
             Type::Void => 0,
@@ -16,7 +25,7 @@ impl Type {
             Type::I32 => 4,
             Type::Ptr(_) => 8,
             Type::Arr(t, s) => t.size_of() * s,
-            Type::Func(..) => 1,
+            Type::Func(..) | Type::VariadicFunc(..) => 1,
         }
     }
     pub fn align_of(&self) -> usize {

@@ -78,6 +78,7 @@ pub struct Node {
     // for calling function
     pub args: Vec<Node>,
     pub parameter_types: Vec<Type>,
+    pub variadic: bool,
     // for declaration of local variables
     pub offset: Option<usize>,
 }

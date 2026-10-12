@@ -85,3 +85,7 @@ pointees. Void functions accept `return;`; objects cannot have void type.
 
 Explicit casts support integers, pointers, typedef names, and `void`. Integer
 casts truncate or sign-extend to the requested type; void casts retain side effects.
+
+Functions may declare `...` after fixed parameters. Variadic calls apply integer
+promotions and platform argument placement. Variadic definitions may use their
+fixed parameters; `va_list` and `va_start`/`va_arg` are not implemented.

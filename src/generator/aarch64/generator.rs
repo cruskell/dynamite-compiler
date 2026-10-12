@@ -4,7 +4,7 @@ use super::instruction::{
     InstOperator::*,
     Register::{self, *},
 };
-use crate::ast::{Identifier, ProgramAst, reserved_functions};
+use crate::ast::ProgramAst;
 use crate::ctype::Type;
 use crate::error;
 use crate::func::Func;
@@ -343,16 +343,8 @@ impl<'a> AsmGenerator<'a> {
                 return vec![self.gen_statements(&node.children, options), Self::push(0)].into();
             }
             NodeType::CallFunc => {
-                let fixed = if matches!(self.target_os, Os::MacOS) {
-                    reserved_functions()
-                        .get(&node.global_name)
-                        .map(|ident| {
-                            let Identifier::Static(Type::Func(args, _)) = ident else {
-                                unreachable!()
-                            };
-                            args.len()
-                        })
-                        .unwrap_or(node.args.len())
+                let fixed = if matches!(self.target_os, Os::MacOS) && node.variadic {
+                    node.parameter_types.len()
                 } else {
                     node.args.len()
                 };
