@@ -1,4 +1,4 @@
-use crate::ctype::Type;
+use crate::ctype::{BitField, Type};
 use crate::token::Token;
 use std::mem::swap;
 
@@ -57,6 +57,7 @@ impl Default for NodeType {
 #[derive(Default, Clone)]
 pub struct Node {
     pub nt: NodeType,
+    pub bit_field: Option<BitField>,
     pub compound_literal: bool,
     pub volatile_access: bool,
     pub cty: Option<Type>,
@@ -180,6 +181,9 @@ impl Node {
         }
     }
     pub fn resolve_type(&self) -> Option<Type> {
+        if self.bit_field.is_some_and(|field| field.width < 32) {
+            return Some(Type::I32);
+        }
         self.resolve_qualified_type().map(|ty| {
             if let Type::Qualified(child, _) = &ty {
                 if let Type::Arr(element, size) = child.unqualified() {

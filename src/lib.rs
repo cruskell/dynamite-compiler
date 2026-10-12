@@ -1,4 +1,5 @@
 pub mod ast;
+mod bitfield;
 pub mod ctype;
 pub mod error;
 pub mod func;

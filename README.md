@@ -96,7 +96,9 @@ callback parameters, unnamed prototype parameters, and indirect calls.
 Structs support tags, anonymous typedefs, aligned members, nested aggregates,
 self-referential pointers, member access (`.` and `->`), brace initialization,
 and assignment. Struct parameters and results currently require pointers;
-passing or returning structs by value is diagnosed. Bitfields are not supported.
+passing or returning structs by value is diagnosed. Integer bit-fields support
+signed and unsigned values, unnamed padding, zero-width separators, initialization,
+and assignment. Address-taking and `sizeof` on a bit-field are diagnosed.
 
 ## Preprocessing
 

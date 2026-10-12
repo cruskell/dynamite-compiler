@@ -1,4 +1,4 @@
-use crate::ctype::{Qualifiers, StructDefinition, StructMember, StructType, Type};
+use crate::ctype::{BitField, Qualifiers, StructDefinition, StructMember, StructType, Type};
 use crate::error;
 use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
@@ -103,6 +103,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
             if let Some(body) = &mut function.body {
                 Self::erase_qualifiers(body);
                 Self::insert_integer_conversions(body);
+                crate::bitfield::lower(body, &mut function.offset_size);
             }
         }
         for global in self.global_variables.values_mut() {
@@ -680,41 +681,87 @@ impl<'a> AstBuilderImpl<'a> {
             }
             let mut members: Vec<StructMember> = vec![];
             let mut size = 0usize;
+            let mut bit_address = 0usize;
             let mut align = 1;
             while self.attempt_reserved("}").is_none() {
                 let base = self.expect_type();
                 loop {
-                    let (name, member_type) = self.expect_ident_with_type(base.clone());
-                    self.expect_object_type(&member_type, &name);
-                    if member_type.size_of() == 0 {
-                        self.error_logger.print_error_position(
-                            name.pos,
-                            "member requires a complete object type",
-                        );
-                    }
-                    if members.iter().any(|member| member.name == name.s_value) {
-                        self.error_logger
-                            .print_error_position(name.pos, "duplicate struct member");
-                    }
-                    size = size.div_ceil(member_type.align_of()) * member_type.align_of();
-                    align = align.max(member_type.align_of());
-                    members.push(StructMember {
-                        name: name.s_value,
-                        ty: member_type.clone(),
-                        offset: if is_union { 0 } else { size },
-                    });
-                    size = if is_union {
-                        size.max(member_type.size_of())
+                    let (name, member_type, _) = self.declarator().resolve(base.clone());
+                    let position = name.as_ref().unwrap_or(&token);
+                    self.expect_object_type(&member_type, position);
+                    let (field, offset) = if self.attempt_reserved(":").is_some() {
+                        let expression = self.ternary();
+                        let width = self.eval(&expression);
+                        let Some((bits, _)) = member_type.integer_info() else {
+                            self.error_logger.print_error_position(
+                                position.pos,
+                                "bit-field requires an integer type",
+                            );
+                            unreachable!()
+                        };
+                        if width < 0
+                            || width > i64::from(bits)
+                            || (width == 0 && name.is_some())
+                            || (*member_type.unqualified() == Type::Bool && width > 1)
+                        {
+                            self.error_logger
+                                .print_error_position(position.pos, "invalid bit-field width");
+                        }
+                        let width = width as u8;
+                        let container = usize::from(bits);
+                        if is_union {
+                            bit_address = 0;
+                        }
+                        if width == 0 || usize::from(width) > container - bit_address % container {
+                            bit_address = bit_address.div_ceil(container) * container;
+                        }
+                        // Anonymous fields affect AAPCS64 alignment but not SysV alignment.
+                        if name.is_some() || cfg!(target_arch = "aarch64") {
+                            align = align.max(member_type.align_of());
+                        }
+                        let field = BitField {
+                            width,
+                            shift: (bit_address % container) as u8,
+                        };
+                        let offset = bit_address / container * member_type.size_of();
+                        bit_address += usize::from(width);
+                        size = size.max(bit_address.div_ceil(8));
+                        (field, offset)
                     } else {
-                        size + member_type.size_of()
+                        if name.is_none() {
+                            self.error_logger
+                                .print_error_position(token.pos, "member name expected");
+                        }
+                        size = size.div_ceil(member_type.align_of()) * member_type.align_of();
+                        align = align.max(member_type.align_of());
+                        let offset = if is_union { 0 } else { size };
+                        size = if is_union {
+                            size.max(member_type.size_of())
+                        } else {
+                            size + member_type.size_of()
+                        };
+                        bit_address = size * 8;
+                        (BitField { width: 0, shift: 0 }, offset)
                     };
+                    if let Some(name) = name {
+                        if members.iter().any(|member| member.name == name.s_value) {
+                            self.error_logger
+                                .print_error_position(name.pos, "duplicate struct member");
+                        }
+                        members.push(StructMember {
+                            name: name.s_value,
+                            ty: member_type,
+                            offset,
+                            bit_field: (field.width != 0).then_some(field),
+                        });
+                    }
                     if self.attempt_reserved(",").is_none() {
                         break;
                     }
                 }
                 self.expect_reserved(";");
             }
-            if members.is_empty() {
+            if members.is_empty() && size == 0 {
                 self.error_logger
                     .print_error_position(token.pos, "struct requires at least one member");
             }
@@ -1935,7 +1982,9 @@ impl<'a> AstBuilderImpl<'a> {
             lhs: Some(Box::new(offset)),
             ..Node::default()
         };
-        Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, pointer)
+        let mut result = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, pointer);
+        result.bit_field = member.bit_field;
+        result
     }
 
     fn aggregate_elements(node: &Node, token: &Token) -> Option<Vec<Node>> {
@@ -2214,7 +2263,8 @@ impl<'a> AstBuilderImpl<'a> {
     ) -> Node {
         self.expect_assignable(&lhs);
         // Save the lvalue address so side effects in it occur exactly once.
-        let ty = Type::Ptr(Box::new(lhs.resolve_type().unwrap()));
+        let field = lhs.bit_field;
+        let ty = Type::Ptr(Box::new(lhs.object_type().unwrap()));
         self.offset_size =
             (self.offset_size + ty.size_of()).div_ceil(ty.align_of()) * ty.align_of();
         let temporary = Node {
@@ -2231,7 +2281,8 @@ impl<'a> AstBuilderImpl<'a> {
             temporary.clone(),
             address,
         );
-        let target = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, temporary);
+        let mut target = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, temporary);
+        target.bit_field = field;
         let value = Node::new_with_op(Some(token.clone()), operation, target.clone(), rhs);
         let update = Node::new_with_op(Some(token.clone()), NodeType::Assign, target, value);
         Node {
@@ -2409,6 +2460,14 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn sizeof_expression(&mut self, token: &Token) -> usize {
+        let expression = self.unary();
+        if expression.bit_field.is_some() {
+            self.error_logger
+                .print_error_position(token.pos, "sizeof cannot be applied to a bit-field");
+        }
+        expression.resolve_type().unwrap().size_of()
+    }
     fn unary(&mut self) -> Node {
         let saved = self.cur;
         if let Some(token) = self.attempt_reserved("(") {
@@ -2517,10 +2576,10 @@ impl<'a> AstBuilderImpl<'a> {
                     ty.size_of()
                 } else {
                     self.cur = saved;
-                    self.unary().resolve_type().unwrap().size_of()
+                    self.sizeof_expression(&t)
                 }
             } else {
-                self.unary().resolve_type().unwrap().size_of()
+                self.sizeof_expression(&t)
             };
             return Node {
                 token: Some(t),
@@ -2541,6 +2600,10 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if let Some(token) = self.attempt_reserved("&") {
             let operand = self.unary();
+            if operand.bit_field.is_some() {
+                self.error_logger
+                    .print_error_position(token.pos, "cannot take the address of a bit-field");
+            }
             if !(operand.compound_literal
                 || matches!(
                     operand.nt,
@@ -2830,6 +2893,17 @@ mod tests {
             ),
             ("int main(){int x;int *const p=&x;p=0;}", "const object"),
             ("int main(){const int x=1;int *p=&x;}", "incompatible value"),
+            ("struct S{int x:33;};", "invalid bit-field width"),
+            ("struct S{int x:0;};", "invalid bit-field width"),
+            ("struct S{int *x:3;};", "integer type"),
+            (
+                "struct S{int x:3;};int main(){struct S s;return sizeof(s.x);}",
+                "sizeof cannot",
+            ),
+            (
+                "struct S{int x:3;};int main(){struct S s;int *p=&s.x;}",
+                "address of a bit-field",
+            ),
             ("int a[2](int);", "invalid array element"),
             ("int x; char x;", "incompatible object redeclaration"),
             ("int x=1; int x=2;", "already initialized"),
