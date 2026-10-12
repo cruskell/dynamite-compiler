@@ -207,10 +207,8 @@ impl Node {
             NodeType::Conditional => {
                 let then = self.then.as_ref().unwrap().resolve_type();
                 let otherwise = self.els.as_ref().unwrap().resolve_type();
-                if then.as_ref().is_some_and(|ty| ty.integer_info().is_some())
-                    && otherwise
-                        .as_ref()
-                        .is_some_and(|ty| ty.integer_info().is_some())
+                if then.as_ref().is_some_and(|ty| ty.is_arithmetic())
+                    && otherwise.as_ref().is_some_and(|ty| ty.is_arithmetic())
                 {
                     Some(Type::arithmetic_type(
                         then.as_ref().unwrap(),

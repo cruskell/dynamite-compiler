@@ -167,3 +167,13 @@ const objects and implicit conversions that discard pointee qualifiers are
 diagnosed. Qualifiers on a pointer distinguish an immutable pointer from a
 pointer to an immutable object. LLVM output marks volatile object accesses;
 native generation emits each access directly.
+
+## Floating-point values
+
+`float` and `double` use IEEE binary32 and binary64 storage. Decimal and
+hexadecimal literals support fractional parts, exponents, and the `f` suffix.
+Arithmetic, comparisons, scalar conversions, global initializers, pointer
+access, and increment/decrement support floating values. Mixed expressions use
+the usual arithmetic conversions; variadic calls promote `float` to `double`.
+Native calls use the platform floating-register and stack conventions.
+`long double`, floating environment control, and complex types are not supported.

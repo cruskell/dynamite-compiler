@@ -132,10 +132,14 @@ impl<'a> IrGenerator<'a> {
         )
     }
 
+    fn float_literal(ty: &Type, bits: usize) -> String {
+        format!("0x{:016X}", ty.float_value(bits).to_bits())
+    }
     fn gen_type(ty: Type) -> String {
         match ty {
             Type::Qualified(child, _) => Self::gen_type(*child),
             Type::Void => "void".to_string(),
+            Type::Float(bits) => if bits == 32 { "float" } else { "double" }.to_string(),
             Type::Struct(ty) if ty.definition().borrow().is_union || ty.has_bit_fields() => {
                 let ty = Type::Struct(ty);
                 format!(
@@ -192,6 +196,19 @@ impl<'a> IrGenerator<'a> {
             data
         };
         match ty {
+            Type::Float(_) => {
+                let bits = if let Some(GlobalVariableData::Elem(value)) = data {
+                    value.parse::<i64>().unwrap() as usize
+                } else {
+                    0
+                };
+                format!(
+                    "{} {}",
+                    Self::gen_type(ty.clone()),
+                    Self::float_literal(ty, bits)
+                )
+            }
+
             Type::Struct(struct_type)
                 if struct_type.definition().borrow().is_union || struct_type.has_bit_fields() =>
             {
@@ -369,6 +386,8 @@ impl<'a> IrGenerator<'a> {
                             Self::gen_type(*return_ty.clone()),
                             if matches!(return_ty.as_ref(), Type::Ptr(_)) {
                                 "null"
+                            } else if return_ty.float_bits().is_some() {
+                                "0.0"
                             } else {
                                 "0"
                             }
@@ -437,6 +456,53 @@ impl<'a> IrGenerator<'a> {
         options: &mut Options,
         lines: &mut Vec<String>,
     ) -> String {
+        if source == target {
+            return value;
+        }
+        if source.float_bits().is_some() || target.float_bits().is_some() {
+            let register = options.new_register();
+            options.register_queue.pop();
+            if *target == Type::Bool {
+                lines.push(format!(
+                    "  %{register} = fcmp une {} {value}, 0.0",
+                    Self::gen_type(source.clone())
+                ));
+                let result = options.new_register();
+                options.register_queue.pop();
+                lines.push(format!("  %{result} = zext i1 %{register} to i8"));
+                return format!("%{result}");
+            }
+            let operation = match (source.float_bits(), target.float_bits()) {
+                (Some(sb), Some(tb)) => {
+                    if sb < tb {
+                        "fpext"
+                    } else {
+                        "fptrunc"
+                    }
+                }
+                (None, Some(_)) => {
+                    if source.integer_info().unwrap().1 {
+                        "sitofp"
+                    } else {
+                        "uitofp"
+                    }
+                }
+                (Some(_), None) => {
+                    if target.integer_info().unwrap().1 {
+                        "fptosi"
+                    } else {
+                        "fptoui"
+                    }
+                }
+                _ => unreachable!(),
+            };
+            lines.push(format!(
+                "  %{register} = {operation} {} {value} to {}",
+                Self::gen_type(source.clone()),
+                Self::gen_type(target.clone())
+            ));
+            return format!("%{register}");
+        }
         if matches!(target, Type::Ptr(_)) && source.integer_info().is_some() {
             if value == "0" {
                 return "null".to_string();
@@ -517,15 +583,26 @@ impl<'a> IrGenerator<'a> {
         let register = options.new_register();
         options.register_queue.pop();
         lines.push(format!(
-            "  %{} = icmp ne {} {}, {}",
+            "  %{} = {} {} {}, {}",
             register,
+            if ty.float_bits().is_some() {
+                "fcmp une"
+            } else {
+                "icmp ne"
+            },
             if pointer {
                 "ptr".to_string()
             } else {
                 Self::gen_type(ty)
             },
             value,
-            if pointer { "null" } else { "0" }
+            if pointer {
+                "null"
+            } else if node.resolve_type().unwrap().float_bits().is_some() {
+                "0.0"
+            } else {
+                "0"
+            }
         ));
         format!("%{}", register)
     }
@@ -735,7 +812,12 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
             NodeType::Num => {
-                options.register_queue.push(node.value.unwrap().to_string());
+                let ty = node.resolve_type().unwrap();
+                options.register_queue.push(if ty.float_bits().is_some() {
+                    Self::float_literal(&ty, node.value.unwrap())
+                } else {
+                    node.value.unwrap().to_string()
+                });
                 return vec![];
             }
             NodeType::Assign => {
@@ -1155,15 +1237,26 @@ impl<'a> IrGenerator<'a> {
                     ));
                 } else {
                     lines.push(format!(
-                        "  %{} = {} {} %{}, 1",
+                        "  %{} = {} {} %{}, {}",
                         new,
                         if matches!(node.nt, NodeType::SuffixIncr) {
-                            "add"
+                            if ty.float_bits().is_some() {
+                                "fadd"
+                            } else {
+                                "add"
+                            }
+                        } else if ty.float_bits().is_some() {
+                            "fsub"
                         } else {
                             "sub"
                         },
                         Self::gen_type(ty.clone()),
-                        old
+                        old,
+                        if ty.float_bits().is_some() {
+                            "1.0"
+                        } else {
+                            "1"
+                        }
                     ));
                 }
                 let new = if ty == Type::Bool {
@@ -1261,7 +1354,7 @@ impl<'a> IrGenerator<'a> {
         let mut lhs_register = options.register_queue.pop().unwrap();
         let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
         let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
-        let operand_ty = if left_ty.integer_info().is_some() && right_ty.integer_info().is_some() {
+        let operand_ty = if left_ty.is_arithmetic() && right_ty.is_arithmetic() {
             if matches!(node.nt, NodeType::BitLeft | NodeType::BitRight) {
                 left_ty.promoted()
             } else {
@@ -1272,7 +1365,19 @@ impl<'a> IrGenerator<'a> {
         } else {
             left_ty.clone()
         };
-        let operation = if operand_ty.integer_info().is_some_and(|(_, signed)| !signed) {
+        let operation = if operand_ty.float_bits().is_some() {
+            match node.nt {
+                NodeType::Add => "fadd",
+                NodeType::Sub => "fsub",
+                NodeType::Mul => "fmul",
+                NodeType::Div => "fdiv",
+                NodeType::Eq => "fcmp oeq",
+                NodeType::Ne => "fcmp une",
+                NodeType::Lt => "fcmp olt",
+                NodeType::Le => "fcmp ole",
+                _ => unreachable!(),
+            }
+        } else if operand_ty.integer_info().is_some_and(|(_, signed)| !signed) {
             match node.nt {
                 NodeType::Div => "udiv",
                 NodeType::Mod => "urem",

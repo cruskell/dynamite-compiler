@@ -9,6 +9,7 @@ use crate::ctype::Type;
 use crate::error;
 use crate::func::Func;
 use crate::generator::Os;
+use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use std::fmt::Display;
@@ -233,6 +234,16 @@ impl<'a> AsmGenerator<'a> {
                 }
             )
             .into(),
+            Type::Float(_) => format!(
+                "  .{}byte {}",
+                ty.size_of(),
+                if let Some(GlobalVariableData::Elem(value)) = data {
+                    value.as_str()
+                } else {
+                    "0"
+                }
+            )
+            .into(),
             Type::Integer { .. } | Type::Bool => format!(
                 "  .{}byte {}",
                 ty.size_of(),
@@ -291,6 +302,16 @@ impl<'a> AsmGenerator<'a> {
         if func.body.is_none() {
             return vec![].into();
         }
+        let types = func
+            .args
+            .iter()
+            .map(|arg| arg.resolve_type().unwrap())
+            .collect::<Vec<_>>();
+        let (locations, _, _) = scalar_arguments(&types, 6, false, types.len(), false);
+        // Preserve incoming general registers before floating stores use RDI as scratch.
+        let mut argument_order = func.args.iter().enumerate().collect::<Vec<_>>();
+        argument_order
+            .sort_by_key(|(index, _)| matches!(locations[*index], ScalarLocation::Floating(_)));
         vec![
             if func.internal {
                 vec![].into()
@@ -302,22 +323,33 @@ impl<'a> AsmGenerator<'a> {
             Assembly::inst1(PUSH, RBP),
             Assembly::inst2(MOV, RBP, RSP),
             Assembly::inst2(SUB, RSP, offset),
-            func.args
-                .iter()
-                .enumerate()
+            argument_order
+                .into_iter()
                 .map(|(i, arg)| {
                     if let NodeType::LocalVar = arg.nt {
                         vec![
                             Assembly::inst2(MOV, RAX, RBP),
                             Assembly::inst2(SUB, RAX, arg.offset.unwrap()),
-                            if let Some(register) = ARGS_REG.get(i) {
-                                Assembly::inst2(MOV, RDI, *register)
-                            } else {
-                                Assembly::inst2(
-                                    MOV,
-                                    RDI,
-                                    PtrAdd(RBP, format!("{}", 16 + (i - ARGS_REG.len()) * 8)),
-                                )
+                            match locations[i] {
+                                ScalarLocation::General(index) => {
+                                    Assembly::inst2(MOV, RDI, ARGS_REG[index])
+                                }
+                                ScalarLocation::Floating(index) => Assembly::inst2(
+                                    if types[i].float_bits() == Some(32) {
+                                        MOVD
+                                    } else {
+                                        MOVQ
+                                    },
+                                    if types[i].float_bits() == Some(32) {
+                                        EDI
+                                    } else {
+                                        RDI
+                                    },
+                                    Xmm(index),
+                                ),
+                                ScalarLocation::Stack(slot, _) => {
+                                    Assembly::inst2(MOV, RDI, PtrAdd(RBP, format!("{}", 16 + slot)))
+                                }
                             },
                             self.operation2rdi(arg.resolve_type(), MOV, RAX),
                         ]
@@ -361,6 +393,246 @@ impl<'a> AsmGenerator<'a> {
         vec![].into()
     }
 
+    fn float_conversion(source: &Type, target: &Type) -> Assembly {
+        if source == target || *target == Type::Void {
+            return vec![].into();
+        }
+        if *target == Type::Bool && source.float_bits().is_some() {
+            return vec![
+                Assembly::inst2(SHL, RAX, 65 - source.float_bits().unwrap() as usize),
+                Assembly::inst2(CMP, RAX, 0),
+                Assembly::inst1(SETNE, AL),
+                Assembly::inst2(MOVZX, RAX, AL),
+            ]
+            .into();
+        }
+        let single_integer = source.integer_info().is_some() && target.float_bits() == Some(32);
+        let mut lines = vec![];
+        if let Some(bits) = source.float_bits() {
+            lines.push(Assembly::inst2(
+                if bits == 32 { MOVD } else { MOVQ },
+                Xmm(0),
+                if bits == 32 { EAX } else { RAX },
+            ));
+            if bits == 32 {
+                lines.push(Assembly::inst2(CVTSS2SD, Xmm(0), Xmm(0)));
+            }
+        } else {
+            lines.push(Self::normalize_integer(source, RAX));
+            if source.integer_info() == Some((64, false)) {
+                lines.extend([
+                    Assembly::inst2(CMP, RAX, 0),
+                    Assembly::inst1(JGE, "1f"),
+                    Assembly::inst2(MOV, RDI, RAX),
+                    Assembly::inst2(AND, RDI, 1),
+                    Assembly::inst2(SHR, RAX, 1),
+                    Assembly::inst2(OR, RAX, RDI),
+                    Assembly::inst2(
+                        if single_integer { CVTSI2SS } else { CVTSI2SD },
+                        Xmm(0),
+                        RAX,
+                    ),
+                    Assembly::inst2(if single_integer { ADDSS } else { ADDSD }, Xmm(0), Xmm(0)),
+                    Assembly::inst1(JMP, "2f"),
+                    "1:".into(),
+                    Assembly::inst2(
+                        if single_integer { CVTSI2SS } else { CVTSI2SD },
+                        Xmm(0),
+                        RAX,
+                    ),
+                    "2:".into(),
+                ]);
+            } else {
+                lines.push(Assembly::inst2(
+                    if single_integer { CVTSI2SS } else { CVTSI2SD },
+                    Xmm(0),
+                    RAX,
+                ));
+            }
+        }
+        if let Some(bits) = target.float_bits() {
+            if bits == 32 && !single_integer {
+                lines.push(Assembly::inst2(CVTSD2SS, Xmm(0), Xmm(0)));
+            }
+            lines.push(Assembly::inst2(
+                if bits == 32 { MOVD } else { MOVQ },
+                if bits == 32 { EAX } else { RAX },
+                Xmm(0),
+            ));
+        } else if target.integer_info() == Some((64, false)) {
+            lines.extend([
+                Assembly::inst2(MOV, RAX, (9223372036854775808.0f64).to_bits() as usize),
+                Assembly::inst2(MOVQ, Xmm(1), RAX),
+                Assembly::inst2(UCOMISD, Xmm(0), Xmm(1)),
+                Assembly::inst1(SETB, DIL),
+                Assembly::inst2(MOVZX, RDI, DIL),
+            ]);
+            // A branch avoids converting the upper unsigned range as signed.
+            lines.push(Assembly::inst2(CMP, RDI, 0));
+            // Numeric labels are local to each conversion sequence.
+            lines.push(Assembly::inst1(JNE, "1f"));
+            lines.extend([
+                Assembly::inst2(SUBSD, Xmm(0), Xmm(1)),
+                Assembly::inst2(CVTTSD2SI, RAX, Xmm(0)),
+                Assembly::inst2(MOV, RDI, 1usize << 63),
+                Assembly::inst2(OR, RAX, RDI),
+                Assembly::inst1(JMP, "2f"),
+                "1:".into(),
+                Assembly::inst2(CVTTSD2SI, RAX, Xmm(0)),
+                "2:".into(),
+            ]);
+        } else {
+            lines.push(Assembly::inst2(CVTTSD2SI, RAX, Xmm(0)));
+            lines.push(Self::normalize_integer(target, RAX));
+        }
+        lines.into()
+    }
+    fn float_operation(&self, node: &Node, offset: usize, branch: usize) -> Assembly {
+        let bits = node
+            .lhs
+            .as_ref()
+            .unwrap()
+            .resolve_type()
+            .unwrap()
+            .float_bits()
+            .unwrap();
+        let mut lines = vec![
+            self.gen_node(node.rhs.as_ref().unwrap(), offset, branch),
+            self.gen_node(node.lhs.as_ref().unwrap(), offset, branch),
+            Assembly::inst1(POP, RAX),
+            Assembly::inst1(POP, RDI),
+            Assembly::inst2(
+                if bits == 32 { MOVD } else { MOVQ },
+                Xmm(0),
+                if bits == 32 { EAX } else { RAX },
+            ),
+            Assembly::inst2(
+                if bits == 32 { MOVD } else { MOVQ },
+                Xmm(1),
+                if bits == 32 { EDI } else { RDI },
+            ),
+        ];
+        if matches!(
+            node.nt,
+            NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le
+        ) {
+            lines.extend([
+                Assembly::inst2(if bits == 32 { UCOMISS } else { UCOMISD }, Xmm(0), Xmm(1)),
+                Assembly::inst1(
+                    match node.nt {
+                        NodeType::Eq => SETE,
+                        NodeType::Ne => SETNE,
+                        NodeType::Lt => SETB,
+                        NodeType::Le => SETBE,
+                        _ => unreachable!(),
+                    },
+                    AL,
+                ),
+                Assembly::inst1(if node.nt == NodeType::Ne { SETP } else { SETNP }, DL),
+                Assembly::inst2(if node.nt == NodeType::Ne { OR } else { AND }, AL, DL),
+                Assembly::inst2(MOVZX, RAX, AL),
+            ]);
+        } else {
+            lines.push(Assembly::inst2(
+                match (node.nt.clone(), bits) {
+                    (NodeType::Add, 32) => ADDSS,
+                    (NodeType::Add, _) => ADDSD,
+                    (NodeType::Sub, 32) => SUBSS,
+                    (NodeType::Sub, _) => SUBSD,
+                    (NodeType::Mul, 32) => MULSS,
+                    (NodeType::Mul, _) => MULSD,
+                    (NodeType::Div, 32) => DIVSS,
+                    (NodeType::Div, _) => DIVSD,
+                    _ => unreachable!(),
+                },
+                Xmm(0),
+                Xmm(1),
+            ));
+            lines.push(Assembly::inst2(
+                if bits == 32 { MOVD } else { MOVQ },
+                if bits == 32 { EAX } else { RAX },
+                Xmm(0),
+            ));
+        }
+        lines.push(Assembly::inst1(PUSH, RAX));
+        lines.into()
+    }
+    fn float_call(&self, node: &Node, offset: usize, branch: usize) -> Assembly {
+        let types = node
+            .args
+            .iter()
+            .rev()
+            .map(|arg| arg.resolve_type().unwrap())
+            .collect::<Vec<_>>();
+        let (locations, stack_size, floating) =
+            scalar_arguments(&types, 6, false, node.parameter_types.len(), false);
+        let mut lines = vec![];
+        if let Some(callee) = &node.lhs {
+            lines.push(self.gen_node(callee, offset, branch));
+        }
+        for arg in &node.args {
+            lines.push(self.gen_node(arg, offset, branch));
+        }
+        lines.extend([
+            Assembly::inst2(MOV, R11, RSP),
+            Assembly::inst2(SUB, RSP, stack_size + 8),
+            Assembly::inst2(AND, RSP, "-16"),
+            Assembly::inst2(MOV, PtrAdd(RSP, stack_size.to_string()), R11),
+        ]);
+        for (index, location) in locations.iter().enumerate() {
+            let source = PtrAdd(R11, (index * 8).to_string());
+            lines.push(match *location {
+                ScalarLocation::General(register) => {
+                    Assembly::inst2(MOV, ARGS_REG[register], source)
+                }
+                ScalarLocation::Floating(register) => {
+                    let bits = types[index].float_bits().unwrap();
+                    vec![
+                        Assembly::inst2(MOV, RAX, source),
+                        Assembly::inst2(
+                            if bits == 32 { MOVD } else { MOVQ },
+                            Xmm(register),
+                            if bits == 32 { EAX } else { RAX },
+                        ),
+                    ]
+                    .into()
+                }
+                ScalarLocation::Stack(slot, _) => vec![
+                    Assembly::inst2(MOV, RAX, source),
+                    Assembly::inst2(MOV, PtrAdd(RSP, slot.to_string()), RAX),
+                ]
+                .into(),
+            });
+        }
+        lines.push(Assembly::inst2(MOV, RAX, floating));
+        if node.lhs.is_some() {
+            lines.extend([
+                Assembly::inst2(MOV, R10, PtrAdd(R11, (node.args.len() * 8).to_string())),
+                Assembly::inst1(CALL, R10),
+            ]);
+        } else {
+            lines.push(Assembly::inst1(CALL, self.with_prefix(&node.global_name)));
+        }
+        lines.extend([
+            Assembly::inst2(MOV, RSP, PtrAdd(RSP, stack_size.to_string())),
+            Assembly::inst2(
+                ADD,
+                RSP,
+                (node.args.len() + usize::from(node.lhs.is_some())) * 8,
+            ),
+        ]);
+        if let Some(bits) = node.resolve_type().unwrap().float_bits() {
+            lines.push(Assembly::inst2(
+                if bits == 32 { MOVD } else { MOVQ },
+                if bits == 32 { EAX } else { RAX },
+                Xmm(0),
+            ));
+        } else if let Some(ty) = &node.cty {
+            lines.push(Self::normalize_integer(ty, RAX));
+        }
+        lines.push(Assembly::inst1(PUSH, RAX));
+        lines.into()
+    }
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
             NodeType::Cast => {
@@ -369,7 +641,14 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst1(POP, RAX),
                 ];
                 if let Some(ty) = &node.cty {
-                    lines.push(Self::normalize_integer(ty, RAX));
+                    let source = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+                    lines.push(
+                        if source.float_bits().is_some() || ty.float_bits().is_some() {
+                            Self::float_conversion(&source, ty)
+                        } else {
+                            Self::normalize_integer(ty, RAX)
+                        },
+                    );
                 }
                 lines.push(Assembly::inst1(PUSH, RAX));
                 return lines.into();
@@ -390,6 +669,14 @@ impl<'a> AsmGenerator<'a> {
                 return self.gen_statements(&node.children, offset, breakable_branch_num);
             }
             NodeType::CallFunc => {
+                if node.resolve_type().unwrap().float_bits().is_some()
+                    || node
+                        .args
+                        .iter()
+                        .any(|arg| arg.resolve_type().unwrap().float_bits().is_some())
+                {
+                    return self.float_call(node, offset, breakable_branch_num);
+                }
                 let stack_size = node.args.len().saturating_sub(ARGS_REG.len()) * 8;
                 return vec![
                     node.lhs
@@ -608,6 +895,15 @@ impl<'a> AsmGenerator<'a> {
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
                     Assembly::inst1(POP, RAX),
+                    if let Some(bits) = node.resolve_type().and_then(|ty| ty.float_bits()) {
+                        Assembly::inst2(
+                            if bits == 32 { MOVD } else { MOVQ },
+                            Xmm(0),
+                            if bits == 32 { EAX } else { RAX },
+                        )
+                    } else {
+                        vec![].into()
+                    },
                     Assembly::epilogue(),
                 ]
                 .into();
@@ -781,6 +1077,13 @@ impl<'a> AsmGenerator<'a> {
                 .into();
             }
             _ => {}
+        }
+        if node
+            .lhs
+            .as_ref()
+            .is_some_and(|lhs| lhs.resolve_type().unwrap().float_bits().is_some())
+        {
+            return self.float_operation(node, offset, breakable_branch_num);
         }
         let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
         let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
@@ -961,7 +1264,7 @@ impl<'a> AsmGenerator<'a> {
     ) -> Assembly {
         match c_type {
             Some(Type::I8) => Assembly::inst2(operator, Ptr(from, 1), DIL),
-            Some(Type::I32) => Assembly::inst2(operator, Ptr(from, 4), EDI),
+            Some(Type::I32 | Type::Float(32)) => Assembly::inst2(operator, Ptr(from, 4), EDI),
             Some(ty) if ty.integer_info().is_some() => Assembly::inst2(
                 operator,
                 Ptr(from, ty.size_of()),
@@ -978,6 +1281,7 @@ impl<'a> AsmGenerator<'a> {
 
     fn deref_rax(&self, node: &Node) -> Assembly {
         match node.resolve_type() {
+            Some(Type::Float(32)) => Assembly::inst2(MOV, EAX, Ptr(RAX, 4)),
             Some(Type::I32) => Assembly::inst2(MOVSXD, RAX, Ptr(RAX, 4)),
             Some(Type::I8) => Assembly::inst2(MOVSX, RAX, Ptr(RAX, 1)),
             Some(ty) if ty.integer_info().is_some() => {

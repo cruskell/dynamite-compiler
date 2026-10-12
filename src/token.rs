@@ -3,6 +3,7 @@ pub enum TokenType {
     Reserved,
     Ident,
     Num,
+    Float,
     Str,
     EOF,
 }
@@ -24,6 +25,7 @@ pub struct Token {
 impl Token {
     pub fn print(&self) {
         match self.tt {
+            TokenType::Float => eprintln!("float: {}", self.s_value),
             TokenType::Num => {
                 eprintln!("num: {}", self.i_value)
             }
