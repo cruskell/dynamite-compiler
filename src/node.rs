@@ -36,6 +36,8 @@ pub enum NodeType {
     Case,
     Break,
     Continue,
+    Goto,
+    Label,
     Block,
     Sequence,
     CallFunc,
@@ -155,7 +157,7 @@ impl Node {
         if matches!(self.nt, NodeType::Switch) {
             return false;
         }
-        if matches!(self.nt, NodeType::Case) {
+        if matches!(self.nt, NodeType::Case | NodeType::Label) {
             return true;
         }
         self.children.iter().any(Self::contains_case)

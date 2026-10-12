@@ -519,6 +519,17 @@ impl<'a> AsmGenerator<'a> {
                 lines.push(Assembly::inst2(MOV, X19, X29));
                 return lines.into();
             }
+            NodeType::Goto => {
+                return Assembly::inst1(JMP, format!(".Lgoto.{}", node.value.unwrap()));
+            }
+            NodeType::Label => {
+                return vec![
+                    format!(".Lgoto.{}:", node.value.unwrap()).into(),
+                    Assembly::inst2(MOV, X19, X29),
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                ]
+                .into();
+            }
             NodeType::Case => {
                 return vec![
                     format!(".Lcase.{}:", node.token.as_ref().unwrap().pos).into(),
@@ -864,6 +875,8 @@ impl<'a> AsmGenerator<'a> {
                             | NodeType::For
                             | NodeType::Switch
                             | NodeType::Case
+                            | NodeType::Label
+                            | NodeType::Goto
                             | NodeType::Break
                             | NodeType::Continue
                             | NodeType::Return

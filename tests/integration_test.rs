@@ -530,3 +530,12 @@ fn it_initializes_global_addresses(code: &str, output_option: &str) {
 fn it_supports_enumerations(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "int main(){goto done;return 9;done:return 0;}",
+    "int main(){int x=0;again:x++;if(x<3)goto again;return x-3;}",
+    "int main(){goto inside;while(0){inside:return 0;}return 9;}",
+], ["asm", "llvm"])]
+fn it_supports_goto_labels(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

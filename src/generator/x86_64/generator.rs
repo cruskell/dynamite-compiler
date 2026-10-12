@@ -410,6 +410,17 @@ impl<'a> AsmGenerator<'a> {
                 lines.push(Assembly::reset_stack(offset));
                 return lines.into();
             }
+            NodeType::Goto => {
+                return Assembly::inst1(JMP, format!(".Lgoto.{}", node.value.unwrap()));
+            }
+            NodeType::Label => {
+                return vec![
+                    format!(".Lgoto.{}:", node.value.unwrap()).into(),
+                    Assembly::reset_stack(offset),
+                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                ]
+                .into();
+            }
             NodeType::Case => {
                 return vec![
                     format!(".Lcase.{}:", node.token.as_ref().unwrap().pos).into(),
