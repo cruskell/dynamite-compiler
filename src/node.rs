@@ -180,10 +180,15 @@ impl Node {
             NodeType::Conditional => {
                 let then = self.then.as_ref().unwrap().resolve_type();
                 let otherwise = self.els.as_ref().unwrap().resolve_type();
-                if matches!(then, Some(Type::I8 | Type::I32))
-                    && matches!(otherwise, Some(Type::I8 | Type::I32))
+                if then.as_ref().is_some_and(|ty| ty.integer_info().is_some())
+                    && otherwise
+                        .as_ref()
+                        .is_some_and(|ty| ty.integer_info().is_some())
                 {
-                    Some(Type::I32)
+                    Some(Type::arithmetic_type(
+                        then.as_ref().unwrap(),
+                        otherwise.as_ref().unwrap(),
+                    ))
                 } else {
                     match (then, otherwise) {
                         (Some(Type::Ptr(child) | Type::Arr(child, _)), _)
@@ -195,7 +200,7 @@ impl Node {
                 }
             }
             NodeType::Cast => self.cty.clone(),
-            NodeType::Num => Some(Type::I32),
+            NodeType::Num => Some(self.cty.clone().unwrap_or(Type::I32)),
             NodeType::Sequence => self.children.last().and_then(Node::resolve_type),
             NodeType::Add | NodeType::Sub => {
                 let ty = self.lhs.as_ref().unwrap().resolve_type();
@@ -207,18 +212,29 @@ impl Node {
                 if ty.as_ref().is_some_and(|ty| ty.dest_type().is_some()) {
                     ty
                 } else {
-                    Some(Type::I32)
+                    Some(Type::arithmetic_type(
+                        &ty.unwrap(),
+                        &self.rhs.as_ref().unwrap().resolve_type().unwrap(),
+                    ))
                 }
             }
             NodeType::Mul
             | NodeType::Div
             | NodeType::Mod
-            | NodeType::BitLeft
-            | NodeType::BitRight
             | NodeType::BitAnd
             | NodeType::BitXor
-            | NodeType::BitOr
-            | NodeType::BitNot => Some(Type::I32),
+            | NodeType::BitOr => Some(Type::arithmetic_type(
+                &self.lhs.as_ref().unwrap().resolve_type().unwrap(),
+                &self.rhs.as_ref().unwrap().resolve_type().unwrap(),
+            )),
+            NodeType::BitNot | NodeType::BitLeft | NodeType::BitRight => Some(
+                self.lhs
+                    .as_ref()
+                    .unwrap()
+                    .resolve_type()
+                    .unwrap()
+                    .promoted(),
+            ),
             NodeType::LocalVar | NodeType::CallFunc | NodeType::GlobalVar => self.cty.clone(),
             NodeType::Addr => {
                 if let Some(ty) = self.lhs.as_ref().unwrap().resolve_type() {

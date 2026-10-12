@@ -51,6 +51,7 @@ pub struct AstBuilderImpl<'a> {
     labels: HashMap<String, usize>,
     defined_labels: HashSet<String>,
     switch_stack: Vec<Vec<Node>>,
+    switch_types: Vec<Type>,
     return_type: Option<Type>,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
@@ -84,6 +85,11 @@ impl AstBuilder for AstBuilderImpl<'_> {
         for function in self.functions.values() {
             if let Some(body) = &function.body {
                 self.validate_void_expressions(body);
+            }
+        }
+        for function in self.functions.values_mut() {
+            if let Some(body) = &mut function.body {
+                Self::insert_integer_conversions(body);
             }
         }
         if is_debug {
@@ -137,6 +143,7 @@ impl<'a> AstBuilderImpl<'a> {
             labels: HashMap::new(),
             defined_labels: HashSet::new(),
             switch_stack: vec![],
+            switch_types: vec![],
             return_type: None,
             struct_definitions: vec![],
             scope_stack: vec![reserved_functions()],
@@ -425,10 +432,59 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(token) = self.attempt_reserved("struct") {
             return Some(self.struct_type(token));
         }
-        for (name, ty) in [("int", Type::I32), ("char", Type::I8), ("void", Type::Void)] {
-            if self.attempt_reserved(name).is_some() {
-                return Some(ty);
+        if self.attempt_reserved("void").is_some() {
+            return Some(Type::Void);
+        }
+        if self.attempt_reserved("_Bool").is_some() || self.attempt_reserved("bool").is_some() {
+            return Some(Type::Bool);
+        }
+        let mut bits = 32;
+        let mut signed = true;
+        let mut found = false;
+        let mut width = false;
+        let mut sign = false;
+        let mut longs = 0;
+        loop {
+            let word = self.tokens[self.cur].s_value.as_str();
+            match word {
+                "unsigned" | "signed" => {
+                    if sign {
+                        self.error_logger.print_error_position(
+                            self.tokens[self.cur].pos,
+                            "duplicate signedness",
+                        );
+                    }
+                    signed = word == "signed";
+                    sign = true;
+                }
+                "char" | "short" | "long" | "int" => {
+                    if word == "long" {
+                        longs += 1;
+                        if longs > 2 {
+                            self.error_logger.print_error_position(
+                                self.tokens[self.cur].pos,
+                                "invalid integer type",
+                            );
+                        }
+                        bits = 64;
+                    } else if word != "int" {
+                        if width {
+                            self.error_logger.print_error_position(
+                                self.tokens[self.cur].pos,
+                                "conflicting integer widths",
+                            );
+                        }
+                        bits = if word == "char" { 8 } else { 16 };
+                    }
+                    width = width || word != "int";
+                }
+                _ => break,
             }
+            found = true;
+            self.cur += 1;
+        }
+        if found {
+            return Some(Type::integer(bits, signed));
         }
         if let TokenType::Ident = self.tokens[self.cur].tt {
             let name = self.tokens[self.cur].s_value.clone();
@@ -910,8 +966,7 @@ impl<'a> AstBuilderImpl<'a> {
             NodeType::Cast => {
                 let value = self.eval(node.lhs.as_ref().unwrap());
                 return match node.cty.as_ref().unwrap() {
-                    Type::I8 => value as i8 as i64,
-                    Type::I32 => value as i32 as i64,
+                    ty if ty.integer_info().is_some() => ty.convert_constant(value),
                     Type::Ptr(_) => value,
                     _ => {
                         self.error_logger.print_error_position(
@@ -961,8 +1016,31 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             }
         }
-        let lhs = self.eval(node.lhs.as_ref().unwrap());
-        let rhs = self.eval(node.rhs.as_ref().unwrap());
+        let lhs_node = node.lhs.as_ref().unwrap();
+        let rhs_node = node.rhs.as_ref().unwrap();
+        let lhs_ty = lhs_node.resolve_type().unwrap();
+        let rhs_ty = rhs_node.resolve_type().unwrap();
+        let ty = Type::arithmetic_type(&lhs_ty, &rhs_ty);
+        let lhs = ty.convert_constant(self.eval(lhs_node));
+        let rhs = ty.convert_constant(self.eval(rhs_node));
+        let unsigned = ty.integer_info().is_some_and(|(_, signed)| !signed);
+        if unsigned {
+            let (lhs, rhs) = (lhs as u64, rhs as u64);
+            let value = match node.nt {
+                NodeType::Div if rhs != 0 => Some(lhs / rhs),
+                NodeType::Mod if rhs != 0 => Some(lhs % rhs),
+                NodeType::Lt => Some(u64::from(lhs < rhs)),
+                NodeType::Le => Some(u64::from(lhs <= rhs)),
+                NodeType::Add => Some(lhs.wrapping_add(rhs)),
+                NodeType::Sub => Some(lhs.wrapping_sub(rhs)),
+                NodeType::Mul => Some(lhs.wrapping_mul(rhs)),
+                NodeType::BitRight if rhs < ty.integer_info().unwrap().0 as u64 => Some(lhs >> rhs),
+                _ => None,
+            };
+            if let Some(value) = value {
+                return ty.convert_constant(value as i64);
+            }
+        }
         let result = match node.nt {
             NodeType::Eq => Some((lhs == rhs) as i64),
             NodeType::Ne => Some((lhs != rhs) as i64),
@@ -976,22 +1054,92 @@ impl<'a> AstBuilderImpl<'a> {
             NodeType::BitAnd => Some(lhs & rhs),
             NodeType::BitOr => Some(lhs | rhs),
             NodeType::BitXor => Some(lhs ^ rhs),
-            NodeType::BitLeft if (0..32).contains(&rhs) => lhs.checked_shl(rhs as u32),
-            NodeType::BitRight if (0..32).contains(&rhs) => lhs.checked_shr(rhs as u32),
+            NodeType::BitLeft
+                if (0..lhs_ty.promoted().integer_info().unwrap().0 as i64).contains(&rhs) =>
+            {
+                lhs.checked_shl(rhs as u32)
+            }
+            NodeType::BitRight
+                if (0..lhs_ty.promoted().integer_info().unwrap().0 as i64).contains(&rhs) =>
+            {
+                lhs.checked_shr(rhs as u32)
+            }
             _ => None,
         };
-        result.unwrap_or_else(|| {
+        let value = result.unwrap_or_else(|| {
             self.error_logger.print_error_position(
                 node.token.as_ref().unwrap().pos,
                 "invalid arithmetic in constant initializer",
             );
             unreachable!()
-        })
+        });
+        if matches!(
+            node.nt,
+            NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le
+        ) {
+            value
+        } else {
+            ty.convert_constant(value)
+        }
     }
+    fn cast_integer(node: &mut Node, target: &Type) {
+        if target.integer_info().is_some() && node.resolve_type().as_ref() != Some(target) {
+            let operand = std::mem::take(node);
+            *node = Node {
+                nt: NodeType::Cast,
+                cty: Some(target.clone()),
+                token: operand.token.clone(),
+                lhs: Some(Box::new(operand)),
+                ..Node::default()
+            };
+        }
+    }
+    fn insert_integer_conversions(node: &mut Node) {
+        for child in [
+            &mut node.lhs,
+            &mut node.rhs,
+            &mut node.cond,
+            &mut node.then,
+            &mut node.els,
+            &mut node.ini,
+            &mut node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            Self::insert_integer_conversions(child);
+        }
+        for child in node.children.iter_mut().chain(&mut node.args) {
+            Self::insert_integer_conversions(child);
+        }
+        match node.nt {
+            NodeType::Assign => {
+                let target = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+                Self::cast_integer(node.rhs.as_mut().unwrap(), &target);
+            }
+            NodeType::CallFunc => {
+                for (index, arg) in node.args.iter_mut().rev().enumerate() {
+                    let target = node
+                        .parameter_types
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| arg.resolve_type().unwrap().promoted());
+                    Self::cast_integer(arg, &target);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn expect_conversion(&self, expected: &Type, operand: &Node) {
         let actual = operand.resolve_type();
         let compatible = match (expected, actual.as_ref()) {
-            (Type::I8 | Type::I32, Some(Type::I8 | Type::I32)) => true,
+            (target, Some(source))
+                if target.integer_info().is_some() && source.integer_info().is_some() =>
+            {
+                true
+            }
+            (Type::Bool, Some(Type::Ptr(_) | Type::Arr(..))) => true,
             (Type::Ptr(target), Some(Type::Ptr(source) | Type::Arr(source, _))) => {
                 target == source || **target == Type::Void || **source == Type::Void
             }
@@ -1142,13 +1290,19 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved("(");
             let cond = self.expr();
             self.expect_reserved(")");
-            if !matches!(cond.resolve_type(), Some(Type::I8 | Type::I32)) {
+            if cond
+                .resolve_type()
+                .is_none_or(|ty| ty.integer_info().is_none())
+            {
                 self.error_logger
                     .print_error_position(t.pos, "switch requires an integer expression");
             }
             self.switch_stack.push(vec![]);
+            self.switch_types
+                .push(cond.resolve_type().unwrap().promoted());
             let body = self.stmt();
             let cases = self.switch_stack.pop().unwrap();
+            self.switch_types.pop();
             return Node {
                 token: Some(t),
                 nt: NodeType::Switch,
@@ -1168,7 +1322,8 @@ impl<'a> AstBuilderImpl<'a> {
             }
             let value = if t.s_value == "case" {
                 let expr = self.ternary();
-                Some(self.eval(&expr) as i32 as usize)
+                let value = self.eval(&expr);
+                Some(self.switch_types.last().unwrap().convert_constant(value) as usize)
             } else {
                 None
             };
@@ -1285,7 +1440,7 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_reserved("return") {
-            let operand = if self.tokens[self.cur].s_value == ";" {
+            let mut operand = if self.tokens[self.cur].s_value == ";" {
                 None
             } else {
                 Some(self.expr())
@@ -1303,6 +1458,11 @@ impl<'a> AstBuilderImpl<'a> {
             if let Some(value) = &operand {
                 if !expected_void {
                     self.expect_conversion(self.return_type.as_ref().unwrap(), value);
+                }
+            }
+            if !expected_void {
+                if let Some(value) = &mut operand {
+                    Self::cast_integer(value, self.return_type.as_ref().unwrap());
                 }
             }
             Node {
@@ -1813,12 +1973,14 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 self.expect_reserved(")");
                 let operand = self.unary();
-                if !matches!(ty, Type::Void | Type::I8 | Type::I32 | Type::Ptr(_))
+                if !(ty.integer_info().is_some() || matches!(ty, Type::Void | Type::Ptr(_)))
                     || (!matches!(
                         operand.resolve_type(),
                         Some(
                             Type::I8
                                 | Type::I32
+                                | Type::Integer { .. }
+                                | Type::Bool
                                 | Type::Ptr(_)
                                 | Type::Arr(..)
                                 | Type::Func(..)
@@ -1964,7 +2126,10 @@ impl<'a> AstBuilderImpl<'a> {
                 token: Some(t.clone()),
                 nt: NodeType::Num,
                 value: Some(t.i_value),
-                cty: Some(Type::I32),
+                cty: Some(Type::integer(
+                    if t.s_value.contains('l') { 64 } else { 32 },
+                    !t.s_value.contains('u'),
+                )),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {

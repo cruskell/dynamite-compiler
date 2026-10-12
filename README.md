@@ -113,3 +113,24 @@ Preprocessing uses a small bundled include environment: `stdio.h` exposes the
 builtin `printf`, `puts`, and `putchar` API and `EOF`; `stdlib.h` exposes `exit`,
 `EXIT_SUCCESS`, and `EXIT_FAILURE`. Host system headers are not searched. Custom
 headers must use the compiler's supported C-like subset.
+
+## Additional language support
+
+Declarations reject incompatible value conversions, invalid function and array
+layouts, duplicate initialized objects, and incompatible global redeclarations.
+Tentative declarations preserve an existing initializer.
+
+Adjacent string literals concatenate after escape decoding. Character arrays
+accept string initializers, infer their outer size, and zero-fill unused elements.
+Integer literals support octal notation and `U`, `L`, and `LL` suffixes. Integer
+types include signed and unsigned `char`, `short`, `int`, `long`, `long long`, and
+`_Bool`; both supported targets use 64-bit long and pointer types.
+
+Global pointers accept symbolic addresses and constant element offsets. Enum
+constants support explicit constant expressions, automatic increments, and
+scoped lookup. Goto targets and labels have function scope; undefined and
+duplicate labels are diagnosed.
+
+The CLI accepts repeatable `-I`, `-D`, and `-U` preprocessing options. Library
+callers can use `generate_with_options` with `PreprocessorOptions`; existing
+generation APIs retain their defaults.
