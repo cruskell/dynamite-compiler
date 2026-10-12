@@ -61,7 +61,7 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
     [
         (
             String::from("printf"),
-            Identifier::Static(Type::Func(
+            Identifier::Static(Type::VariadicFunc(
                 vec![Type::Ptr(Box::new(Type::I8))],
                 Box::new(Type::I32),
             )),
@@ -347,6 +347,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.offset_size = 0;
             self.scope_stack.push(HashMap::new());
             let mut args: Vec<Node> = Vec::new();
+            let mut variadic = false;
             let saved = self.cur;
             let void_parameters =
                 self.attempt_reserved("void").is_some() && self.attempt_reserved(")").is_some();
@@ -355,6 +356,16 @@ impl<'a> AstBuilderImpl<'a> {
             }
             if !void_parameters && self.attempt_reserved(")").is_none() {
                 loop {
+                    if self.attempt_reserved("...").is_some() {
+                        if args.is_empty() {
+                            self.error_logger.print_error_position(
+                                t.pos,
+                                "variadic function requires a fixed parameter",
+                            );
+                        }
+                        variadic = true;
+                        break;
+                    }
                     let ty = self.expect_type();
                     let (token, ty) = self.expect_ident_with_type(ty);
                     let ty = if let Type::Arr(child, _) = ty {
@@ -374,14 +385,19 @@ impl<'a> AstBuilderImpl<'a> {
                 .iter()
                 .map(|arg| arg.resolve_type().clone().unwrap())
                 .collect();
-            self.scope_stack.first_mut().unwrap().insert(
-                t.s_value.clone(),
-                Identifier::Static(Type::Func(arg_types.clone(), Box::new(return_type.clone()))),
-            );
+            let function_type = if variadic {
+                Type::VariadicFunc(arg_types.clone(), Box::new(return_type.clone()))
+            } else {
+                Type::Func(arg_types.clone(), Box::new(return_type.clone()))
+            };
+            self.scope_stack
+                .first_mut()
+                .unwrap()
+                .insert(t.s_value.clone(), Identifier::Static(function_type.clone()));
             self.functions.insert(
                 t.s_value.clone(),
                 Func {
-                    cty: Type::Func(arg_types.clone(), Box::new(return_type.clone())),
+                    cty: function_type.clone(),
                     token: Some(t.clone()),
                     ..Func::default()
                 },
@@ -397,7 +413,7 @@ impl<'a> AstBuilderImpl<'a> {
                 t.s_value.clone(),
                 Func {
                     body,
-                    cty: Type::Func(arg_types.clone(), Box::new(return_type.clone())),
+                    cty: function_type.clone(),
                     offset_size: self.offset_size,
                     token: Some(t.clone()),
                     args,
@@ -970,7 +986,7 @@ impl<'a> AstBuilderImpl<'a> {
             NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref
         ) || matches!(
             node.resolve_type(),
-            Some(Type::Arr(..) | Type::Func(..)) | None
+            Some(Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) | None
         ) {
             self.error_logger.print_error_position(
                 node.token.as_ref().unwrap().pos,
@@ -1370,14 +1386,14 @@ impl<'a> AstBuilderImpl<'a> {
             if self.attempt_reserved("(").is_some() {
                 // Call function
                 let t = node.token.clone().unwrap();
-                let (parameter_types, return_type) =
-                    if let Some(Type::Func(parameters, return_type)) = node.resolve_type() {
-                        (parameters, *return_type)
-                    } else {
+                let (parameter_types, return_type, variadic) = node
+                    .resolve_type()
+                    .and_then(|ty| ty.function_signature())
+                    .unwrap_or_else(|| {
                         self.error_logger
                             .print_error_position(t.pos, "called expression is not a function");
                         unreachable!()
-                    };
+                    });
                 let mut args: Vec<Node> = Vec::new();
                 if self.attempt_reserved(")").is_none() {
                     args.push(self.assign());
@@ -1391,7 +1407,7 @@ impl<'a> AstBuilderImpl<'a> {
                     args.reverse();
                 }
                 if args.len() < parameter_types.len()
-                    || (t.s_value != "printf" && args.len() != parameter_types.len())
+                    || (!variadic && args.len() != parameter_types.len())
                 {
                     self.error_logger.print_error_position(
                         t.pos,
@@ -1406,6 +1422,7 @@ impl<'a> AstBuilderImpl<'a> {
                     cty: Some(return_type),
                     args,
                     parameter_types,
+                    variadic,
                     ..Node::default()
                 }
             } else if let Some(b_token) = self.attempt_reserved("[") {

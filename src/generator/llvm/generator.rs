@@ -69,19 +69,20 @@ impl<'a> IrGenerator<'a> {
                     if ast.functions.contains_key(name) {
                         return None;
                     }
-                    let Identifier::Static(Type::Func(args, result)) = ident else {
+                    let Identifier::Static(ty) = ident else {
                         unreachable!()
                     };
+                    let (args, result, variadic) = ty.function_signature().unwrap();
                     let mut args = args
                         .iter()
                         .map(|ty| Self::gen_type(ty.clone()))
                         .collect::<Vec<_>>();
-                    if name == "printf" {
+                    if variadic {
                         args.push("...".to_string());
                     }
                     Some(format!(
                         "declare {} @{}({})",
-                        Self::gen_type(*result.clone()),
+                        Self::gen_type(result.clone()),
                         name,
                         args.join(", ")
                     ))
@@ -135,6 +136,14 @@ impl<'a> IrGenerator<'a> {
             Type::I32 => "i32".to_string(),
             Type::Ptr(_) => "ptr".to_string(),
             Type::Arr(child, size) => format!("[{} x {}]", size, Self::gen_type(*child)),
+            Type::VariadicFunc(args, result) => format!(
+                "{} ({}, ...)",
+                Self::gen_type(*result),
+                args.into_iter()
+                    .map(Self::gen_type)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Type::Func(args, result) => format!(
                 "{} ({})",
                 Self::gen_type(*result),
@@ -194,7 +203,7 @@ impl<'a> IrGenerator<'a> {
                     "0"
                 }
             ),
-            Type::Void | Type::Func(_, _) => {
+            Type::Void | Type::Func(_, _) | Type::VariadicFunc(_, _) => {
                 format!("{} zeroinitializer", Self::gen_type(ty.clone()))
             }
         }
@@ -202,22 +211,23 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_func(&self, name: &str, func: &Func, functions: &HashMap<String, Func>) -> String {
         if func.body.is_none() {
-            let Type::Func(args, result) = &func.cty else {
-                unreachable!()
-            };
+            let (args, result, variadic) = func.cty.function_signature().unwrap();
+            let mut arguments = args
+                .iter()
+                .map(|ty| Self::gen_type(ty.clone()))
+                .collect::<Vec<_>>();
+            if variadic {
+                arguments.push("...".to_string());
+            }
             return format!(
                 "declare {} @{}({})",
-                Self::gen_type(*result.clone()),
+                Self::gen_type(result),
                 name,
-                args.iter()
-                    .map(|ty| Self::gen_type(ty.clone()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                arguments.join(", ")
             );
         }
-        let Type::Func(_, return_ty) = &func.cty else {
-            unreachable!("function has a non-function type")
-        };
+        let (_, result, variadic) = func.cty.function_signature().unwrap();
+        let return_ty = &Box::new(result);
         let options = &mut Options {
             register_number: &mut func.args.len(),
             register_map: &mut HashMap::<usize, usize>::new(),
@@ -258,7 +268,8 @@ impl<'a> IrGenerator<'a> {
                         Self::gen_type(arg.resolve_type().unwrap()),
                         i
                     ))
-                    .collect::<Vec<String>>()
+                    .chain(variadic.then_some("...".to_string()))
+                    .collect::<Vec<_>>()
                     .join(", ")
             )],
             func.args
@@ -510,11 +521,9 @@ impl<'a> IrGenerator<'a> {
                     .collect();
             }
             NodeType::CallFunc => {
-                let Type::Func(parameters, result) =
-                    options.function_types[&node.global_name].clone()
-                else {
-                    unreachable!()
-                };
+                let (parameters, result, variadic) = options.function_types[&node.global_name]
+                    .function_signature()
+                    .unwrap();
                 let mut lines = vec![];
                 let mut arguments = vec![];
                 for (i, arg) in node.args.iter().enumerate() {
@@ -540,12 +549,19 @@ impl<'a> IrGenerator<'a> {
                     arguments.push(format!("{} {}", Self::gen_type(ty), value));
                 }
                 arguments.reverse();
-                let signature = if node.global_name == "printf" {
-                    " (ptr, ...)".to_string()
+                let signature = if variadic {
+                    format!(
+                        " ({}, ...)",
+                        parameters
+                            .iter()
+                            .map(|ty| Self::gen_type(ty.clone()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 } else {
                     String::new()
                 };
-                if *result == Type::Void {
+                if result == Type::Void {
                     lines.push(format!(
                         "  call void{} @{}({})",
                         signature,
@@ -558,7 +574,7 @@ impl<'a> IrGenerator<'a> {
                 lines.push(format!(
                     "  %{} = call {}{} @{}({})",
                     options.new_register(),
-                    Self::gen_type(*result),
+                    Self::gen_type(result),
                     signature,
                     node.global_name,
                     arguments.join(", ")
