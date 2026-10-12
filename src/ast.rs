@@ -2808,6 +2808,10 @@ mod tests {
             ("int main() { return *3; }", "non-pointer"),
             ("int x = 1 / 0;", "invalid arithmetic"),
             ("int main(){const int x=1;x=2;}", "const object"),
+            (
+                "typedef int A[2];int main(){const A a={1};a[0]=2;}",
+                "const object",
+            ),
             ("int main(){int x;int *const p=&x;p=0;}", "const object"),
             ("int main(){const int x=1;int *p=&x;}", "incompatible value"),
             ("int a[2](int);", "invalid array element"),

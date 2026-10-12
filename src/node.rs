@@ -180,8 +180,14 @@ impl Node {
         }
     }
     pub fn resolve_type(&self) -> Option<Type> {
-        self.resolve_qualified_type()
-            .map(|ty| ty.unqualified().clone())
+        self.resolve_qualified_type().map(|ty| {
+            if let Type::Qualified(child, q) = &ty {
+                if let Type::Arr(element, size) = child.unqualified() {
+                    return Type::Arr(Box::new(Type::Qualified(element.clone(), *q)), *size);
+                }
+            }
+            ty.unqualified().clone()
+        })
     }
     fn resolve_qualified_type(&self) -> Option<Type> {
         match self.nt {
