@@ -4,7 +4,7 @@ use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use crate::token::{Token, TokenType};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{cell::RefCell, rc::Rc};
 
 type Parameters = Vec<(Option<Token>, Type)>;
@@ -48,6 +48,8 @@ pub struct AstBuilderImpl<'a> {
     cur: usize,
     offset_size: usize,
     loop_stack: Vec<usize>,
+    labels: HashMap<String, usize>,
+    defined_labels: HashSet<String>,
     switch_stack: Vec<Vec<Node>>,
     return_type: Option<Type>,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
@@ -132,6 +134,8 @@ impl<'a> AstBuilderImpl<'a> {
             cur: 0,
             offset_size: 0,
             loop_stack: vec![],
+            labels: HashMap::new(),
+            defined_labels: HashSet::new(),
             switch_stack: vec![],
             return_type: None,
             struct_definitions: vec![],
@@ -676,7 +680,15 @@ impl<'a> AstBuilderImpl<'a> {
                     );
                 }
                 self.return_type = Some(result);
+                self.labels.clear();
+                self.defined_labels.clear();
                 let body = self.consume_block();
+                for (name, position) in &self.labels {
+                    if !self.defined_labels.contains(name) {
+                        self.error_logger
+                            .print_error_position(*position, "goto target is not defined");
+                    }
+                }
                 self.return_type = None;
                 self.scope_stack.pop();
                 if body.is_none() {
@@ -1075,6 +1087,41 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn stmt(&mut self) -> Node {
+        if self.tokens[self.cur].tt == TokenType::Ident && self.tokens[self.cur + 1].s_value == ":"
+        {
+            let token = self.attempt_ident().unwrap();
+            self.expect_reserved(":");
+            if !self.defined_labels.insert(token.s_value.clone()) {
+                self.error_logger
+                    .print_error_position(token.pos, "duplicate label");
+            }
+            let id = *self
+                .labels
+                .entry(token.s_value.clone())
+                .or_insert(token.pos);
+            return Node {
+                nt: NodeType::Label,
+                value: Some(id),
+                token: Some(token),
+                lhs: Some(Box::new(self.stmt())),
+                ..Node::default()
+            };
+        }
+        if let Some(token) = self.attempt_reserved("goto") {
+            let name = self.attempt_ident().unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(self.tokens[self.cur].pos, "goto requires a label");
+                unreachable!()
+            });
+            let id = *self.labels.entry(name.s_value).or_insert(name.pos);
+            self.expect_reserved(";");
+            return Node {
+                nt: NodeType::Goto,
+                value: Some(id),
+                token: Some(token),
+                ..Node::default()
+            };
+        }
         if let Some(token) = self.attempt_reserved("typedef") {
             self.typedef_definition();
             self.expect_reserved(";");
