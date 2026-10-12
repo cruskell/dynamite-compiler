@@ -65,3 +65,6 @@ Fixed array dimensions accept positive integer constant expressions.
 
 Local and global arrays may omit the outer dimension when a nonempty brace
 initializer supplies its size. Array parameters also accept an omitted outer dimension.
+
+`continue` targets the nearest enclosing loop. In a `for` loop it executes the
+update expression before testing the condition again.

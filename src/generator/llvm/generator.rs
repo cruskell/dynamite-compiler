@@ -648,7 +648,7 @@ impl<'a> IrGenerator<'a> {
                 }
                 let condition_label = options.new_label();
                 let body_label = options.new_label();
-                let update_label = options.new_label();
+                let update_label = format!("continue.{}", node.token.as_ref().unwrap().pos);
                 let end_label = options.new_label();
                 lines.push(format!("  br label %{}", condition_label));
                 lines.push(format!("{}:", condition_label));
@@ -676,6 +676,10 @@ impl<'a> IrGenerator<'a> {
                 lines.push(format!("  br label %{}", condition_label));
                 lines.push(format!("{}:", end_label));
                 return lines;
+            }
+            NodeType::Continue => {
+                options.terminated = true;
+                return vec![format!("  br label %continue.{}", node.value.unwrap())];
             }
             NodeType::Break => {
                 let Some(label) = options.break_labels.last() else {

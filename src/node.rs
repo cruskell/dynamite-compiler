@@ -31,6 +31,7 @@ pub enum NodeType {
     While,
     For,
     Break,
+    Continue,
     Block,
     Sequence,
     CallFunc,
