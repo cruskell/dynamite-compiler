@@ -60,3 +60,5 @@ Commas in declarations, initializers, and argument lists remain separators.
 
 `sizeof` accepts expressions and type names, including pointers and fixed arrays.
 Its expression operand is not evaluated.
+
+Fixed array dimensions accept positive integer constant expressions.
