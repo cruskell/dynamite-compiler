@@ -68,3 +68,6 @@ initializer supplies its size. Array parameters also accept an omitted outer dim
 
 `continue` targets the nearest enclosing loop. In a `for` loop it executes the
 update expression before testing the condition again.
+
+`do ... while` executes its body before testing the condition. Its `continue`
+statements jump to the condition and its `break` statements exit the loop.

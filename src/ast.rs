@@ -543,6 +543,19 @@ impl<'a> AstBuilderImpl<'a> {
             }
             return Node::new_if_node(Some(t), cond, then, els);
         }
+        if let Some(t) = self.attempt_reserved("do") {
+            self.loop_stack.push(t.pos);
+            let body = self.stmt();
+            self.loop_stack.pop();
+            self.expect_reserved("while");
+            self.expect_reserved("(");
+            let cond = self.expr();
+            self.expect_reserved(")");
+            self.expect_reserved(";");
+            let mut node = Node::new_while_node(Some(t), cond, body);
+            node.nt = NodeType::DoWhile;
+            return node;
+        }
         if let Some(t) = self.attempt_reserved("while") {
             self.expect_reserved("(");
             let cond = self.expr();

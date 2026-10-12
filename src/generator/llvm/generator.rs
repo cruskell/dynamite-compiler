@@ -641,6 +641,31 @@ impl<'a> IrGenerator<'a> {
                 ));
                 return lines;
             }
+            NodeType::DoWhile => {
+                let body_label = options.new_label();
+                let condition_label = format!("continue.{}", node.token.as_ref().unwrap().pos);
+                let end_label = options.new_label();
+                let mut lines = vec![
+                    format!("  br label %{}", body_label),
+                    format!("{}:", body_label),
+                ];
+                options.break_labels.push(end_label.clone());
+                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
+                options.break_labels.pop();
+                if !options.terminated {
+                    lines.push(format!("  br label %{}", condition_label));
+                }
+                options.terminated = false;
+                lines.push(format!("{}:", condition_label));
+                let predicate =
+                    self.gen_predicate(node.cond.as_ref().unwrap(), options, &mut lines);
+                lines.push(format!(
+                    "  br i1 {}, label %{}, label %{}",
+                    predicate, body_label, end_label
+                ));
+                lines.push(format!("{}:", end_label));
+                return lines;
+            }
             NodeType::While | NodeType::For => {
                 let mut lines = vec![];
                 if let Some(initializer) = &node.ini {
