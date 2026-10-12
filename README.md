@@ -74,3 +74,6 @@ statements jump to the condition and its `break` statements exit the loop.
 
 `switch` supports integer constant `case` labels, `default`, fall-through, and
 nested switches. `break` exits the nearest loop or switch; `continue` targets a loop.
+
+`void` is supported for function results, empty parameter lists, and pointer
+pointees. Void functions accept `return;`; objects cannot have void type.

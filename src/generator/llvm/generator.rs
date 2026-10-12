@@ -130,6 +130,7 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_type(ty: Type) -> String {
         match ty {
+            Type::Void => "void".to_string(),
             Type::I8 => "i8".to_string(),
             Type::I32 => "i32".to_string(),
             Type::Ptr(_) => "ptr".to_string(),
@@ -193,7 +194,9 @@ impl<'a> IrGenerator<'a> {
                     "0"
                 }
             ),
-            Type::Func(_, _) => format!("{} zeroinitializer", Self::gen_type(ty.clone())),
+            Type::Void | Type::Func(_, _) => {
+                format!("{} zeroinitializer", Self::gen_type(ty.clone()))
+            }
         }
     }
 
@@ -285,15 +288,19 @@ impl<'a> IrGenerator<'a> {
                 vec!["}".to_string()]
             } else {
                 vec![
-                    format!(
-                        "  ret {} {}",
-                        Self::gen_type(*return_ty.clone()),
-                        if matches!(return_ty.as_ref(), Type::Ptr(_)) {
-                            "null"
-                        } else {
-                            "0"
-                        }
-                    ),
+                    if **return_ty == Type::Void {
+                        "  ret void".to_string()
+                    } else {
+                        format!(
+                            "  ret {} {}",
+                            Self::gen_type(*return_ty.clone()),
+                            if matches!(return_ty.as_ref(), Type::Ptr(_)) {
+                                "null"
+                            } else {
+                                "0"
+                            }
+                        )
+                    },
                     "}".to_string(),
                 ]
             },
@@ -321,18 +328,20 @@ impl<'a> IrGenerator<'a> {
             node.nt,
             NodeType::LogicalAnd | NodeType::LogicalOr | NodeType::Conditional
         ) {
-            let register = options.new_register();
-            options.register_queue.pop();
-            options
-                .expression_slots
-                .insert(node.token.as_ref().unwrap().pos, register);
             let ty = node.resolve_type().unwrap();
-            lines.push(format!(
-                "  %{} = alloca {}, align {}",
-                register,
-                Self::gen_type(ty.clone()),
-                Self::align(&ty)
-            ));
+            if ty != Type::Void {
+                let register = options.new_register();
+                options.register_queue.pop();
+                options
+                    .expression_slots
+                    .insert(node.token.as_ref().unwrap().pos, register);
+                lines.push(format!(
+                    "  %{} = alloca {}, align {}",
+                    register,
+                    Self::gen_type(ty.clone()),
+                    Self::align(&ty)
+                ));
+            }
         }
         for child in [
             &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
@@ -502,6 +511,16 @@ impl<'a> IrGenerator<'a> {
                 } else {
                     String::new()
                 };
+                if *result == Type::Void {
+                    lines.push(format!(
+                        "  call void{} @{}({})",
+                        signature,
+                        node.global_name,
+                        arguments.join(", ")
+                    ));
+                    options.register_queue.push("0".to_string());
+                    return lines;
+                }
                 lines.push(format!(
                     "  %{} = call {}{} @{}({})",
                     options.new_register(),
@@ -521,6 +540,23 @@ impl<'a> IrGenerator<'a> {
                     .concat();
             }
             NodeType::Return => {
+                if options.return_ty == Type::Void {
+                    let mut lines = if let Some(operand) = &node.lhs {
+                        self.gen_node(operand, options)
+                    } else {
+                        vec![]
+                    };
+                    if node.lhs.is_some() {
+                        options.register_queue.pop();
+                    }
+                    lines.push("  ret void".to_string());
+                    options.terminated = true;
+                    return lines;
+                }
+                if node.lhs.is_none() {
+                    options.terminated = true;
+                    return vec!["  ret void".to_string()];
+                }
                 let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
                 let value = options.register_queue.pop().unwrap();
                 let source_ty = node.resolve_type().unwrap();
@@ -812,6 +848,31 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
             NodeType::Conditional => {
+                if node.resolve_type() == Some(Type::Void) {
+                    let mut lines = vec![];
+                    let predicate =
+                        self.gen_predicate(node.cond.as_ref().unwrap(), options, &mut lines);
+                    let then_label = options.new_label();
+                    let else_label = options.new_label();
+                    let end_label = options.new_label();
+                    lines.push(format!(
+                        "  br i1 {}, label %{}, label %{}",
+                        predicate, then_label, else_label
+                    ));
+                    for (label, branch) in [
+                        (&then_label, node.then.as_ref().unwrap()),
+                        (&else_label, node.els.as_ref().unwrap()),
+                    ] {
+                        lines.push(format!("{}:", label));
+                        lines.extend(self.gen_node(branch, options));
+                        options.register_queue.pop();
+                        lines.push(format!("  br label %{}", end_label));
+                    }
+                    lines.push(format!("{}:", end_label));
+                    options.register_queue.push("0".to_string());
+                    return lines;
+                }
+
                 let mut lines = vec![];
                 let ty = node.resolve_type().unwrap();
                 let slot = options.expression_slots[&node.token.as_ref().unwrap().pos];

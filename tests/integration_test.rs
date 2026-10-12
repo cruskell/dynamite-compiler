@@ -338,3 +338,15 @@ fn it_supports_switch(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int n; void set(void) { n = 7; return; } int main(void) { set(); return n; }", 7),
+    ("int n; void set() { n = 7; } int main() { set(); return n; }", 7),
+    ("int main() { int n = 7; void *p = &n; return sizeof(p); }", 8),
+    ("int n; void set() { n = 7; } void call() { return set(); } int main() { call(); return n; }", 7),
+    ("int n; void a() { n = 7; } void b() { n = 3; } int main() { 1 ? a() : b(); return n; }", 7),
+], ["asm", "llvm"])]
+fn it_supports_void(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}

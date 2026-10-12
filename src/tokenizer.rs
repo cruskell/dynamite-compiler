@@ -3,11 +3,12 @@ use crate::token::{Token, TokenType};
 use crate::trie::Trie;
 use std::collections::HashSet;
 
-pub const TYPES: [&str; 2] = ["int", "char"];
+pub const TYPES: [&str; 3] = ["int", "char", "void"];
 const RESERVED_WORDS: [&str; 12] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
     "default",
 ];
+
 const RESERVED_SYMBOLS: [&str; 48] = [
     "=", "+", "-", "*", "/", "%", "<", ">", "==", "!=", "+=", "-=", "*=", "/=", "%=", "<=", ">=",
     "&", "^", "|", "&&", "||", "<<", ">>", "{", "}", "(", ")", "[", "]", ",", ";", "/*", "//",

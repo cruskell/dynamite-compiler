@@ -479,6 +479,9 @@ impl<'a> AsmGenerator<'a> {
                 }
             }
             NodeType::Return => {
+                if node.lhs.is_none() {
+                    return Self::epilogue(options.offset);
+                }
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), options),
                     Self::pop(X0),

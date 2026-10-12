@@ -404,6 +404,9 @@ impl<'a> AsmGenerator<'a> {
                 }
             }
             NodeType::Return => {
+                if node.lhs.is_none() {
+                    return Assembly::epilogue();
+                }
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
                     Assembly::inst1(POP, RAX),

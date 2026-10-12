@@ -1,5 +1,6 @@
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
+    Void,
     I8,
     I32,
     Ptr(Box<Type>),
@@ -10,6 +11,7 @@ pub enum Type {
 impl Type {
     pub fn size_of(&self) -> usize {
         match self {
+            Type::Void => 0,
             Type::I8 => 1,
             Type::I32 => 4,
             Type::Ptr(_) => 8,
@@ -19,6 +21,7 @@ impl Type {
     }
     pub fn align_of(&self) -> usize {
         match self {
+            Self::Void => 1,
             Self::Arr(child, _) => child.align_of(),
             _ => self.size_of(),
         }
