@@ -369,10 +369,7 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 self.expect_reserved(")");
             }
-            if args.len() >= 7 {
-                self.error_logger
-                    .print_error_position(t.pos, "count of args must be less than 7")
-            }
+
             let arg_types: Vec<Type> = args
                 .iter()
                 .map(|arg| arg.resolve_type().clone().unwrap())
@@ -1388,10 +1385,7 @@ impl<'a> AstBuilderImpl<'a> {
                         self.expect_reserved(",");
                         args.push(self.assign());
                     }
-                    if args.len() >= 7 {
-                        self.error_logger
-                            .print_error_position(t.pos, "count of args must be less than 7")
-                    }
+
                     // conforming to cdecl
                     // arguments are pushed onto the stack, from right to left
                     args.reverse();
@@ -1411,6 +1405,7 @@ impl<'a> AstBuilderImpl<'a> {
                     global_name: s_value,
                     cty: Some(return_type),
                     args,
+                    parameter_types,
                     ..Node::default()
                 }
             } else if let Some(b_token) = self.attempt_reserved("[") {

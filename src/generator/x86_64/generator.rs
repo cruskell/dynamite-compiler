@@ -200,7 +200,15 @@ impl<'a> AsmGenerator<'a> {
                         vec![
                             Assembly::inst2(MOV, RAX, RBP),
                             Assembly::inst2(SUB, RAX, arg.offset.unwrap()),
-                            Assembly::inst2(MOV, RDI, ARGS_REG[i]),
+                            if let Some(register) = ARGS_REG.get(i) {
+                                Assembly::inst2(MOV, RDI, *register)
+                            } else {
+                                Assembly::inst2(
+                                    MOV,
+                                    RDI,
+                                    PtrAdd(RBP, format!("{}", 16 + (i - ARGS_REG.len()) * 8)),
+                                )
+                            },
                             self.operation2rdi(arg.resolve_type(), MOV, RAX),
                         ]
                         .into()
@@ -258,6 +266,7 @@ impl<'a> AsmGenerator<'a> {
                 return vec![
                     Assembly::inst2(MOV, RAX, RSP),
                     Assembly::inst2(ADD, RAX, 8),
+                    Assembly::inst2(SUB, RAX, node.args.len().saturating_sub(ARGS_REG.len()) * 8),
                     Assembly::inst2(MOV, RDI, 16),
                     Assembly::inst0(CQO),
                     Assembly::inst1(IDIV, RDI),
@@ -276,6 +285,7 @@ impl<'a> AsmGenerator<'a> {
                         .into(),
                     Assembly::inst2(MOV, RAX, 0),
                     Assembly::inst1(CALL, self.with_prefix(&node.global_name)),
+                    Assembly::inst2(ADD, RSP, node.args.len().saturating_sub(ARGS_REG.len()) * 8),
                     Assembly::inst1(POP, RDI),
                     Assembly::inst2(ADD, RSP, RDI),
                     match node.cty {

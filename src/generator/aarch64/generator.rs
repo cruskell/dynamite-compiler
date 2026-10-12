@@ -181,10 +181,33 @@ impl<'a> AsmGenerator<'a> {
         }
     }
 
+    fn stack_arguments(&self, types: &[Type], fixed: usize) -> (Vec<(usize, usize, usize)>, usize) {
+        let mut offset = 0usize;
+        let mut slots = vec![];
+        for (i, ty) in types.iter().enumerate() {
+            if i < fixed.min(ARGS_REG.len()) {
+                continue;
+            }
+            let compact = matches!(self.target_os, Os::MacOS) && i < fixed;
+            let size = if compact { ty.size_of() } else { 8 };
+            let align = if compact { ty.align_of() } else { 8 };
+            offset = offset.div_ceil(align) * align;
+            slots.push((i, offset, size));
+            offset += size;
+        }
+        (slots, offset)
+    }
+
     fn gen_func(&self, name: &str, func: &Func, offset: usize) -> Assembly {
         if func.body.is_none() {
             return vec![].into();
         }
+        let types = func
+            .args
+            .iter()
+            .map(|arg| arg.resolve_type().unwrap())
+            .collect::<Vec<_>>();
+        let (stack_slots, _) = self.stack_arguments(&types, types.len());
         vec![
             format!("	.globl	{}", self.with_prefix(name)).into(),
             "	.p2align	2".into(),
@@ -203,11 +226,28 @@ impl<'a> AsmGenerator<'a> {
                     if let NodeType::LocalVar = arg.nt {
                         vec![
                             Assembly::inst3(ADD, X10, X29, offset - arg.offset.unwrap()),
-                            Assembly::inst2(
-                                STR,
-                                ARGS_REG[i],
-                                Ptr(X10, arg.resolve_type().unwrap().size_of()),
-                            ),
+                            if let Some(register) = ARGS_REG.get(i) {
+                                Assembly::inst2(
+                                    STR,
+                                    *register,
+                                    Ptr(X10, arg.resolve_type().unwrap().size_of()),
+                                )
+                            } else {
+                                let (_, slot, size) = stack_slots
+                                    .iter()
+                                    .find(|(index, _, _)| *index == i)
+                                    .unwrap();
+                                vec![
+                                    Assembly::inst3(ADD, X11, X29, offset + 32 + slot),
+                                    Assembly::inst2(LDR, X8, Ptr(X11, *size)),
+                                    Assembly::inst2(
+                                        STR,
+                                        X8,
+                                        Ptr(X10, arg.resolve_type().unwrap().size_of()),
+                                    ),
+                                ]
+                                .into()
+                            },
                         ]
                         .into()
                     } else {
@@ -316,7 +356,19 @@ impl<'a> AsmGenerator<'a> {
                 } else {
                     node.args.len()
                 };
-                let variadic = node.args.len() - fixed;
+                let types = node
+                    .args
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        node.parameter_types
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| arg.resolve_type().unwrap())
+                    })
+                    .collect::<Vec<_>>();
+                let (stack_slots, stack_size) = self.stack_arguments(&types, fixed);
                 let mut lines = vec![
                     node.args
                         .iter()
@@ -324,7 +376,7 @@ impl<'a> AsmGenerator<'a> {
                         .collect::<Vec<Assembly>>()
                         .into(),
                 ];
-                lines.push(Assembly::inst3(SUB, X10, X19, variadic * 8));
+                lines.push(Assembly::inst3(SUB, X10, X19, stack_size));
                 lines.push(Assembly::inst3(AND, X10, X10, "#-16"));
                 lines.push(Assembly::inst2(MOV, SP, X10));
                 for (i, register) in ARGS_REG.iter().take(fixed).enumerate() {
@@ -334,13 +386,10 @@ impl<'a> AsmGenerator<'a> {
                         PtrAdd(X19, format!("#{}", i * 8)),
                     ));
                 }
-                for i in 0..variadic {
-                    lines.push(Assembly::inst2(
-                        LDR,
-                        X8,
-                        PtrAdd(X19, format!("#{}", (fixed + i) * 8)),
-                    ));
-                    lines.push(Assembly::inst2(STR, X8, PtrAdd(SP, format!("#{}", i * 8))));
+                for (i, slot, size) in stack_slots {
+                    lines.push(Assembly::inst2(LDR, X8, PtrAdd(X19, format!("#{}", i * 8))));
+                    lines.push(Assembly::inst3(ADD, X11, SP, slot));
+                    lines.push(Assembly::inst2(STR, X8, Ptr(X11, size)));
                 }
                 lines.extend([
                     Assembly::inst1(BL, self.with_prefix(&node.global_name)),
