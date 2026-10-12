@@ -502,3 +502,13 @@ fn it_concatenates_adjacent_strings(output_option: &str) {
 fn it_initializes_character_arrays(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn it_supports_octal_integers(output_option: &str) {
+    assert_eq!(
+        compile_and_run("int main(){return 010+077-71;}", output_option)
+            .status
+            .code(),
+        Some(0)
+    );
+}
