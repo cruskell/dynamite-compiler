@@ -4,9 +4,7 @@ use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use crate::token::{Token, TokenType};
-use crate::tokenizer::TYPES;
 use std::collections::HashMap;
-use std::iter::repeat;
 
 pub struct AstBuilderImpl<'a> {
     error_logger: &'a dyn error::ErrorLogger,
@@ -15,6 +13,7 @@ pub struct AstBuilderImpl<'a> {
     offset_size: usize,
     loop_stack: Vec<usize>,
     switch_stack: Vec<Vec<Node>>,
+    return_type: Option<Type>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
     pub global_variables: HashMap<String, GlobalVariable>,
@@ -41,6 +40,11 @@ impl AstBuilder for AstBuilderImpl<'_> {
     fn build(&mut self, is_debug: bool) -> ProgramAst {
         while !self.at_eof() {
             self.global_definition()
+        }
+        for function in self.functions.values() {
+            if let Some(body) = &function.body {
+                self.validate_void_expressions(body);
+            }
         }
         if is_debug {
             self.print_functions();
@@ -91,6 +95,7 @@ impl<'a> AstBuilderImpl<'a> {
             offset_size: 0,
             loop_stack: vec![],
             switch_stack: vec![],
+            return_type: None,
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
             global_variables: HashMap::new(),
@@ -255,6 +260,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn register_local_variable(&mut self, t: Token, ty: Type) -> Node {
+        self.expect_object_type(&ty, &t);
         self.offset_size += ty.size_of();
         self.offset_size = self.offset_size.div_ceil(ty.align_of()) * ty.align_of();
         if self.scope_stack.last().unwrap().contains_key(&t.s_value) {
@@ -274,30 +280,18 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn attempt_type(&mut self) -> Option<Type> {
-        let pos = self.tokens[self.cur].pos;
-        let mut map: HashMap<&str, usize> = HashMap::new();
-        repeat(())
-            .find(|_| {
-                !TYPES
-                    .iter()
-                    .filter(|ty| self.attempt_reserved(ty).is_some())
-                    .fold(false, |_, ty| {
-                        *map.entry(ty).or_default() += 1;
-                        true
-                    })
-            })
-            .unwrap();
-        if map.is_empty() {
-            return None;
+        for (name, ty) in [("int", Type::I32), ("char", Type::I8), ("void", Type::Void)] {
+            if self.attempt_reserved(name).is_some() {
+                return Some(ty);
+            }
         }
-        if *map.entry("int").or_default() == 1 {
-            return Some(Type::I32);
+        None
+    }
+    fn expect_object_type(&self, ty: &Type, token: &Token) {
+        if matches!(ty, Type::Void) || matches!(ty, Type::Arr(child, _) if **child == Type::Void) {
+            self.error_logger
+                .print_error_position(token.pos, "object cannot have void type");
         }
-        if *map.entry("char").or_default() == 1 {
-            return Some(Type::I8);
-        }
-        self.error_logger.print_error_position(pos, "invalid type");
-        unreachable!();
     }
     fn expect_type(&mut self) -> Type {
         if let Some(ty) = self.attempt_type() {
@@ -317,7 +311,13 @@ impl<'a> AstBuilderImpl<'a> {
             self.offset_size = 0;
             self.scope_stack.push(HashMap::new());
             let mut args: Vec<Node> = Vec::new();
-            if self.attempt_reserved(")").is_none() {
+            let saved = self.cur;
+            let void_parameters =
+                self.attempt_reserved("void").is_some() && self.attempt_reserved(")").is_some();
+            if !void_parameters {
+                self.cur = saved;
+            }
+            if !void_parameters && self.attempt_reserved(")").is_none() {
                 loop {
                     let ty = self.expect_type();
                     let (token, ty) = self.expect_ident_with_type(ty);
@@ -353,7 +353,9 @@ impl<'a> AstBuilderImpl<'a> {
                     ..Func::default()
                 },
             );
+            self.return_type = Some(return_type.clone());
             let body = self.consume_block();
+            self.return_type = None;
             if body.is_none() {
                 self.expect_reserved(";");
             }
@@ -373,6 +375,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.cur = cur_to_back; // back the cursor
             loop {
                 let (t, ty) = self.expect_ident_with_type(ty.clone());
+                self.expect_object_type(&ty, &t);
                 let data = self.attempt_reserved("=").map(|_| self.global_data());
                 let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
                     elements.len()
@@ -526,6 +529,71 @@ impl<'a> AstBuilderImpl<'a> {
             unreachable!()
         })
     }
+    fn validate_void_expressions(&self, node: &Node) {
+        let no_value = |operand: &Node| {
+            if operand.resolve_type() == Some(Type::Void) {
+                self.error_logger.print_error_position(
+                    operand.token.as_ref().unwrap().pos,
+                    "void expression has no value",
+                );
+            }
+        };
+        if let Some(condition) = &node.cond {
+            no_value(condition);
+        }
+        if matches!(
+            node.nt,
+            NodeType::Assign
+                | NodeType::Add
+                | NodeType::Sub
+                | NodeType::Mul
+                | NodeType::Div
+                | NodeType::Mod
+                | NodeType::Eq
+                | NodeType::Ne
+                | NodeType::Lt
+                | NodeType::Le
+                | NodeType::BitLeft
+                | NodeType::BitRight
+                | NodeType::BitAnd
+                | NodeType::BitOr
+                | NodeType::BitXor
+                | NodeType::BitNot
+                | NodeType::LogicalAnd
+                | NodeType::LogicalOr
+        ) {
+            for operand in [&node.lhs, &node.rhs].into_iter().flatten() {
+                no_value(operand);
+            }
+        }
+        if matches!(node.nt, NodeType::CallFunc) {
+            for argument in &node.args {
+                no_value(argument);
+            }
+        }
+        if matches!(node.nt, NodeType::Conditional) {
+            let then_void = node.then.as_ref().unwrap().resolve_type() == Some(Type::Void);
+            let else_void = node.els.as_ref().unwrap().resolve_type() == Some(Type::Void);
+            if then_void != else_void {
+                self.error_logger.print_error_position(
+                    node.token.as_ref().unwrap().pos,
+                    "conditional branches have incompatible void types",
+                );
+            }
+        }
+        for child in [
+            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.validate_void_expressions(child);
+        }
+        for child in node.children.iter().chain(&node.args) {
+            self.validate_void_expressions(child);
+        }
+    }
+
     fn stmt(&mut self) -> Node {
         if let Some(token) = self.attempt_reserved(";") {
             return Node {
@@ -674,7 +742,27 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_reserved("return") {
-            Node::new_with_op_and_lhs(Some(t), NodeType::Return, self.expr())
+            let operand = if self.tokens[self.cur].s_value == ";" {
+                None
+            } else {
+                Some(self.expr())
+            };
+            let expected_void = self.return_type == Some(Type::Void);
+            let actual_void = operand
+                .as_ref()
+                .is_none_or(|operand| operand.resolve_type() == Some(Type::Void));
+            if expected_void != actual_void {
+                self.error_logger.print_error_position(
+                    t.pos,
+                    "return value does not match function return type",
+                );
+            }
+            Node {
+                token: Some(t),
+                nt: NodeType::Return,
+                lhs: operand.map(Box::new),
+                ..Node::default()
+            }
         } else {
             self.expr()
         };
@@ -1045,6 +1133,10 @@ impl<'a> AstBuilderImpl<'a> {
                         ty = Type::Arr(Box::new(ty), size);
                     }
                     self.expect_reserved(")");
+                    if ty == Type::Void {
+                        self.error_logger
+                            .print_error_position(t.pos, "sizeof requires an object type");
+                    }
                     ty.size_of()
                 } else {
                     self.cur = saved;
@@ -1083,7 +1175,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if let Some(token) = self.attempt_reserved("*") {
             let operand = self.unary();
-            if operand.dest_type().is_none() {
+            if operand.dest_type().is_none() || operand.dest_type() == Some(Type::Void) {
                 self.error_logger
                     .print_error_position(token.pos, "cannot dereference a non-pointer");
             }
@@ -1301,6 +1393,30 @@ mod tests {
                 .unwrap();
             assert!(text.contains(message), "{}", text);
             assert!(text.contains('^'), "{}", text);
+        }
+    }
+
+    #[test]
+    fn invalid_void_values_have_source_diagnostics() {
+        for code in [
+            "void f() {} int main() { return f(); }",
+            "void f() {} int main() { int n = f(); return n; }",
+            "void f() {} int main() { if (f()) return 1; return 0; }",
+            "void f() {} int main() { return f() + 1; }",
+            "int main() { void *p = 0; return *p; }",
+        ] {
+            let tokens = crate::tokenizer::Tokenizer::tokenize(code, false).unwrap();
+            let logger = crate::error::ErrorPrinter::new(code);
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                AstBuilderImpl::new(&logger, &tokens).build(false);
+            }))
+            .unwrap_err();
+            let text = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap();
+            assert!(text.contains('^'), "{text}");
         }
     }
 
