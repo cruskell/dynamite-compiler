@@ -280,6 +280,12 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "invalid array element type");
                 }
+                if child.checked_size_of() == Some(0) {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "array element requires a complete object type",
+                    );
+                }
                 self.validate_type_layout(child, token);
             }
             Type::Func(args, result) | Type::VariadicFunc(args, result) => {
@@ -3431,6 +3437,14 @@ mod tests {
             ("int main(){return 1.0<<2;}", "integer operands"),
             ("int main(){int *p;return p+1.5;}", "incompatible value"),
             ("int a[1.5];", "integer expression"),
+            (
+                "struct S;int main(){int n=2;struct S a[n];}",
+                "complete object type",
+            ),
+            (
+                "typedef int A[];int main(){int n=2;A a[n];}",
+                "complete object type",
+            ),
             ("int main(){return (int*)1.5;}", "floating pointer cast"),
             ("int a[2](int);", "invalid array element"),
             ("int x; char x;", "incompatible object redeclaration"),
