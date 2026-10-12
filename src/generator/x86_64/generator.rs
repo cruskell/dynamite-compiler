@@ -287,6 +287,22 @@ impl<'a> AsmGenerator<'a> {
                 ]
                 .into();
             }
+            NodeType::DoWhile => {
+                let branch_num = node.token.as_ref().unwrap().pos;
+                return vec![
+                    format!("{}:", BeginFlag(branch_num)).into(),
+                    Assembly::reset_stack(offset),
+                    self.gen_node(node.then.as_ref().unwrap(), offset, branch_num),
+                    format!(".Lcontinue.{}:", branch_num).into(),
+                    Assembly::reset_stack(offset),
+                    self.gen_node(node.cond.as_ref().unwrap(), offset, branch_num),
+                    Assembly::inst1(POP, RAX),
+                    Assembly::inst2(CMP, RAX, 0),
+                    Assembly::inst1(JNE, BeginFlag(branch_num)),
+                    format!("{}:", EndFlag(branch_num)).into(),
+                ]
+                .into();
+            }
             NodeType::While => {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 let v = vec![

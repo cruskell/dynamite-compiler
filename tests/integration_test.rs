@@ -310,3 +310,14 @@ fn it_supports_continue(case: (&str, i32), output_option: &str) {
     let output = compile_and_run(case.0, output_option);
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
+
+#[test_matrix([
+    ("int main() { int n = 0; do { n++; } while (0); return n; }", 1),
+    ("int main() { int i = 0; int n = 0; do { i++; if (i == 2) continue; n += i; } while (i < 4); return n; }", 8),
+    ("int main() { int n = 0; do { n++; if (n == 3) break; } while (1); return n; }", 3),
+    ("int main() { int n = 0; do { int i = 0; do { i++; if (i == 2) continue; n++; } while (i < 3); } while (0); return n; }", 2),
+], ["asm", "llvm"])]
+fn it_supports_do_while(case: (&str, i32), output_option: &str) {
+    let output = compile_and_run(case.0, output_option);
+    assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
+}

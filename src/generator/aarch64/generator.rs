@@ -355,6 +355,26 @@ impl<'a> AsmGenerator<'a> {
                 ]
                 .into();
             }
+            NodeType::DoWhile => {
+                let branch_num = node.token.as_ref().unwrap().pos;
+                let options = Options {
+                    breakable_branch_num: branch_num,
+                    ..options
+                };
+                return vec![
+                    format!("{}:", BeginFlag(branch_num)).into(),
+                    Assembly::inst2(MOV, X19, X29),
+                    self.gen_node(node.then.as_ref().unwrap(), options),
+                    format!(".Lcontinue.{}:", branch_num).into(),
+                    Assembly::inst2(MOV, X19, X29),
+                    self.gen_node(node.cond.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Assembly::inst2(CMP, X8, 0),
+                    Assembly::inst1(JNE, BeginFlag(branch_num)),
+                    format!("{}:", EndFlag(branch_num)).into(),
+                ]
+                .into();
+            }
             NodeType::While => {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 let options = Options {
@@ -659,6 +679,7 @@ impl<'a> AsmGenerator<'a> {
                         NodeType::Block
                             | NodeType::If
                             | NodeType::While
+                            | NodeType::DoWhile
                             | NodeType::For
                             | NodeType::Break
                             | NodeType::Continue

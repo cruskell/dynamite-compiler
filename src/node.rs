@@ -29,6 +29,7 @@ pub enum NodeType {
     If,
     Conditional,
     While,
+    DoWhile,
     For,
     Break,
     Continue,
