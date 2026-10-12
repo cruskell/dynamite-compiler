@@ -145,7 +145,16 @@ impl<'a> AsmGenerator<'a> {
                 };
                 let mut lines = vec![];
                 let mut end = 0;
-                for (i, member) in struct_type.members().iter().enumerate() {
+                for (i, member) in struct_type
+                    .members()
+                    .iter()
+                    .take(if struct_type.definition().borrow().is_union {
+                        1
+                    } else {
+                        usize::MAX
+                    })
+                    .enumerate()
+                {
                     if member.offset > end {
                         lines.push(format!("  .zero {}", member.offset - end).into());
                     }

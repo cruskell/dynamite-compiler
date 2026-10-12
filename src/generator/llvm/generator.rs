@@ -135,6 +135,14 @@ impl<'a> IrGenerator<'a> {
     fn gen_type(ty: Type) -> String {
         match ty {
             Type::Void => "void".to_string(),
+            Type::Struct(ty) if ty.definition().borrow().is_union => {
+                let ty = Type::Struct(ty);
+                format!(
+                    "[{} x i{}]",
+                    ty.size_of() / ty.align_of(),
+                    ty.align_of() * 8
+                )
+            }
             Type::Struct(ty) => format!(
                 "{{ {} }}",
                 ty.members()
@@ -183,6 +191,32 @@ impl<'a> IrGenerator<'a> {
             data
         };
         match ty {
+            Type::Struct(struct_type) if struct_type.definition().borrow().is_union => {
+                let mut bytes = vec![0u8; ty.size_of()];
+                let mut addresses = HashMap::new();
+                Self::initializer_bytes(ty, data, 0, &mut bytes, &mut addresses);
+                let width = ty.align_of();
+                let elements = bytes
+                    .chunks(width)
+                    .enumerate()
+                    .map(|(index, chunk)| {
+                        let mut word = [0u8; 8];
+                        word[..chunk.len()].copy_from_slice(chunk);
+                        if let Some((symbol, offset)) = addresses.get(&(index * width)) {
+                            let pointer = if *offset == 0 {
+                                format!("@{symbol}")
+                            } else {
+                                format!("getelementptr (i8, ptr @{symbol}, i64 {offset})")
+                            };
+                            format!("i64 ptrtoint (ptr {pointer} to i64)")
+                        } else {
+                            format!("i{} {}", width * 8, u64::from_le_bytes(word))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{} [{}]", Self::gen_type(ty.clone()), elements)
+            }
             Type::Struct(struct_type) => {
                 if let Some(GlobalVariableData::Arr(elements)) = data {
                     format!(
@@ -245,6 +279,80 @@ impl<'a> IrGenerator<'a> {
             ),
             Type::Void | Type::Func(_, _) | Type::VariadicFunc(_, _) => {
                 format!("{} zeroinitializer", Self::gen_type(ty.clone()))
+            }
+        }
+    }
+
+    fn initializer_bytes(
+        ty: &Type,
+        data: Option<&GlobalVariableData>,
+        offset: usize,
+        bytes: &mut [u8],
+        addresses: &mut HashMap<usize, (String, i64)>,
+    ) {
+        match ty {
+            Type::Struct(st) => {
+                let elements = if let Some(GlobalVariableData::Arr(v)) = data {
+                    Some(v)
+                } else {
+                    None
+                };
+                for (index, member) in st
+                    .members()
+                    .iter()
+                    .take(if st.definition().borrow().is_union {
+                        1
+                    } else {
+                        usize::MAX
+                    })
+                    .enumerate()
+                {
+                    Self::initializer_bytes(
+                        &member.ty,
+                        elements.and_then(|v| v.get(index)),
+                        offset + member.offset,
+                        bytes,
+                        addresses,
+                    );
+                }
+            }
+            Type::Arr(child, size) => {
+                let elements = if let Some(GlobalVariableData::Arr(v)) = data {
+                    Some(v)
+                } else {
+                    None
+                };
+                for index in 0..*size {
+                    Self::initializer_bytes(
+                        child,
+                        elements.and_then(|v| v.get(index)),
+                        offset + index * child.size_of(),
+                        bytes,
+                        addresses,
+                    );
+                }
+            }
+            _ => {
+                let mut data = data;
+                while let Some(GlobalVariableData::Arr(v)) = data {
+                    data = v.first();
+                }
+                match data {
+                    Some(GlobalVariableData::Address {
+                        symbol,
+                        offset: delta,
+                    }) => {
+                        addresses.insert(offset, (symbol.clone(), *delta));
+                    }
+                    Some(GlobalVariableData::Elem(value)) if value.starts_with('@') => {
+                        addresses.insert(offset, (value[1..].to_string(), 0));
+                    }
+                    Some(GlobalVariableData::Elem(value)) => {
+                        let word = value.parse::<i64>().unwrap().to_le_bytes();
+                        bytes[offset..offset + ty.size_of()].copy_from_slice(&word[..ty.size_of()]);
+                    }
+                    _ => {}
+                }
             }
         }
     }

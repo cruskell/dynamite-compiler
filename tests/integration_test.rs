@@ -542,6 +542,7 @@ fn it_supports_goto_labels(code: &str, output_option: &str) {
 
 #[test_matrix([
 
+
     "int main(){return sizeof(short)+sizeof(long)+sizeof(unsigned char)+sizeof(_Bool)-12;}",
     "int main(){unsigned int x=4294967295U;return (x/3==1431655765U && x>1)-1;}",
     "int main(){long x=4294967296L;return (x+3==4294967299L)-1;}",
@@ -589,5 +590,15 @@ fn it_supports_designated_initializers(code: &str, output_option: &str) {
     "int f(){return 7;}int main(){extern int f();return f()-7;}",
 ], ["asm", "llvm"])]
 fn it_supports_storage_classes(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+    "union U{int x;char bytes[4];};int main(){union U u={258};return u.bytes[0]+u.bytes[1]-3;}",
+    "union U{int x;char bytes[4];};union U u={258};int main(){return u.bytes[0]+u.bytes[1]-3;}",
+    "union U{char a[9];int x;};struct S{char c;union U u;char d;};int main(){return sizeof(union U)+sizeof(struct S)-32;}",
+    "int x=7;union U{int *p;char bytes[8];};union U u={&x};int main(){return *u.p-7;}",
+], ["asm", "llvm"])]
+fn it_supports_unions(code: &str, output_option: &str) {
+
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }

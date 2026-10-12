@@ -13,6 +13,7 @@ pub struct StructType {
 #[derive(Default)]
 pub struct StructDefinition {
     pub members: Vec<StructMember>,
+    pub is_union: bool,
     pub size: usize,
     pub align: usize,
     pub complete: bool,
