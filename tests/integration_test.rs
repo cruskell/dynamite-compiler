@@ -601,4 +601,21 @@ fn it_supports_storage_classes(code: &str, output_option: &str) {
 ], ["asm", "llvm"])]
 fn it_supports_unions(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+    "int main(){const int x=7;const int *p=&x;return *p-7;}",
+    "int main(){volatile int x=7;volatile int *p=&x;*p=9;return x-9;}",
+    "int main(){int x=7;int *const p=&x;return *p-7;}",
+    "int main(){const char s[]=\"abc\";return s[2]-99;}",
+], ["asm", "llvm"])]
+fn it_supports_type_qualifiers(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test]
+fn it_preserves_volatile_accesses_in_llvm() {
+    let ir =
+        dynamite_compiler::generate("int main(){volatile int x=7;x++;return x;}", "llvm", false);
+    assert!(ir.contains("load volatile i32"));
+    assert!(ir.contains("store volatile i32"));
 }

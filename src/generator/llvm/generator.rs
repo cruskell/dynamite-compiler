@@ -134,6 +134,7 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_type(ty: Type) -> String {
         match ty {
+            Type::Qualified(child, _) => Self::gen_type(*child),
             Type::Void => "void".to_string(),
             Type::Struct(ty) if ty.definition().borrow().is_union => {
                 let ty = Type::Struct(ty);
@@ -217,6 +218,7 @@ impl<'a> IrGenerator<'a> {
                     .join(", ");
                 format!("{} [{}]", Self::gen_type(ty.clone()), elements)
             }
+            Type::Qualified(child, _) => Self::gen_initializer_element(child, data),
             Type::Struct(struct_type) => {
                 if let Some(GlobalVariableData::Arr(elements)) = data {
                     format!(
@@ -817,7 +819,12 @@ impl<'a> IrGenerator<'a> {
                 let source_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
                 let value = Self::convert_integer(value, &source_ty, &ty, options, &mut lines);
                 lines.push(format!(
-                    "  store {} {}, ptr {}, align {}",
+                    "  store {}{} {}, ptr {}, align {}",
+                    if node.lhs.as_ref().is_some_and(|lhs| lhs.volatile_access) {
+                        "volatile "
+                    } else {
+                        ""
+                    },
                     Self::gen_type_with_opaque_ptr(ty.clone()),
                     value,
                     address,
@@ -835,8 +842,13 @@ impl<'a> IrGenerator<'a> {
                 if !matches!(ty, Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)) {
                     let address = options.register_queue.pop().unwrap();
                     lines.push(format!(
-                        "  %{} = load {}, ptr {}, align {}",
+                        "  %{} = load {}{}, ptr {}, align {}",
                         options.new_register(),
+                        if node.volatile_access {
+                            "volatile "
+                        } else {
+                            ""
+                        },
                         Self::gen_type_with_opaque_ptr(ty.clone()),
                         address,
                         Self::align(&ty)
@@ -1188,8 +1200,13 @@ impl<'a> IrGenerator<'a> {
                 let old = options.new_register();
                 options.register_queue.pop();
                 lines.push(format!(
-                    "  %{} = load {}, ptr {}, align {}",
+                    "  %{} = load {}{}, ptr {}, align {}",
                     old,
+                    if node.volatile_access {
+                        "volatile "
+                    } else {
+                        ""
+                    },
                     Self::gen_type(ty.clone()),
                     address,
                     Self::align(&ty)
@@ -1233,7 +1250,12 @@ impl<'a> IrGenerator<'a> {
                     new
                 };
                 lines.push(format!(
-                    "  store {} %{}, ptr {}, align {}",
+                    "  store {}{} %{}, ptr {}, align {}",
+                    if node.volatile_access {
+                        "volatile "
+                    } else {
+                        ""
+                    },
                     Self::gen_type(ty.clone()),
                     new,
                     address,
