@@ -92,3 +92,8 @@ fixed parameters; `va_list` and `va_start`/`va_arg` are not implemented.
 
 Parenthesized declarators support function pointers, function-pointer arrays,
 callback parameters, unnamed prototype parameters, and indirect calls.
+
+Structs support tags, anonymous typedefs, aligned members, nested aggregates,
+self-referential pointers, member access (`.` and `->`), brace initialization,
+and assignment. Struct parameters and results currently require pointers;
+passing or returning structs by value is diagnosed. Bitfields are not supported.
