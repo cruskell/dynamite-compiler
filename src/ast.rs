@@ -749,6 +749,11 @@ impl<'a> AstBuilderImpl<'a> {
                         token: Some(token.clone()),
                         ..Func::default()
                     });
+                let internal = internal
+                    || self
+                        .functions
+                        .get(&token.s_value)
+                        .is_some_and(|f| f.internal);
                 let (parameters, result, _) = ty.function_signature().unwrap();
                 if matches!(result, Type::Struct(_))
                     || parameters.iter().any(|ty| matches!(ty, Type::Struct(_)))
@@ -1648,12 +1653,67 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 format!(".static.{}.{}", token.pos, token.s_value)
             };
+            if ty.function_signature().is_some() {
+                if !external {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "block static function declaration is invalid",
+                    );
+                }
+                if let Some(existing) = self.functions.get(&name) {
+                    if existing.cty != ty {
+                        self.error_logger
+                            .print_error_position(token.pos, "incompatible function redeclaration");
+                    }
+                } else {
+                    self.functions.insert(
+                        name.clone(),
+                        Func {
+                            cty: ty.clone(),
+                            token: Some(token.clone()),
+                            ..Func::default()
+                        },
+                    );
+                }
+                self.scope_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(token.s_value, Identifier::StaticObject(ty, name));
+                if self.attempt_reserved(",").is_none() {
+                    break;
+                }
+                continue;
+            }
             let data = if self.attempt_reserved("=").is_some() {
                 if external {
                     self.error_logger
                         .print_error_position(token.pos, "block extern cannot have an initializer");
                 }
-                Some(self.global_data())
+                if matches!(&ty,Type::Arr(child,_) if **child==Type::I8)
+                    && self.tokens[self.cur].tt == TokenType::Str
+                {
+                    let string = self.attempt(TokenType::Str).unwrap();
+                    let mut bytes =
+                        crate::tokenizer::decode_string_literal(&string.s_value).unwrap();
+                    let Type::Arr(_, size) = &ty else {
+                        unreachable!()
+                    };
+                    if *size != 0 && bytes.len() > *size {
+                        self.error_logger
+                            .print_error_position(string.pos, "string initializer is too long");
+                    }
+                    if *size == 0 || bytes.len() < *size {
+                        bytes.push(0);
+                    }
+                    Some(GlobalVariableData::Arr(
+                        bytes
+                            .into_iter()
+                            .map(|byte| GlobalVariableData::Elem(byte.to_string()))
+                            .collect(),
+                    ))
+                } else {
+                    Some(self.global_data())
+                }
             } else {
                 None
             };
