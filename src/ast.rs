@@ -197,8 +197,25 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn validate_type_layout(&self, ty: &Type, token: &Token) {
         match ty {
-            Type::Ptr(child) | Type::Arr(child, _) => self.validate_type_layout(child, token),
+            Type::Ptr(child) => self.validate_type_layout(child, token),
+            Type::Arr(child, _) => {
+                if matches!(
+                    **child,
+                    Type::Void | Type::Func(..) | Type::VariadicFunc(..)
+                ) {
+                    self.error_logger
+                        .print_error_position(token.pos, "invalid array element type");
+                }
+                self.validate_type_layout(child, token);
+            }
             Type::Func(args, result) | Type::VariadicFunc(args, result) => {
+                if matches!(
+                    **result,
+                    Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..)
+                ) {
+                    self.error_logger
+                        .print_error_position(token.pos, "invalid function result type");
+                }
                 for arg in args {
                     self.validate_type_layout(arg, token);
                 }
@@ -552,6 +569,10 @@ impl<'a> AstBuilderImpl<'a> {
             });
             self.validate_type_layout(&ty, &token);
             if ty.function_signature().is_some() {
+                if self.global_variables.contains_key(&token.s_value) {
+                    self.error_logger
+                        .print_error_position(token.pos, "function conflicts with object");
+                }
                 self.offset_size = 0;
                 self.scope_stack.push(HashMap::new());
                 let mut args = vec![];
@@ -629,8 +650,26 @@ impl<'a> AstBuilderImpl<'a> {
                 .last_mut()
                 .unwrap()
                 .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
-            self.global_variables
-                .insert(token.s_value, GlobalVariable { ty, data });
+            if let Some(existing) = self.global_variables.get_mut(&token.s_value) {
+                if existing.ty != ty {
+                    self.error_logger
+                        .print_error_position(token.pos, "incompatible object redeclaration");
+                }
+                if data.is_some() && existing.data.is_some() {
+                    self.error_logger
+                        .print_error_position(token.pos, "object is already initialized");
+                }
+                if data.is_some() {
+                    existing.data = data;
+                }
+            } else {
+                if self.functions.contains_key(&token.s_value) {
+                    self.error_logger
+                        .print_error_position(token.pos, "object conflicts with function");
+                }
+                self.global_variables
+                    .insert(token.s_value, GlobalVariable { ty, data });
+            }
             if self.attempt_reserved(",").is_none() {
                 break;
             }
@@ -812,6 +851,30 @@ impl<'a> AstBuilderImpl<'a> {
             unreachable!()
         })
     }
+    fn expect_conversion(&self, expected: &Type, operand: &Node) {
+        let actual = operand.resolve_type();
+        let compatible = match (expected, actual.as_ref()) {
+            (Type::I8 | Type::I32, Some(Type::I8 | Type::I32)) => true,
+            (Type::Ptr(target), Some(Type::Ptr(source) | Type::Arr(source, _))) => {
+                target == source || **target == Type::Void || **source == Type::Void
+            }
+            (Type::Ptr(target), Some(source @ (Type::Func(..) | Type::VariadicFunc(..)))) => {
+                **target == *source
+            }
+            (Type::Ptr(_), Some(Type::I32)) => {
+                matches!(operand.nt, NodeType::Num) && operand.value == Some(0)
+            }
+            (_, Some(actual)) => expected == actual,
+            _ => false,
+        };
+        if !compatible {
+            self.error_logger.print_error_position(
+                operand.token.as_ref().map_or(0, |t| t.pos),
+                "incompatible value type",
+            );
+        }
+    }
+
     fn validate_void_expressions(&self, node: &Node) {
         let no_value = |operand: &Node| {
             if operand.resolve_type() == Some(Type::Void) {
@@ -849,7 +912,16 @@ impl<'a> AstBuilderImpl<'a> {
                 no_value(operand);
             }
         }
+        if matches!(node.nt, NodeType::Assign) {
+            self.expect_conversion(
+                &node.lhs.as_ref().unwrap().resolve_type().unwrap(),
+                node.rhs.as_ref().unwrap(),
+            );
+        }
         if matches!(node.nt, NodeType::CallFunc) {
+            for (argument, parameter) in node.args.iter().rev().zip(&node.parameter_types) {
+                self.expect_conversion(parameter, argument);
+            }
             for argument in &node.args {
                 no_value(argument);
             }
@@ -1055,6 +1127,11 @@ impl<'a> AstBuilderImpl<'a> {
                     t.pos,
                     "return value does not match function return type",
                 );
+            }
+            if let Some(value) = &operand {
+                if !expected_void {
+                    self.expect_conversion(self.return_type.as_ref().unwrap(), value);
+                }
             }
             Node {
                 token: Some(t),
@@ -1868,6 +1945,10 @@ mod tests {
             ("int main() { 3 = 4; }", "not assignable"),
             ("int main() { return *3; }", "non-pointer"),
             ("int x = 1 / 0;", "invalid arithmetic"),
+            ("int a[2](int);", "invalid array element"),
+            ("int x; char x;", "incompatible object redeclaration"),
+            ("int x=1; int x=2;", "already initialized"),
+            ("int main(){int *p;p=3;return 0;}", "incompatible value"),
         ] {
             let tokens = crate::tokenizer::Tokenizer::tokenize(code, false).unwrap();
             let logger = crate::error::ErrorPrinter::new(code);
