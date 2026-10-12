@@ -485,3 +485,10 @@ fn it_preprocesses_includes(output_option: &str) {
     fs::remove_file(name).unwrap();
     assert_eq!(output.status.code(), Some(7), "{:?}", output);
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn it_concatenates_adjacent_strings(output_option: &str) {
+    let code =
+        r#"int main(){char *p="\x41" /* gap */ "B" "\0" "C";return p[0]+p[1]+p[2]+p[3]-198;}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

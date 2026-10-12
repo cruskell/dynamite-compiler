@@ -211,6 +211,20 @@ impl Tokenizer {
                 }
             }
         }
+        let mut joined: Vec<Token> = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            if token.tt == TokenType::Str && joined.last().is_some_and(|t| t.tt == TokenType::Str) {
+                let previous = joined.last_mut().unwrap();
+                let bytes = decode_string_literal(&previous.s_value)
+                    .unwrap()
+                    .into_iter()
+                    .chain(decode_string_literal(&token.s_value).unwrap());
+                previous.s_value = bytes.map(|byte| format!("\\{:03o}", byte)).collect();
+            } else {
+                joined.push(token);
+            }
+        }
+        let mut tokens = joined;
         tokens.push(Token {
             tt: TokenType::EOF,
             pos: code.len(),
