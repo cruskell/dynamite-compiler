@@ -7,5 +7,6 @@ pub struct GlobalVariable {
 #[derive(Debug, PartialEq)]
 pub enum GlobalVariableData {
     Elem(String),
+    Address { symbol: String, offset: i64 },
     Arr(Vec<GlobalVariableData>),
 }

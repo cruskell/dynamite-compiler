@@ -210,6 +210,13 @@ impl<'a> IrGenerator<'a> {
             Type::Ptr(_) => format!(
                 "ptr {}",
                 match data {
+                    Some(GlobalVariableData::Address { symbol, offset }) => {
+                        if *offset == 0 {
+                            format!("@{symbol}")
+                        } else {
+                            format!("getelementptr (i8, ptr @{symbol}, i64 {offset})")
+                        }
+                    }
                     Some(GlobalVariableData::Elem(value)) if value.starts_with('@') =>
                         value.clone(),
                     Some(GlobalVariableData::Elem(value)) if value != "0" =>
