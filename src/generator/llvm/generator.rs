@@ -1104,6 +1104,17 @@ impl<'a> IrGenerator<'a> {
                         old
                     ));
                 }
+                let new = if ty == Type::Bool {
+                    let predicate = options.new_register();
+                    options.register_queue.pop();
+                    lines.push(format!("  %{predicate} = icmp ne i8 %{new}, 0"));
+                    let result = options.new_register();
+                    options.register_queue.pop();
+                    lines.push(format!("  %{result} = zext i1 %{predicate} to i8"));
+                    result
+                } else {
+                    new
+                };
                 lines.push(format!(
                     "  store {} %{}, ptr {}, align {}",
                     Self::gen_type(ty.clone()),

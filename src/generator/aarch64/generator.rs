@@ -514,6 +514,20 @@ impl<'a> AsmGenerator<'a> {
                         .map(|node| self.gen_node(node, options))
                         .unwrap_or_else(|| vec![].into()),
                     format!("{}:", EndFlag(branch_num)).into(),
+                    if matches!(node.nt, NodeType::Conditional)
+                        && node
+                            .resolve_type()
+                            .is_some_and(|ty| ty.integer_info().is_some())
+                    {
+                        vec![
+                            Self::pop(X8),
+                            Self::normalize_integer(&node.resolve_type().unwrap(), X8),
+                            Self::push(X8),
+                        ]
+                        .into()
+                    } else {
+                        vec![].into()
+                    },
                 ]
                 .into();
             }
@@ -801,6 +815,7 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst2(MOV, X11, X8),
                     self.deref(node.lhs.as_ref().unwrap()),
                     Assembly::inst3(op, X13, X8, X13),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), X13),
                     Assembly::inst2(STR, X13, Ptr(X11, node.resolve_type().unwrap().size_of())),
                     Self::push(X8),
                 ]

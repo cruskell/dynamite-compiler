@@ -409,6 +409,20 @@ impl<'a> AsmGenerator<'a> {
                         .map(|node| self.gen_node(node, offset, breakable_branch_num))
                         .unwrap_or_else(|| vec![].into()),
                     format!("{}:", EndFlag(branch_num)).into(),
+                    if matches!(node.nt, NodeType::Conditional)
+                        && node
+                            .resolve_type()
+                            .is_some_and(|ty| ty.integer_info().is_some())
+                    {
+                        vec![
+                            Assembly::inst1(POP, RAX),
+                            Self::normalize_integer(&node.resolve_type().unwrap(), RAX),
+                            Assembly::inst1(PUSH, RAX),
+                        ]
+                        .into()
+                    } else {
+                        vec![].into()
+                    },
                 ]
                 .into();
             }
@@ -689,6 +703,20 @@ impl<'a> AsmGenerator<'a> {
                 } else {
                     SUB
                 };
+                if node.resolve_type() == Some(Type::Bool) {
+                    return vec![
+                        self.gen_addr(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                        Assembly::inst1(POP, RAX),
+                        Assembly::inst2(MOV, RDX, RAX),
+                        self.deref_rax(node.lhs.as_ref().unwrap()),
+                        Assembly::inst2(MOV, RDI, RAX),
+                        Assembly::inst2(op, RDI, 1),
+                        Self::normalize_integer(&Type::Bool, RDI),
+                        Assembly::inst2(MOV, Ptr(RDX, 1), DIL),
+                        Assembly::inst1(PUSH, RAX),
+                    ]
+                    .into();
+                }
                 return vec![
                     self.gen_addr(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
                     Assembly::inst1(POP, RAX),

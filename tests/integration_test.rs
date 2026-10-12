@@ -551,6 +551,9 @@ fn it_supports_goto_labels(code: &str, output_option: &str) {
     "int main(){unsigned int x=4294967295U;return (x>>31)-1;}",
     "int main(){int x;_Bool b=&x;return b-1;}",
     "int main(){unsigned int x=4294967295U;return (x+1==0)-1;}",
+    "int main(){_Bool b=1;int old=b++;return old+b-2;}",
+    "int main(){_Bool b=1;int old=b--;return old+b-1;}",
+    "int main(){long x=(long)(0?1U:-1);return (x==4294967295L)-1;}",
 ], ["asm", "llvm"])]
 fn it_supports_extended_integers(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
