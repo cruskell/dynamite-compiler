@@ -492,3 +492,13 @@ fn it_concatenates_adjacent_strings(output_option: &str) {
         r#"int main(){char *p="\x41" /* gap */ "B" "\0" "C";return p[0]+p[1]+p[2]+p[3]-198;}"#;
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix([
+    "int main(){char s[]=\"abc\";return sizeof(s)+s[3]-4;}",
+    "char s[]=\"abc\"; int main(){return sizeof(s)+s[3]-4;}",
+    "int main(){char s[3]=\"abc\";return s[2]-99;}",
+    "char s[5]=\"abc\"; int main(){return s[3]+s[4];}",
+], ["asm", "llvm"])]
+fn it_initializes_character_arrays(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
