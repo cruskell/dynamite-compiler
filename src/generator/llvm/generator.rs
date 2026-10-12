@@ -54,6 +54,10 @@ impl<'a> IrGenerator<'a> {
     }
     pub fn generate(&self, ast: ProgramAst) -> String {
         [
+            vec![
+                "declare void @llvm.va_start(ptr)".into(),
+                "declare void @llvm.va_end(ptr)".into(),
+            ],
             self.gen_string_literals(ast.string_literals),
             ast.global_variables
                 .iter()
@@ -1120,6 +1124,19 @@ impl<'a> IrGenerator<'a> {
             return lines;
         }
         match node.nt {
+            NodeType::VaStart | NodeType::VaEnd => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let pointer = options.register_queue.pop().unwrap();
+                let intrinsic = if node.nt == NodeType::VaStart {
+                    "va_start"
+                } else {
+                    "va_end"
+                };
+                lines.push(format!("  call void @llvm.{intrinsic}(ptr {pointer})"));
+                options.register_queue.push("0".into());
+                return lines;
+            }
+
             NodeType::Cast => {
                 let operand = node.lhs.as_ref().unwrap();
                 let mut lines = self.gen_node(operand, options);

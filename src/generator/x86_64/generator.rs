@@ -302,7 +302,8 @@ impl<'a> AsmGenerator<'a> {
         if func.body.is_none() {
             return vec![].into();
         }
-        if matches!(func.cty.function_signature().unwrap().1, Type::Struct(_))
+        if func.cty.function_signature().unwrap().2
+            || matches!(func.cty.function_signature().unwrap().1, Type::Struct(_))
             || func
                 .args
                 .iter()
@@ -686,7 +687,7 @@ impl<'a> AsmGenerator<'a> {
             types.len(),
             variadic,
         );
-        let offset = locals + 128;
+        let offset = locals + if variadic { 192 } else { 128 };
         let mut lines = vec![];
         if !func.internal {
             lines.push(format!(".globl {}", self.with_prefix(name)).into());
@@ -707,7 +708,7 @@ impl<'a> AsmGenerator<'a> {
         for index in 0..8 {
             lines.push(Assembly::inst2(
                 MOVQ,
-                PtrOffset(RSP, 48 + index * 8, 8),
+                PtrOffset(RSP, 48 + index * if variadic { 16 } else { 8 }, 8),
                 Xmm(index),
             ));
         }
@@ -737,7 +738,7 @@ impl<'a> AsmGenerator<'a> {
                         location => {
                             let slot = match location {
                                 Location::General(n) => n * 8,
-                                Location::Floating(n) => 48 + n * 8,
+                                Location::Floating(n) => 48 + n * if variadic { 16 } else { 8 },
                                 _ => unreachable!(),
                             };
                             lines.extend([
@@ -987,6 +988,33 @@ impl<'a> AsmGenerator<'a> {
     }
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::VaStart | NodeType::VaEnd => {
+                let mut lines = vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    Assembly::inst1(POP, R11),
+                ];
+                if node.nt == NodeType::VaStart {
+                    let (gp, fp, stack) = crate::generator::abi::variadic_state(
+                        node,
+                        crate::generator::Arch::X86_64,
+                        self.target_os,
+                    );
+                    lines.extend([
+                        Assembly::inst2(MOV, EAX, gp * 8),
+                        Assembly::inst2(MOV, PtrOffset(R11, 0, 4), EAX),
+                        Assembly::inst2(MOV, EAX, 48 + fp * 16),
+                        Assembly::inst2(MOV, PtrOffset(R11, 4, 4), EAX),
+                        Assembly::inst2(LEA, RAX, PtrOffset(RBP, 16 + stack, 8)),
+                        Assembly::inst2(MOV, PtrOffset(R11, 8, 8), RAX),
+                        Assembly::inst2(MOV, RAX, RBP),
+                        Assembly::inst2(SUB, RAX, offset),
+                        Assembly::inst2(MOV, PtrOffset(R11, 16, 8), RAX),
+                    ]);
+                }
+                lines.push(Assembly::inst1(PUSH, 0));
+                return lines.into();
+            }
+
             NodeType::Cast => {
                 let mut lines = vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),

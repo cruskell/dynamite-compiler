@@ -4,6 +4,8 @@ use std::mem::swap;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
+    VaStart,
+    VaEnd,
     Assign,
     Cast,
     LocalVar,
@@ -260,7 +262,11 @@ impl Node {
                     .unwrap()
                     .promoted(),
             ),
-            NodeType::LocalVar | NodeType::CallFunc | NodeType::GlobalVar => self.cty.clone(),
+            NodeType::LocalVar
+            | NodeType::CallFunc
+            | NodeType::GlobalVar
+            | NodeType::VaStart
+            | NodeType::VaEnd => self.cty.clone(),
             NodeType::Addr => {
                 if let Some(ty) = self.lhs.as_ref().unwrap().object_type() {
                     Some(Type::Ptr(Box::new(ty)))
