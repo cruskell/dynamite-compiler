@@ -181,9 +181,12 @@ impl Node {
     }
     pub fn resolve_type(&self) -> Option<Type> {
         self.resolve_qualified_type().map(|ty| {
-            if let Type::Qualified(child, q) = &ty {
+            if let Type::Qualified(child, _) = &ty {
                 if let Type::Arr(element, size) = child.unqualified() {
-                    return Type::Arr(Box::new(Type::Qualified(element.clone(), *q)), *size);
+                    return Type::Arr(
+                        Box::new(Type::Qualified(element.clone(), ty.qualifiers())),
+                        *size,
+                    );
                 }
             }
             ty.unqualified().clone()

@@ -139,7 +139,13 @@ impl Type {
     }
     pub fn qualifiers(&self) -> Qualifiers {
         match self {
-            Self::Qualified(_, q) => *q,
+            Self::Qualified(child, q) => {
+                let inherited = child.qualifiers();
+                Qualifiers {
+                    constant: q.constant || inherited.constant,
+                    volatile: q.volatile || inherited.volatile,
+                }
+            }
             _ => Qualifiers::default(),
         }
     }

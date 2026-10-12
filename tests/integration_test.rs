@@ -617,6 +617,12 @@ fn it_supports_type_qualifiers(code: &str, output_option: &str) {
 fn it_preserves_volatile_accesses_in_llvm() {
     let ir =
         dynamite_compiler::generate("int main(){volatile int x=7;x++;return x;}", "llvm", false);
+    assert!(ir.matches("load volatile i32").count() >= 2);
+    assert!(ir.matches("store volatile i32").count() >= 2);
+    let ir = dynamite_compiler::generate(
+        "typedef volatile int V;int main(){const V x=7;return x;}",
+        "llvm",
+        false,
+    );
     assert!(ir.contains("load volatile i32"));
-    assert!(ir.contains("store volatile i32"));
 }
