@@ -65,6 +65,7 @@ pub struct ProgramAst<'a> {
 
 pub enum Identifier {
     TypeDef(Type),
+    Constant(i64),
     Local(Type, usize),
     Static(Type),
 }
@@ -414,6 +415,9 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn attempt_type(&mut self) -> Option<Type> {
+        if let Some(token) = self.attempt_reserved("enum") {
+            return Some(self.enum_type(token));
+        }
         if let Some(token) = self.attempt_reserved("struct") {
             return Some(self.struct_type(token));
         }
@@ -432,6 +436,62 @@ impl<'a> AstBuilderImpl<'a> {
         }
         None
     }
+    fn enum_type(&mut self, token: Token) -> Type {
+        let name = self.attempt_ident();
+        let key = name.as_ref().map(|name| format!(".enum.{}", name.s_value));
+        if self.attempt_reserved("{").is_some() {
+            if let Some(key) = &key {
+                if self.scope_stack.last().unwrap().contains_key(key) {
+                    self.error_logger
+                        .print_error_position(token.pos, "enum tag is already defined");
+                }
+                self.scope_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(key.clone(), Identifier::TypeDef(Type::I32));
+            }
+            let mut value = 0i64;
+            loop {
+                let name = self.attempt_ident().unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(self.tokens[self.cur].pos, "enumerator expected");
+                    unreachable!()
+                });
+                if self.attempt_reserved("=").is_some() {
+                    let expression = self.ternary();
+                    value = self.eval(&expression);
+                }
+                if i32::try_from(value).is_err() {
+                    self.error_logger
+                        .print_error_position(name.pos, "enumerator is outside int range");
+                }
+                if self.scope_stack.last().unwrap().contains_key(&name.s_value) {
+                    self.error_logger
+                        .print_error_position(name.pos, "duplicate enumerator");
+                }
+                self.scope_stack
+                    .last_mut()
+                    .unwrap()
+                    .insert(name.s_value, Identifier::Constant(value));
+                value += 1;
+                if self.attempt_reserved("}").is_some() {
+                    break;
+                }
+                self.expect_reserved(",");
+                if self.attempt_reserved("}").is_some() {
+                    break;
+                }
+            }
+        } else if key
+            .as_ref()
+            .is_none_or(|key| self.resolve_name(key).is_none())
+        {
+            self.error_logger
+                .print_error_position(token.pos, "enum requires a known tag or definition");
+        }
+        Type::I32
+    }
+
     fn struct_type(&mut self, token: Token) -> Type {
         let name = self.attempt_ident();
         let key = format!(
@@ -1877,6 +1937,9 @@ impl<'a> AstBuilderImpl<'a> {
                         global_name: t.s_value.clone(),
                         ..Node::default()
                     },
+                    Identifier::Constant(value) => {
+                        Node::new_with_num(Some(t.clone()), *value as usize)
+                    }
                     Identifier::TypeDef(..) => {
                         self.error_logger
                             .print_error_position(t.pos, "type name is not an expression");

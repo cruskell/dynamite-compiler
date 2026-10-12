@@ -4,9 +4,9 @@ use crate::trie::Trie;
 use std::collections::HashSet;
 
 pub const TYPES: [&str; 3] = ["int", "char", "void"];
-const RESERVED_WORDS: [&str; 14] = [
+const RESERVED_WORDS: [&str; 15] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
-    "default", "typedef", "struct",
+    "default", "typedef", "struct", "enum",
 ];
 
 const RESERVED_SYMBOLS: [&str; 51] = [
