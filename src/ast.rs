@@ -447,7 +447,10 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(token) = self.attempt_reserved("enum") {
             return Some(self.enum_type(token));
         }
-        if let Some(token) = self.attempt_reserved("struct") {
+        if let Some(token) = self
+            .attempt_reserved("struct")
+            .or_else(|| self.attempt_reserved("union"))
+        {
             return Some(self.struct_type(token));
         }
         if self.attempt_reserved("void").is_some() {
@@ -571,6 +574,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn struct_type(&mut self, token: Token) -> Type {
+        let is_union = token.s_value == "union";
         let name = self.attempt_ident();
         let key = format!(
             ".struct.{}",
@@ -595,6 +599,7 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(token.pos, "struct requires a tag or definition");
             }
             let (ty, definition) = StructType::new(self.struct_definitions.len());
+            definition.borrow_mut().is_union = is_union;
             self.struct_definitions.push(definition);
             self.scope_stack
                 .last_mut()
@@ -602,6 +607,10 @@ impl<'a> AstBuilderImpl<'a> {
                 .insert(key, Identifier::TypeDef(Type::Struct(ty.clone())));
             ty
         };
+        if ty.definition().borrow().is_union != is_union {
+            self.error_logger
+                .print_error_position(token.pos, "aggregate tag has a different kind");
+        }
         if self.attempt_reserved("{").is_some() {
             if ty.definition().borrow().complete {
                 self.error_logger
@@ -630,9 +639,13 @@ impl<'a> AstBuilderImpl<'a> {
                     members.push(StructMember {
                         name: name.s_value,
                         ty: member_type.clone(),
-                        offset: size,
+                        offset: if is_union { 0 } else { size },
                     });
-                    size += member_type.size_of();
+                    size = if is_union {
+                        size.max(member_type.size_of())
+                    } else {
+                        size + member_type.size_of()
+                    };
                     if self.attempt_reserved(",").is_none() {
                         break;
                     }
@@ -645,6 +658,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             *ty.definition().borrow_mut() = StructDefinition {
                 members,
+                is_union,
                 size: size.div_ceil(align) * align,
                 align,
                 complete: true,
@@ -865,7 +879,12 @@ impl<'a> AstBuilderImpl<'a> {
             (_, GlobalVariableData::Zero) => {}
             (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
                 let members = ty.members();
-                if elements.len() > members.len() {
+                let capacity = if ty.definition().borrow().is_union {
+                    1
+                } else {
+                    members.len()
+                };
+                if elements.len() > capacity {
                     self.error_logger
                         .print_error_position(token.pos, "too many struct initializer elements");
                 }
@@ -1820,6 +1839,11 @@ impl<'a> AstBuilderImpl<'a> {
             Type::Struct(ty) => Some(
                 ty.members()
                     .iter()
+                    .take(if ty.definition().borrow().is_union {
+                        1
+                    } else {
+                        usize::MAX
+                    })
                     .map(|member| Self::member_node(node.clone(), member, token))
                     .collect(),
             ),
