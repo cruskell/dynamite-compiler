@@ -77,3 +77,5 @@ nested switches. `break` exits the nearest loop or switch; `continue` targets a 
 
 `void` is supported for function results, empty parameter lists, and pointer
 pointees. Void functions accept `return;`; objects cannot have void type.
+
+`typedef` introduces scoped type aliases, including pointer and fixed-array aliases.

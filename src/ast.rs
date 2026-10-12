@@ -285,6 +285,14 @@ impl<'a> AstBuilderImpl<'a> {
                 return Some(ty);
             }
         }
+        if let TokenType::Ident = self.tokens[self.cur].tt {
+            let name = self.tokens[self.cur].s_value.clone();
+            if let Some(Identifier::TypeDef(ty)) = self.resolve_name(&name) {
+                let ty = ty.clone();
+                self.cur += 1;
+                return Some(ty);
+            }
+        }
         None
     }
     fn expect_object_type(&self, ty: &Type, token: &Token) {
@@ -302,7 +310,35 @@ impl<'a> AstBuilderImpl<'a> {
             unreachable!()
         }
     }
+    fn typedef_definition(&mut self) {
+        let base = self.expect_type();
+        loop {
+            let (token, ty) = self.expect_ident_with_type(base.clone());
+            if self
+                .scope_stack
+                .last()
+                .unwrap()
+                .contains_key(&token.s_value)
+            {
+                self.error_logger
+                    .print_error_position(token.pos, "invalid redeclaration");
+            }
+            self.scope_stack
+                .last_mut()
+                .unwrap()
+                .insert(token.s_value, Identifier::TypeDef(ty));
+            if self.attempt_reserved(",").is_none() {
+                break;
+            }
+        }
+    }
+
     fn global_definition(&mut self) {
+        if self.attempt_reserved("typedef").is_some() {
+            self.typedef_definition();
+            self.expect_reserved(";");
+            return;
+        }
         let ty = self.expect_type();
         let cur_to_back = self.cur;
         let (t, return_type) = self.expect_ident_with_type(ty.clone());
@@ -595,6 +631,15 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn stmt(&mut self) -> Node {
+        if let Some(token) = self.attempt_reserved("typedef") {
+            self.typedef_definition();
+            self.expect_reserved(";");
+            return Node {
+                nt: NodeType::Block,
+                token: Some(token),
+                ..Node::default()
+            };
+        }
         if let Some(token) = self.attempt_reserved(";") {
             return Node {
                 nt: NodeType::Block,
