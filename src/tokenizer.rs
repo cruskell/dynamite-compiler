@@ -106,6 +106,8 @@ impl Tokenizer {
                     let radix = if code[pos..].starts_with("0x") || code[pos..].starts_with("0X") {
                         pos += 2;
                         16
+                    } else if bytes[pos] == b'0' {
+                        8
                     } else {
                         10
                     };
