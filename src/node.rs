@@ -5,6 +5,7 @@ use std::mem::swap;
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
     Assign,
+    Cast,
     LocalVar,
     GlobalVar,
     Add,
@@ -189,6 +190,7 @@ impl Node {
                     }
                 }
             }
+            NodeType::Cast => self.cty.clone(),
             NodeType::Num => Some(Type::I32),
             NodeType::Sequence => self.children.last().and_then(Node::resolve_type),
             NodeType::Add | NodeType::Sub => {
