@@ -581,6 +581,7 @@ fn it_supports_designated_initializers(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix([
     "int f(){static int x=3;return x++;}int main(){return f()+f()-7;}",
     "static int x=3;static int f(){return x;}int main(){return f()-3;}",
     "extern int x;int x=7;extern int x;int main(){extern int x;return x-7;}",
@@ -588,6 +589,5 @@ fn it_supports_designated_initializers(code: &str, output_option: &str) {
     "int f(){return 7;}int main(){extern int f();return f()-7;}",
 ], ["asm", "llvm"])]
 fn it_supports_storage_classes(code: &str, output_option: &str) {
-
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
