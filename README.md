@@ -236,3 +236,12 @@ structure size. Allocate extra storage explicitly before accessing its elements.
 Structure assignment and argument passing copy only the fixed-size portion.
 Flexible arrays cannot be initialized or measured with `sizeof`, and containing
 structures cannot be array elements or members of another structure.
+
+## Anonymous aggregate members
+
+Structures and unions may contain anonymous structure or union members. Their
+named members are accessible directly through the containing object, including
+nested anonymous members, designated initializers, and `offsetof` paths.
+The nested aggregate retains its own layout and ABI classification. Duplicate
+visible member names are diagnosed, and containing qualifiers propagate through
+member access.

@@ -36,6 +36,7 @@ pub struct BitField {
 #[derive(Clone, Debug)]
 pub struct StructMember {
     pub name: String,
+    pub anonymous: bool,
     pub ty: Type,
     pub offset: usize,
     pub bit_field: Option<BitField>,
@@ -62,6 +63,34 @@ impl StructType {
     }
     pub fn members(&self) -> Vec<StructMember> {
         self.definition().borrow().members.clone()
+    }
+    pub fn visible_members(&self) -> Vec<(String, Vec<usize>)> {
+        self.members()
+            .iter()
+            .enumerate()
+            .flat_map(|(index, member)| {
+                if member.anonymous {
+                    let Type::Struct(child) = member.ty.unqualified() else {
+                        unreachable!()
+                    };
+                    child
+                        .visible_members()
+                        .into_iter()
+                        .map(|(name, mut path)| {
+                            path.insert(0, index);
+                            (name, path)
+                        })
+                        .collect()
+                } else {
+                    vec![(member.name.clone(), vec![index])]
+                }
+            })
+            .collect()
+    }
+    pub fn member_path(&self, name: &str) -> Option<Vec<usize>> {
+        self.visible_members()
+            .into_iter()
+            .find_map(|(member, path)| (member == name).then_some(path))
     }
 }
 impl PartialEq for StructType {

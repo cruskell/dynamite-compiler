@@ -928,7 +928,7 @@ impl<'a> AstBuilderImpl<'a> {
                         size = size.max(bit_address.div_ceil(8));
                         (field, offset)
                     } else {
-                        if name.is_none() {
+                        if name.is_none() && !matches!(member_type.unqualified(), Type::Struct(_)) {
                             self.error_logger
                                 .print_error_position(token.pos, "member name expected");
                         }
@@ -943,13 +943,44 @@ impl<'a> AstBuilderImpl<'a> {
                         bit_address = size * 8;
                         (BitField { width: 0, shift: 0 }, offset)
                     };
-                    if let Some(name) = name {
-                        if members.iter().any(|member| member.name == name.s_value) {
-                            self.error_logger
-                                .print_error_position(name.pos, "duplicate struct member");
+                    if name.is_some() || matches!(member_type.unqualified(), Type::Struct(_)) {
+                        let anonymous = name.is_none();
+                        let visible = if anonymous {
+                            let Type::Struct(child) = member_type.unqualified() else {
+                                unreachable!()
+                            };
+                            child
+                                .visible_members()
+                                .into_iter()
+                                .map(|(name, _)| name)
+                                .collect::<Vec<_>>()
+                        } else {
+                            vec![name.as_ref().unwrap().s_value.clone()]
+                        };
+                        for existing in &members {
+                            let existing_names = if existing.anonymous {
+                                let Type::Struct(child) = existing.ty.unqualified() else {
+                                    unreachable!()
+                                };
+                                child
+                                    .visible_members()
+                                    .into_iter()
+                                    .map(|(name, _)| name)
+                                    .collect::<Vec<_>>()
+                            } else {
+                                vec![existing.name.clone()]
+                            };
+                            if visible.iter().any(|name| existing_names.contains(name)) {
+                                self.error_logger
+                                    .print_error_position(position.pos, "duplicate struct member");
+                            }
                         }
                         members.push(StructMember {
-                            name: name.s_value,
+                            name: name.map_or_else(
+                                || format!(".anonymous.{}", members.len()),
+                                |name| name.s_value,
+                            ),
+                            anonymous,
                             ty: member_type,
                             offset,
                             bit_field: (field.width != 0).then_some(field),
@@ -1231,6 +1262,9 @@ impl<'a> AstBuilderImpl<'a> {
         let ty = ty.unqualified();
         match (ty, data) {
             (_, GlobalVariableData::Zero) => {}
+            (Type::Struct(ty), GlobalVariableData::Union { index, value }) => {
+                self.validate_global_initializer(&ty.members()[*index].ty, value, token);
+            }
             (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
                 let members = ty.members();
                 let capacity = if ty.definition().borrow().is_union {
@@ -1303,7 +1337,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut current = ty.clone();
         let mut path = vec![];
         loop {
-            let index = if let Some(token) = self.attempt_reserved("[") {
+            let indices = if let Some(token) = self.attempt_reserved("[") {
                 let expression = self.ternary();
                 let index = self.eval(&expression);
                 self.expect_reserved("]");
@@ -1311,7 +1345,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "invalid array designator");
                 }
-                index as usize
+                vec![index as usize]
             } else if let Some(token) = self.attempt_reserved(".") {
                 let name = self.attempt_ident().unwrap_or_else(|| {
                     self.error_logger
@@ -1323,23 +1357,24 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(token.pos, "member designator requires an aggregate");
                     unreachable!()
                 };
-                st.members()
-                    .iter()
-                    .position(|m| m.name == name.s_value)
-                    .unwrap_or_else(|| {
-                        self.error_logger
-                            .print_error_position(name.pos, "unknown designated member");
-                        unreachable!()
-                    })
+                st.member_path(&name.s_value).unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(name.pos, "unknown designated member");
+                    unreachable!()
+                })
             } else {
                 break;
             };
-            current = Self::aggregate_type(&current, index).unwrap_or_else(|| {
-                self.error_logger
-                    .print_error_position(self.tokens[self.cur].pos, "designator is out of bounds");
-                unreachable!()
-            });
-            path.push(index);
+            for index in indices {
+                current = Self::aggregate_type(&current, index).unwrap_or_else(|| {
+                    self.error_logger.print_error_position(
+                        self.tokens[self.cur].pos,
+                        "designator is out of bounds",
+                    );
+                    unreachable!()
+                });
+                path.push(index);
+            }
         }
         if !path.is_empty() {
             self.expect_reserved("=");
@@ -1347,12 +1382,30 @@ impl<'a> AstBuilderImpl<'a> {
         path
     }
     fn set_global_element(
+        ty: &Type,
         data: &mut GlobalVariableData,
         path: &[usize],
         value: GlobalVariableData,
     ) {
         if path.is_empty() {
             *data = value;
+            return;
+        }
+        let child = Self::aggregate_type(ty, path[0]).unwrap();
+        if matches!(ty.unqualified(), Type::Struct(st) if st.definition().borrow().is_union) {
+            if !matches!(data, GlobalVariableData::Union { index, .. } if *index == path[0]) {
+                *data = GlobalVariableData::Union {
+                    index: path[0],
+                    value: Box::new(GlobalVariableData::Zero),
+                };
+            }
+            let GlobalVariableData::Union {
+                value: selected, ..
+            } = data
+            else {
+                unreachable!()
+            };
+            Self::set_global_element(&child, selected, &path[1..], value);
             return;
         }
         if !matches!(data, GlobalVariableData::Arr(_)) {
@@ -1364,7 +1417,7 @@ impl<'a> AstBuilderImpl<'a> {
         while elements.len() <= path[0] {
             elements.push(GlobalVariableData::Zero);
         }
-        Self::set_global_element(&mut elements[path[0]], &path[1..], value);
+        Self::set_global_element(&child, &mut elements[path[0]], &path[1..], value);
     }
     fn global_initializer(&mut self, ty: &Type) -> GlobalVariableData {
         if matches!(ty.unqualified(),Type::Arr(child,_) if *child.unqualified()==Type::I8)
@@ -1398,6 +1451,14 @@ impl<'a> AstBuilderImpl<'a> {
                 loop {
                     let mut path = self.designation(ty);
                     if path.is_empty() {
+                        if cursor > 0
+                            && matches!(ty.unqualified(), Type::Struct(st) if st.definition().borrow().is_union)
+                        {
+                            self.error_logger.print_error_position(
+                                self.tokens[self.cur].pos,
+                                "too many union initializer elements",
+                            );
+                        }
                         path.push(cursor);
                     }
                     let mut child = ty.clone();
@@ -1416,7 +1477,7 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                     let value = self.global_initializer(&child);
                     cursor = path[0] + 1;
-                    Self::set_global_element(&mut data, &path, value);
+                    Self::set_global_element(ty, &mut data, &path, value);
                     if self.attempt_reserved(",").is_none() {
                         self.expect_reserved("}");
                         break;
@@ -2487,11 +2548,6 @@ impl<'a> AstBuilderImpl<'a> {
             Type::Struct(ty) => Some(
                 ty.members()
                     .iter()
-                    .take(if ty.definition().borrow().is_union {
-                        1
-                    } else {
-                        usize::MAX
-                    })
                     .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, 0)))
                     .map(|member| Self::member_node(node.clone(), member, token))
                     .collect(),
@@ -2514,6 +2570,33 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn zero_initializer(node: &Node, token: &Token) -> Node {
+        if matches!(node.resolve_type(), Some(Type::Struct(st)) if st.definition().borrow().is_union)
+        {
+            let address =
+                Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, node.clone());
+            let bytes = Node {
+                nt: NodeType::Cast,
+                token: Some(token.clone()),
+                cty: Some(Type::Ptr(Box::new(Type::I8))),
+                lhs: Some(Box::new(address)),
+                ..Node::default()
+            };
+            return Node {
+                nt: NodeType::Block,
+                token: Some(token.clone()),
+                children: (0..node.resolve_type().unwrap().size_of())
+                    .map(|index| {
+                        Node::new_with_op(
+                            Some(token.clone()),
+                            NodeType::Assign,
+                            Self::array_element(&bytes, index, token),
+                            Node::new_with_num(Some(token.clone()), 0),
+                        )
+                    })
+                    .collect(),
+                ..Node::default()
+            };
+        }
         if let Some(elements) = Self::aggregate_elements(node, token) {
             Node {
                 nt: NodeType::Block,
@@ -2575,16 +2658,27 @@ impl<'a> AstBuilderImpl<'a> {
                 return initializer;
             }
             let mut children = vec![Self::zero_initializer(node, assign_token)];
+            let mut selected_unions = HashMap::new();
             let mut cursor = 0;
             if self.attempt_reserved("}").is_none() {
                 loop {
                     let mut path = self.designation(&node.resolve_type().unwrap());
                     if path.is_empty() {
+                        if cursor > 0
+                            && matches!(node.resolve_type(), Some(Type::Struct(st)) if st.definition().borrow().is_union)
+                        {
+                            self.error_logger.print_error_position(
+                                token.pos,
+                                "too many union initializer elements",
+                            );
+                        }
                         path.push(cursor);
                     }
                     cursor = path[0] + 1;
                     let mut target = node.clone();
+                    let mut prefix = vec![];
                     for index in path {
+                        let union = matches!(target.resolve_type(), Some(Type::Struct(st)) if st.definition().borrow().is_union);
                         let targets = Self::aggregate_elements(&target, &token).unwrap();
                         target = targets.get(index).cloned().unwrap_or_else(|| {
                             self.error_logger.print_error_position(
@@ -2593,6 +2687,10 @@ impl<'a> AstBuilderImpl<'a> {
                             );
                             unreachable!()
                         });
+                        if union && selected_unions.insert(prefix.clone(), index) != Some(index) {
+                            children.push(Self::zero_initializer(&target, assign_token));
+                        }
+                        prefix.push(index);
                     }
                     children.push(self.local_variable_initialization(&target, assign_token));
                     if self.attempt_reserved(",").is_none() {
@@ -2978,23 +3076,25 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(member_name.pos, "offsetof member requires an aggregate");
                 unreachable!()
             };
-            let member = st
-                .members()
-                .into_iter()
-                .find(|member| member.name == member_name.s_value)
-                .unwrap_or_else(|| {
-                    self.error_logger
-                        .print_error_position(member_name.pos, "unknown offsetof member");
+            let path = st.member_path(&member_name.s_value).unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(member_name.pos, "unknown offsetof member");
+                unreachable!()
+            });
+            for index in path {
+                let Type::Struct(st) = ty.unqualified() else {
                     unreachable!()
-                });
-            if member.bit_field.is_some() {
-                self.error_logger.print_error_position(
-                    member_name.pos,
-                    "offsetof cannot be applied to a bit-field",
-                );
+                };
+                let member = st.members()[index].clone();
+                if member.bit_field.is_some() {
+                    self.error_logger.print_error_position(
+                        member_name.pos,
+                        "offsetof cannot be applied to a bit-field",
+                    );
+                }
+                offset += member.offset;
+                ty = member.ty;
             }
-            offset += member.offset;
-            ty = member.ty;
             while let Some(bracket) = self.attempt_reserved("[") {
                 let index = self.ternary();
                 if !Self::integer_constant(&index) {
@@ -3571,16 +3671,17 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(self.tokens[self.cur].pos, "member name expected");
                     unreachable!()
                 });
-                let member = ty
-                    .members()
-                    .into_iter()
-                    .find(|member| member.name == name.s_value)
-                    .unwrap_or_else(|| {
-                        self.error_logger
-                            .print_error_position(name.pos, "unknown struct member");
+                let path = ty.member_path(&name.s_value).unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(name.pos, "unknown struct member");
+                    unreachable!()
+                });
+                for index in path {
+                    let Some(Type::Struct(st)) = node.resolve_type() else {
                         unreachable!()
-                    });
-                node = Self::member_node(node, &member, &token);
+                    };
+                    node = Self::member_node(node, &st.members()[index], &token);
+                }
             } else if let Some(b_token) = self.attempt_reserved("[") {
                 // Subscript array
                 node = Node::new_with_op(Some(b_token.clone()), NodeType::Add, node, self.expr());

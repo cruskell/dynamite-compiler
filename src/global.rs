@@ -11,8 +11,15 @@ pub struct GlobalVariable {
 pub enum GlobalVariableData {
     Zero,
     Elem(String),
-    Address { symbol: String, offset: i64 },
+    Address {
+        symbol: String,
+        offset: i64,
+    },
     Arr(Vec<GlobalVariableData>),
+    Union {
+        index: usize,
+        value: Box<GlobalVariableData>,
+    },
 }
 
 pub fn initializer_bytes(
@@ -29,17 +36,21 @@ pub fn initializer_bytes(
             } else {
                 None
             };
-            for (index, member) in st
-                .members()
-                .iter()
-                .take(if st.definition().borrow().is_union {
-                    1
+            let union = st.definition().borrow().is_union;
+            let selected = if let Some(GlobalVariableData::Union { index, .. }) = data {
+                *index
+            } else {
+                0
+            };
+            for (index, member) in st.members().iter().enumerate() {
+                if union && index != selected {
+                    continue;
+                }
+                let data = if let Some(GlobalVariableData::Union { value, .. }) = data {
+                    Some(value.as_ref())
                 } else {
-                    usize::MAX
-                })
-                .enumerate()
-            {
-                let data = elements.and_then(|v| v.get(index));
+                    elements.and_then(|v| v.get(index))
+                };
                 if let Some(field) = member.bit_field {
                     let mut data = data;
                     while let Some(GlobalVariableData::Arr(v)) = data {
