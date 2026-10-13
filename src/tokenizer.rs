@@ -7,10 +7,10 @@ pub const TYPES: [&str; 11] = [
     "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool", "float",
     "double",
 ];
-const RESERVED_WORDS: [&str; 21] = [
+const RESERVED_WORDS: [&str; 22] = [
     "return", "if", "else", "while", "for", "break", "sizeof", "continue", "do", "switch", "case",
     "default", "typedef", "struct", "enum", "goto", "static", "extern", "union", "const",
-    "volatile",
+    "volatile", "restrict",
 ];
 
 const RESERVED_SYMBOLS: [&str; 51] = [
