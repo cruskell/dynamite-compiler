@@ -215,6 +215,8 @@ The bundled include environment also provides `stddef.h`, `stdint.h`,
 `stdbool.h`, `limits.h`, `float.h`, `string.h`, and `math.h`. These are small
 subsets: fixed-width integer and pointer types, common limits, Boolean macros,
 size and offset utilities, and common string and math function declarations.
+`offsetof` is an integer constant expression, including nested member and
+constant array-index paths; bit-field offsets are diagnosed.
 Math functions use the system C library; link with `-lm` where required.
 The headers do not claim complete standard-library coverage.
 
