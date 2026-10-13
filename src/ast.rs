@@ -14,19 +14,28 @@ mod vla;
 
 type Parameters = Vec<(Option<Token>, Type)>;
 type ParameterScope = HashMap<String, Identifier>;
+type ResolvedDeclarator = (Option<Token>, Type, Parameters, ParameterScope, Vec<Token>);
 
 enum Declarator {
     Name(Option<Token>),
     Pointer(Box<Declarator>, Qualifiers),
     Array(Box<Declarator>, usize),
     VariableArray(Box<Declarator>, usize),
-    Function(Box<Declarator>, Parameters, bool, ParameterScope),
+    ArrayQualifiers(Box<Declarator>, Qualifiers),
+    UnspecifiedArray(Box<Declarator>, Token),
+    Function(
+        Box<Declarator>,
+        Parameters,
+        bool,
+        ParameterScope,
+        Vec<Token>,
+    ),
 }
 
 impl Declarator {
-    fn resolve(self, base: Type) -> (Option<Token>, Type, Parameters, ParameterScope) {
+    fn resolve(self, base: Type) -> ResolvedDeclarator {
         match self {
-            Self::Name(token) => (token, base, vec![], HashMap::new()),
+            Self::Name(token) => (token, base, vec![], HashMap::new(), vec![]),
             Self::Pointer(inner, q) => {
                 let ty = Type::Ptr(Box::new(base));
                 inner.resolve(if q == Qualifiers::default() {
@@ -37,7 +46,14 @@ impl Declarator {
             }
             Self::Array(inner, size) => inner.resolve(Type::Arr(Box::new(base), size)),
             Self::VariableArray(inner, offset) => inner.resolve(Type::Vla(Box::new(base), offset)),
-            Self::Function(inner, parameters, variadic, scope) => {
+            Self::ArrayQualifiers(inner, q) => inner.resolve(Type::Qualified(Box::new(base), q)),
+            Self::UnspecifiedArray(inner, token) => {
+                let (name, ty, parameters, scope, mut stars) =
+                    inner.resolve(Type::Vla(Box::new(base), usize::MAX));
+                stars.push(token);
+                (name, ty, parameters, scope, stars)
+            }
+            Self::Function(inner, parameters, variadic, scope, stars) => {
                 let types = parameters.iter().map(|(_, ty)| ty.clone()).collect();
                 let ty = if variadic {
                     Type::VariadicFunc(types, Box::new(base))
@@ -45,13 +61,13 @@ impl Declarator {
                     Type::Func(types, Box::new(base))
                 };
                 let function_type = ty.clone();
-                let (name, ty, nested, nested_scope) = inner.resolve(ty);
-                let (parameters, scope) = if ty == function_type {
-                    (parameters, scope)
+                let (name, ty, nested, nested_scope, nested_stars) = inner.resolve(ty);
+                let (parameters, scope, stars) = if ty == function_type {
+                    (parameters, scope, stars)
                 } else {
-                    (nested, nested_scope)
+                    (nested, nested_scope, nested_stars)
                 };
-                (name, ty, parameters, scope)
+                (name, ty, parameters, scope, stars)
             }
         }
     }
@@ -72,6 +88,7 @@ pub struct AstBuilderImpl<'a> {
     variadic_parameters: Option<Vec<Type>>,
     variadic_last: Option<usize>,
     pending_bounds: Vec<Node>,
+    parameter_depth: usize,
     dynamic_objects: Vec<Node>,
     vla_active: Vec<usize>,
     jump_depths: Vec<usize>,
@@ -216,6 +233,7 @@ impl<'a> AstBuilderImpl<'a> {
             variadic_parameters: None,
             variadic_last: None,
             pending_bounds: vec![],
+            parameter_depth: 0,
             dynamic_objects: vec![],
             vla_active: vec![],
             jump_depths: vec![],
@@ -324,6 +342,40 @@ impl<'a> AstBuilderImpl<'a> {
         };
         loop {
             if self.attempt_reserved("[").is_some() {
+                let mut minimum = self.attempt_reserved("static");
+                let qualifiers = self.attempt_qualifiers();
+                if minimum.is_none() {
+                    minimum = self.attempt_reserved("static");
+                }
+                if minimum.is_some() || qualifiers != Qualifiers::default() {
+                    if self.parameter_depth == 0
+                        || !matches!(direct, Declarator::Name(_))
+                        || !pointers.is_empty()
+                    {
+                        self.error_logger.print_error_position(
+                            self.tokens[self.cur].pos,
+                            "array parameter modifiers require an outer parameter array",
+                        );
+                    }
+                    direct = Declarator::ArrayQualifiers(Box::new(direct), qualifiers);
+                }
+                if let Some(star) = self.attempt_reserved("*") {
+                    if self.parameter_depth == 0 || minimum.is_some() {
+                        self.error_logger.print_error_position(
+                            star.pos,
+                            "unspecified array bound requires a function prototype parameter",
+                        );
+                    }
+                    self.expect_reserved("]");
+                    direct = Declarator::UnspecifiedArray(Box::new(direct), star);
+                    continue;
+                }
+                if minimum.is_some() && self.tokens[self.cur].s_value == "]" {
+                    self.error_logger.print_error_position(
+                        self.tokens[self.cur].pos,
+                        "static array parameter requires a bound",
+                    );
+                }
                 if self.attempt_reserved("]").is_some() {
                     if matches!(
                         direct,
@@ -369,6 +421,7 @@ impl<'a> AstBuilderImpl<'a> {
             } else if self.attempt_reserved("(").is_some() {
                 self.scope_stack.push(HashMap::new());
                 let mut parameters = vec![];
+                let mut stars = vec![];
                 let mut variadic = false;
                 let saved = self.cur;
                 let empty_void =
@@ -396,10 +449,21 @@ impl<'a> AstBuilderImpl<'a> {
                         {
                             break;
                         }
-                        let (name, ty, _, _) = self.declarator().resolve(base);
+                        self.parameter_depth += 1;
+                        let (name, ty, _, _, mut parameter_stars) = self.declarator().resolve(base);
+                        self.parameter_depth -= 1;
+                        stars.append(&mut parameter_stars);
                         self.validate_type_layout(&ty, &self.tokens[self.cur]);
-                        let ty = match ty {
-                            Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
+                        let qualifiers = ty.qualifiers();
+                        let ty = match ty.unqualified() {
+                            Type::Arr(child, _) | Type::Vla(child, _) => {
+                                let pointer = Type::Ptr(child.clone());
+                                if qualifiers == Qualifiers::default() {
+                                    pointer
+                                } else {
+                                    Type::Qualified(Box::new(pointer), qualifiers)
+                                }
+                            }
                             Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
                             _ => ty,
                         };
@@ -425,7 +489,7 @@ impl<'a> AstBuilderImpl<'a> {
                         matches!(identifier, Identifier::TypeDef(_) | Identifier::Constant(_))
                     })
                     .collect();
-                direct = Declarator::Function(Box::new(direct), parameters, variadic, scope);
+                direct = Declarator::Function(Box::new(direct), parameters, variadic, scope, stars);
             } else {
                 break;
             }
@@ -437,7 +501,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn expect_ident_with_type(&mut self, ty: Type) -> (Token, Type) {
-        let (name, ty, _, _) = self.declarator().resolve(ty);
+        let (name, ty, _, _, _) = self.declarator().resolve(ty);
         let token = name.unwrap_or_else(|| {
             self.error_logger
                 .print_error_position(self.tokens[self.cur].pos, "ident expected");
@@ -783,7 +847,7 @@ impl<'a> AstBuilderImpl<'a> {
             while self.attempt_reserved("}").is_none() {
                 let base = self.expect_type();
                 loop {
-                    let (name, member_type, _, _) = self.declarator().resolve(base.clone());
+                    let (name, member_type, _, _, _) = self.declarator().resolve(base.clone());
                     let position = name.as_ref().unwrap_or(&token);
                     if member_type.is_variably_modified() {
                         self.error_logger.print_error_position(
@@ -947,7 +1011,8 @@ impl<'a> AstBuilderImpl<'a> {
             return;
         }
         loop {
-            let (name, ty, parameters, parameter_scope) = self.declarator().resolve(base.clone());
+            let (name, ty, parameters, parameter_scope, stars) =
+                self.declarator().resolve(base.clone());
             let token = name.unwrap_or_else(|| {
                 self.error_logger
                     .print_error_position(self.tokens[self.cur].pos, "ident expected");
@@ -961,6 +1026,12 @@ impl<'a> AstBuilderImpl<'a> {
                 );
             }
             if ty.function_signature().is_some() {
+                if self.tokens[self.cur].s_value == "{" && !stars.is_empty() {
+                    self.error_logger.print_error_position(
+                        stars[0].pos,
+                        "unspecified array bound is only allowed in a function prototype",
+                    );
+                }
                 if self.global_variables.contains_key(&token.s_value) {
                     self.error_logger
                         .print_error_position(token.pos, "function conflicts with object");
@@ -2871,7 +2942,7 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(token) = self.attempt_reserved("(") {
             if let Some(base) = self.attempt_type() {
                 let pending_start = self.pending_bounds.len();
-                let (name, mut ty, _, _) = self.declarator().resolve(base);
+                let (name, mut ty, _, _, _) = self.declarator().resolve(base);
                 self.validate_type_layout(&ty, &self.tokens[self.cur]);
                 if name.is_some() {
                     self.error_logger
@@ -2980,7 +3051,7 @@ impl<'a> AstBuilderImpl<'a> {
             if self.attempt_reserved("(").is_some() {
                 if let Some(base) = self.attempt_type() {
                     let pending_start = self.pending_bounds.len();
-                    let (name, ty, _, _) = self.declarator().resolve(base);
+                    let (name, ty, _, _, _) = self.declarator().resolve(base);
                     self.validate_type_layout(&ty, &t);
                     if name.is_some() {
                         self.error_logger
