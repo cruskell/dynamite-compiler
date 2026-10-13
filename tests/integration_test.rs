@@ -1116,3 +1116,13 @@ fn rejects_invalid_anonymous_aggregate_members(code: &str, output_option: &str) 
             .is_err()
     );
 }
+
+#[test_matrix([
+    "union Wide{int x;long y;};union Wide g={.y=0x1122334455667788L};int main(){union Wide s={.y=0x1122334455667788L};return g.y!=s.y;}",
+    "union Selected{int x;struct{int y;int z;};};union Selected g={.x=7,.z=3};int main(){union Selected s={.x=7,.z=3};return g.y!=0 || g.z!=3 || s.y!=0 || s.z!=3;}",
+    "int value=7;union Pointer{long number;struct{int *p;};};union Pointer g={.p=&value};int main(){return *g.p-7;}",
+    "struct Bits{union{struct{unsigned x:3;unsigned y:5;};int raw;};};struct Bits g={.x=5,.y=17};int main(){struct Bits s={.x=5,.y=17};s.x++;return g.x!=5 || g.y!=17 || s.x!=6 || s.y!=17;}",
+], ["asm", "llvm"])]
+fn selected_union_initializers(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
