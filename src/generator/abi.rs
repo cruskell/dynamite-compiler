@@ -107,7 +107,11 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
             ty: ty.clone(),
         }];
     }
-    if matches!(arch, Arch::Aarch64) {
+    // Flexible tails force SysV memory classification and prevent AAPCS64 HFAs.
+    if ty.has_flexible_array() && matches!(arch, Arch::X86_64) {
+        return vec![];
+    }
+    if matches!(arch, Arch::Aarch64) && !ty.has_flexible_array() {
         let mut members = vec![];
         if floating_members(ty, 0, &mut members)
             && !members.is_empty()

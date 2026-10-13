@@ -292,6 +292,12 @@ impl<'a> AstBuilderImpl<'a> {
             Type::Qualified(child, _) => self.validate_type_layout(child, token),
             Type::Ptr(child) => self.validate_type_layout(child, token),
             Type::Arr(child, _) | Type::Vla(child, _) => {
+                if child.has_flexible_array() {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "array element cannot contain a flexible array member",
+                    );
+                }
                 if matches!(
                     **child,
                     Type::Void | Type::Func(..) | Type::VariadicFunc(..)
@@ -843,8 +849,15 @@ impl<'a> AstBuilderImpl<'a> {
             let mut size = 0usize;
             let mut bit_address = 0usize;
             let mut has_bit_fields = false;
+            let mut has_flexible_array = false;
             let mut align = 1;
             while self.attempt_reserved("}").is_none() {
+                if has_flexible_array && !is_union {
+                    self.error_logger.print_error_position(
+                        self.tokens[self.cur].pos,
+                        "flexible array member must be last",
+                    );
+                }
                 let base = self.expect_type();
                 loop {
                     let (name, member_type, _, _, _) = self.declarator().resolve(base.clone());
@@ -855,7 +868,26 @@ impl<'a> AstBuilderImpl<'a> {
                             "struct member cannot have a variably modified type",
                         );
                     }
-                    self.expect_object_type(&member_type, position);
+                    let flexible = matches!(member_type.unqualified(), Type::Arr(_, 0));
+                    if flexible {
+                        if is_union || members.is_empty() || name.is_none() {
+                            self.error_logger.print_error_position(position.pos,
+                                "flexible array requires a named final member after another struct member");
+                        }
+                        self.validate_type_layout(&member_type, position);
+                        has_flexible_array = true;
+                    } else {
+                        self.expect_object_type(&member_type, position);
+                        if member_type.has_flexible_array() {
+                            if !is_union {
+                                self.error_logger.print_error_position(
+                                    position.pos,
+                                    "struct member cannot contain a flexible array member",
+                                );
+                            }
+                            has_flexible_array = true;
+                        }
+                    }
                     let (field, offset) = if self.attempt_reserved(":").is_some() {
                         has_bit_fields = true;
                         let expression = self.ternary();
@@ -926,6 +958,12 @@ impl<'a> AstBuilderImpl<'a> {
                     if self.attempt_reserved(",").is_none() {
                         break;
                     }
+                    if flexible {
+                        self.error_logger.print_error_position(
+                            self.tokens[self.cur].pos,
+                            "flexible array member must be last",
+                        );
+                    }
                 }
                 self.expect_reserved(";");
             }
@@ -937,6 +975,7 @@ impl<'a> AstBuilderImpl<'a> {
                 members,
                 is_union,
                 has_bit_fields,
+                has_flexible_array,
                 size: size.div_ceil(align) * align,
                 align,
                 complete: true,
@@ -1197,7 +1236,10 @@ impl<'a> AstBuilderImpl<'a> {
                 let capacity = if ty.definition().borrow().is_union {
                     1
                 } else {
-                    members.len()
+                    members
+                        .iter()
+                        .take_while(|member| !matches!(member.ty.unqualified(), Type::Arr(_, 0)))
+                        .count()
                 };
                 if elements.len() > capacity {
                     self.error_logger
@@ -1249,7 +1291,11 @@ impl<'a> AstBuilderImpl<'a> {
     fn aggregate_type(ty: &Type, index: usize) -> Option<Type> {
         match ty.unqualified() {
             Type::Arr(child, size) if *size == 0 || index < *size => Some(*child.clone()),
-            Type::Struct(st) => st.members().get(index).map(|member| member.ty.clone()),
+            Type::Struct(st) => st
+                .members()
+                .get(index)
+                .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, 0)))
+                .map(|member| member.ty.clone()),
             _ => None,
         }
     }
@@ -2446,6 +2492,7 @@ impl<'a> AstBuilderImpl<'a> {
                     } else {
                         usize::MAX
                     })
+                    .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, 0)))
                     .map(|member| Self::member_node(node.clone(), member, token))
                     .collect(),
             ),
@@ -2918,6 +2965,15 @@ impl<'a> AstBuilderImpl<'a> {
                 .print_error_position(token.pos, "sizeof cannot be applied to a bit-field");
         }
         let ty = expression.resolve_type().unwrap();
+        if ty.size_of() == 0
+            || matches!(
+                ty.unqualified(),
+                Type::Void | Type::Func(..) | Type::VariadicFunc(..)
+            )
+        {
+            self.error_logger
+                .print_error_position(token.pos, "sizeof requires a complete object type");
+        }
         if ty.is_variable_array() {
             let mut children = self.pending_bounds.split_off(pending_start);
             children.push(expression);

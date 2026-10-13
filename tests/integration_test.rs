@@ -1022,3 +1022,51 @@ fn rejects_invalid_array_parameter_modifiers(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn flexible_array_members(output_option: &str) {
+    let code = "struct S{char tag;double data[];};struct S global={7};struct S echo(struct S s){return s;}int main(){struct S *p=malloc(sizeof(struct S)+3*sizeof(double));p->tag=4;p->data[0]=1.5;p->data[2]=2.5;struct S s=echo(*p);int ok=sizeof(struct S)==8 && (char *)p->data-(char *)p==8 && p->data[0]+p->data[2]==4.0 && s.tag==4 && global.tag==7;free(p);return !ok;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn flexible_array_clang_interoperability(output_option: &str) {
+    let code = "struct S{int n;int values[];};int foreign(struct S *p);int main(){struct S *p=malloc(sizeof(struct S)+3*sizeof(int));p->n=3;p->values[0]=2;p->values[1]=3;p->values[2]=5;int r=foreign(p);free(p);return r-10;}";
+    let companion = "struct S{int n;int values[];};int foreign(struct S *p){int sum=0;for(int i=0;i<p->n;i++)sum+=p->values[i];return sum;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "struct Empty{int values[];};int main(){return 0;}",
+    "union U{int n;int values[];};int main(){return 0;}",
+    "struct Last{int n;int values[];int other;};int main(){return 0;}",
+    "struct Comma{int n;int values[],other;};int main(){return 0;}",
+    "struct Array{int n;int values[];};struct Array objects[2];int main(){return 0;}",
+    "struct Inner{int n;int values[];};struct Outer{struct Inner inner;};int main(){return 0;}",
+    "struct Init{int n;int values[];};struct Init x={1,{2}};int main(){return 0;}",
+    "struct Local{int n;int values[];};int main(){struct Local x={1,{2}};return 0;}",
+    "struct Size{int n;int values[];};int main(){struct Size x;return sizeof(x.values);}",
+], ["asm", "llvm"])]
+fn rejects_invalid_flexible_array_members(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn flexible_array_by_value_clang_interoperability(output_option: &str) {
+    let code = "struct S{double value;int tail[];};struct S foreign(struct S s);struct S local(struct S s){s.value+=1.0;return s;}int main(){struct S s={2.0};s=foreign(s);return s.value!=6.0;}";
+    let companion = "struct S{double value;int tail[];};struct S local(struct S s);struct S foreign(struct S s){s=local(s);s.value*=2.0;return s;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
