@@ -471,6 +471,9 @@ impl<'a> AstBuilderImpl<'a> {
                         let (name, ty, _, _, mut parameter_stars) = self.declarator().resolve(base);
                         self.parameter_depth -= 1;
                         stars.append(&mut parameter_stars);
+                        if matches!(ty.unqualified(), Type::Arr(..) | Type::Vla(..)) {
+                            self.validate_type_layout(ty.unqualified(), &self.tokens[self.cur]);
+                        }
                         let qualifiers = ty.qualifiers();
                         let ty = match ty.unqualified() {
                             Type::Arr(child, _) | Type::Vla(child, _) => {
@@ -885,6 +888,7 @@ impl<'a> AstBuilderImpl<'a> {
                 loop {
                     let (name, member_type, _, _, _) = self.declarator().resolve(base.clone());
                     let position = name.as_ref().unwrap_or(&token);
+                    self.validate_type_layout(&member_type, position);
                     if member_type.is_variably_modified() {
                         self.error_logger.print_error_position(
                             position.pos,
