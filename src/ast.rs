@@ -928,7 +928,7 @@ impl<'a> AstBuilderImpl<'a> {
                         size = size.max(bit_address.div_ceil(8));
                         (field, offset)
                     } else {
-                        if name.is_none() {
+                        if name.is_none() && !matches!(member_type.unqualified(), Type::Struct(_)) {
                             self.error_logger
                                 .print_error_position(token.pos, "member name expected");
                         }
@@ -943,13 +943,46 @@ impl<'a> AstBuilderImpl<'a> {
                         bit_address = size * 8;
                         (BitField { width: 0, shift: 0 }, offset)
                     };
-                    if let Some(name) = name {
-                        if members.iter().any(|member| member.name == name.s_value) {
-                            self.error_logger
-                                .print_error_position(name.pos, "duplicate struct member");
+                    if name.is_some() || matches!(member_type.unqualified(), Type::Struct(_)) {
+                        let anonymous = name.is_none();
+                        let visible = if anonymous {
+                            let Type::Struct(child) = member_type.unqualified() else {
+                                unreachable!()
+                            };
+                            child
+                                .visible_members()
+                                .into_iter()
+                                .map(|(name, _)| name)
+                                .collect::<Vec<_>>()
+                        } else {
+                            vec![name.as_ref().unwrap().s_value.clone()]
+                        };
+                        for existing in &members {
+                            let existing_names = if existing.anonymous {
+                                let Type::Struct(child) = existing.ty.unqualified() else {
+                                    unreachable!()
+                                };
+                                child
+                                    .visible_members()
+                                    .into_iter()
+                                    .map(|(name, _)| name)
+                                    .collect::<Vec<_>>()
+                            } else {
+                                vec![existing.name.clone()]
+                            };
+                            if visible.iter().any(|name| existing_names.contains(name)) {
+                                self.error_logger.print_error_position(
+                                    position.pos,
+                                    "duplicate visible struct member",
+                                );
+                            }
                         }
                         members.push(StructMember {
-                            name: name.s_value,
+                            name: name.map_or_else(
+                                || format!(".anonymous.{}", members.len()),
+                                |name| name.s_value,
+                            ),
+                            anonymous,
                             ty: member_type,
                             offset,
                             bit_field: (field.width != 0).then_some(field),
@@ -1303,7 +1336,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut current = ty.clone();
         let mut path = vec![];
         loop {
-            let index = if let Some(token) = self.attempt_reserved("[") {
+            let indices = if let Some(token) = self.attempt_reserved("[") {
                 let expression = self.ternary();
                 let index = self.eval(&expression);
                 self.expect_reserved("]");
@@ -1311,7 +1344,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "invalid array designator");
                 }
-                index as usize
+                vec![index as usize]
             } else if let Some(token) = self.attempt_reserved(".") {
                 let name = self.attempt_ident().unwrap_or_else(|| {
                     self.error_logger
@@ -1323,23 +1356,24 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(token.pos, "member designator requires an aggregate");
                     unreachable!()
                 };
-                st.members()
-                    .iter()
-                    .position(|m| m.name == name.s_value)
-                    .unwrap_or_else(|| {
-                        self.error_logger
-                            .print_error_position(name.pos, "unknown designated member");
-                        unreachable!()
-                    })
+                st.member_path(&name.s_value).unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(name.pos, "unknown designated member");
+                    unreachable!()
+                })
             } else {
                 break;
             };
-            current = Self::aggregate_type(&current, index).unwrap_or_else(|| {
-                self.error_logger
-                    .print_error_position(self.tokens[self.cur].pos, "designator is out of bounds");
-                unreachable!()
-            });
-            path.push(index);
+            for index in indices {
+                current = Self::aggregate_type(&current, index).unwrap_or_else(|| {
+                    self.error_logger.print_error_position(
+                        self.tokens[self.cur].pos,
+                        "designator is out of bounds",
+                    );
+                    unreachable!()
+                });
+                path.push(index);
+            }
         }
         if !path.is_empty() {
             self.expect_reserved("=");
@@ -3571,16 +3605,17 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(self.tokens[self.cur].pos, "member name expected");
                     unreachable!()
                 });
-                let member = ty
-                    .members()
-                    .into_iter()
-                    .find(|member| member.name == name.s_value)
-                    .unwrap_or_else(|| {
-                        self.error_logger
-                            .print_error_position(name.pos, "unknown struct member");
+                let path = ty.member_path(&name.s_value).unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(name.pos, "unknown struct member");
+                    unreachable!()
+                });
+                for index in path {
+                    let Some(Type::Struct(st)) = node.resolve_type() else {
                         unreachable!()
-                    });
-                node = Self::member_node(node, &member, &token);
+                    };
+                    node = Self::member_node(node, &st.members()[index], &token);
+                }
             } else if let Some(b_token) = self.attempt_reserved("[") {
                 // Subscript array
                 node = Node::new_with_op(Some(b_token.clone()), NodeType::Add, node, self.expr());

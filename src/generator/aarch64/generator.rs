@@ -138,7 +138,9 @@ impl<'a> AsmGenerator<'a> {
             data
         };
         match ty {
-            Type::Struct(struct_type) if struct_type.has_bit_fields() => {
+            Type::Struct(struct_type)
+                if struct_type.has_bit_fields() || struct_type.definition().borrow().is_union =>
+            {
                 let mut bytes = vec![0; ty.size_of()];
                 let mut addresses = std::collections::HashMap::new();
                 crate::global::initializer_bytes(ty, data, 0, &mut bytes, &mut addresses);

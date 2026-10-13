@@ -1086,3 +1086,33 @@ fn rejects_bitfield_offsetof(output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn anonymous_aggregate_members(output_option: &str) {
+    let code = "#include <stddef.h>\nstruct S{int n;union{int x;struct{int y;int z;};};};struct S g={.n=1,.y=2,.z=3};enum{OFF=offsetof(struct S,z)};int main(){struct S s={.n=4,.y=5,.z=6};struct S *p=&s;p->x=7;return g.n!=1 || g.y!=2 || g.z!=3 || s.n!=4 || s.y!=7 || s.z!=6 || OFF!=8;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn anonymous_aggregate_clang_interoperability(output_option: &str) {
+    let code = "struct S{int n;union{double x;long y;};};struct S foreign(struct S s);struct S local(struct S s){s.x+=s.n;return s;}int main(){struct S s={.n=2,.x=3.5};s=foreign(s);return s.n!=4 || s.x!=5.5;}";
+    let companion = "struct S{int n;union{double x;long y;};};struct S local(struct S s);struct S foreign(struct S s){s=local(s);s.n*=2;return s;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "struct Duplicate{int x;union{int x;};};int main(){return 0;}",
+    "struct Nested{struct{int x;};union{int x;};};int main(){return 0;}",
+    "struct Qualified{struct{int x;};};int main(){const struct Qualified s={{1}};s.x=2;return 0;}",
+], ["asm", "llvm"])]
+fn rejects_invalid_anonymous_aggregate_members(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
