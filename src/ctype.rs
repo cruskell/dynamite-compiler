@@ -8,6 +8,7 @@ use std::{
 pub struct Qualifiers {
     pub constant: bool,
     pub volatile: bool,
+    pub restricted: bool,
 }
 
 #[derive(Clone)]
@@ -265,6 +266,7 @@ impl Type {
                 Qualifiers {
                     constant: q.constant || inherited.constant,
                     volatile: q.volatile || inherited.volatile,
+                    restricted: q.restricted || inherited.restricted,
                 }
             }
             _ => Qualifiers::default(),

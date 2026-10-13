@@ -1126,3 +1126,21 @@ fn rejects_invalid_anonymous_aggregate_members(code: &str, output_option: &str) 
 fn selected_union_initializers(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn restrict_qualified_pointers(output_option: &str) {
+    let code = "typedef int *P;int sum(int n,int a[restrict static n],const int *restrict b){P restrict p=a;int result=0;for(int i=0;i<n;i++){p[i]+=b[i];result+=p[i];}return result;}int main(){int a[3]={1,2,3};int b[3]={4,5,6};return sum(3,a,b)-21;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "restrict int x;int main(){return 0;}",
+    "int (*restrict function)(void);int main(){return 0;}",
+    "struct S{int restrict x;};int main(){return 0;}",
+], ["asm", "llvm"])]
+fn rejects_invalid_restrict_types(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

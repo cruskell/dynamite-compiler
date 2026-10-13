@@ -185,6 +185,7 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
                     Qualifiers {
                         constant: true,
                         volatile: false,
+                        restricted: false,
                     },
                 )))],
                 Box::new(Type::I32),
@@ -198,6 +199,7 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
                     Qualifiers {
                         constant: true,
                         volatile: false,
+                        restricted: false,
                     },
                 )))],
                 Box::new(Type::I32),
@@ -289,7 +291,17 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn validate_type_layout(&self, ty: &Type, token: &Token) {
         match ty {
-            Type::Qualified(child, _) => self.validate_type_layout(child, token),
+            Type::Qualified(child, q) => {
+                if q.restricted
+                    && !matches!(child.unqualified(), Type::Ptr(pointee) if pointee.function_signature().is_none())
+                {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "restrict requires a pointer to an object or void",
+                    );
+                }
+                self.validate_type_layout(child, token);
+            }
             Type::Ptr(child) => self.validate_type_layout(child, token),
             Type::Arr(child, _) | Type::Vla(child, _) => {
                 if child.has_flexible_array() {
@@ -459,7 +471,6 @@ impl<'a> AstBuilderImpl<'a> {
                         let (name, ty, _, _, mut parameter_stars) = self.declarator().resolve(base);
                         self.parameter_depth -= 1;
                         stars.append(&mut parameter_stars);
-                        self.validate_type_layout(&ty, &self.tokens[self.cur]);
                         let qualifiers = ty.qualifiers();
                         let ty = match ty.unqualified() {
                             Type::Arr(child, _) | Type::Vla(child, _) => {
@@ -473,6 +484,7 @@ impl<'a> AstBuilderImpl<'a> {
                             Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
                             _ => ty,
                         };
+                        self.validate_type_layout(&ty, &self.tokens[self.cur]);
                         if let Some(name) = &name {
                             self.scope_stack.last_mut().unwrap().insert(
                                 name.s_value.clone(),
@@ -645,6 +657,8 @@ impl<'a> AstBuilderImpl<'a> {
                 q.constant = true;
             } else if self.attempt_reserved("volatile").is_some() {
                 q.volatile = true;
+            } else if self.attempt_reserved("restrict").is_some() {
+                q.restricted = true;
             } else {
                 break;
             }
@@ -661,6 +675,15 @@ impl<'a> AstBuilderImpl<'a> {
         let suffix = self.attempt_qualifiers();
         q.constant |= suffix.constant;
         q.volatile |= suffix.volatile;
+        q.restricted |= suffix.restricted;
+        if q.restricted
+            && !matches!(ty.unqualified(), Type::Ptr(pointee) if pointee.function_signature().is_none())
+        {
+            self.error_logger.print_error_position(
+                self.tokens[saved].pos,
+                "restrict requires a pointer to an object or void",
+            );
+        }
         Some(if q == Qualifiers::default() {
             ty
         } else {

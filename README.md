@@ -245,3 +245,10 @@ nested anonymous members, designated initializers, and `offsetof` paths.
 The nested aggregate retains its own layout and ABI classification. Duplicate
 visible member names are diagnosed, and containing qualifiers propagate through
 member access.
+
+## Restricted pointers
+
+`restrict` qualifies pointers to objects or void, including pointer typedefs
+and adjusted array parameters. It expresses the caller's aliasing obligations;
+the compiler does not perform alias-based optimization or runtime checks.
+Non-pointer and function-pointer applications are diagnosed.
