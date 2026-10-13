@@ -21,6 +21,7 @@ pub struct StructDefinition {
     pub members: Vec<StructMember>,
     pub is_union: bool,
     pub has_bit_fields: bool,
+    pub has_flexible_array: bool,
     pub size: usize,
     pub align: usize,
     pub complete: bool,
@@ -113,6 +114,14 @@ impl Type {
                     && result.compatible(other_result)
             }
             (left, right) => left == right,
+        }
+    }
+
+    pub fn has_flexible_array(&self) -> bool {
+        match self.unqualified() {
+            Self::Struct(ty) => ty.definition().borrow().has_flexible_array,
+            Self::Arr(child, _) => child.has_flexible_array(),
+            _ => false,
         }
     }
 

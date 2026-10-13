@@ -225,3 +225,12 @@ or `volatile` qualifiers. The qualifiers apply to the adjusted pointer, and a
 `static` bound states the caller's minimum-size requirement without a runtime
 check. Unspecified `[*]` bounds are accepted in function prototypes and rejected
 in function definitions.
+
+## Flexible array members
+
+A structure may end with a named incomplete array after another named member.
+The array contributes alignment and its starting offset but no elements to the
+structure size. Allocate extra storage explicitly before accessing its elements.
+Structure assignment and argument passing copy only the fixed-size portion.
+Flexible arrays cannot be initialized or measured with `sizeof`, and containing
+structures cannot be array elements or members of another structure.
