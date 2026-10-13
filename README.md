@@ -208,3 +208,12 @@ their storage. Gotos and switch labels cannot enter the scope of a variably
 modified declaration. Variable arrays cannot have static storage, file scope,
 struct membership, or an initializer. Static pointers to variable arrays remain
 supported at block scope.
+
+## Basic standard headers
+
+The bundled include environment also provides `stddef.h`, `stdint.h`,
+`stdbool.h`, `limits.h`, `float.h`, `string.h`, and `math.h`. These are small
+subsets: fixed-width integer and pointer types, common limits, Boolean macros,
+size and offset utilities, and common string and math function declarations.
+Math functions use the system C library; link with `-lm` where required.
+The headers do not claim complete standard-library coverage.

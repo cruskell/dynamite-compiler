@@ -973,3 +973,31 @@ fn it_supports_variable_array_loop_lifetimes(code: &str, output_option: &str) {
 fn it_preserves_function_parameter_tag_scopes(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn bundled_standard_headers(output_option: &str) {
+    let code = r#"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <limits.h>
+#include <float.h>
+#include <string.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+struct S { char c; int value; };
+int main(void) {
+    char text[16];
+    strcpy(text, "hello");
+    memmove(text + 1, text, 5);
+    text[6] = 0;
+    uint64_t n = UINT64_C(18446744073709551615);
+    bool ok = true;
+    printf("%lu %lu %d %d %d %d", strlen(text), offsetof(struct S, value),
+        n == UINT64_MAX, ok, CHAR_BIT, FLT_MANT_DIG);
+    return 0;
+}
+"#;
+    assert_eq!(compile_and_get_stdout(code, output_option), "6 4 1 1 8 24");
+}
