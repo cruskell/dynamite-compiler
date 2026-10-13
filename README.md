@@ -217,3 +217,11 @@ subsets: fixed-width integer and pointer types, common limits, Boolean macros,
 size and offset utilities, and common string and math function declarations.
 Math functions use the system C library; link with `-lm` where required.
 The headers do not claim complete standard-library coverage.
+
+## Array parameter declarators
+
+Function parameters accept outer array `static` bounds and bracketed `const`
+or `volatile` qualifiers. The qualifiers apply to the adjusted pointer, and a
+`static` bound states the caller's minimum-size requirement without a runtime
+check. Unspecified `[*]` bounds are accepted in function prototypes and rejected
+in function definitions.

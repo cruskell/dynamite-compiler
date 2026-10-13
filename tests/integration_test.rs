@@ -1001,3 +1001,24 @@ int main(void) {
 "#;
     assert_eq!(compile_and_get_stdout(code, output_option), "6 4 1 1 8 24");
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn array_parameter_declarators(output_option: &str) {
+    let code = "int sum(int n,int a[*]);int sum(int n,int a[const static n]){return a[0]+a[n-1]+sizeof(a);}int matrix(int n,int a[*][*]);int matrix(int n,int a[volatile static 2][n]){return a[1][n-1];}int main(){int a[3]={2,3,5};int b[2][3]={{0},{0,0,7}};return sum(3,a)+matrix(3,b)-22;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int a[static 3];",
+    "int main(){int a[const 3];return 0;}",
+    "int f(int a[*]){return 0;}",
+    "int star(int a[static *]);",
+    "int bound(int a[static]);",
+    "int f(int a[const 3]){a=0;return 0;}",
+], ["asm", "llvm"])]
+fn rejects_invalid_array_parameter_modifiers(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
