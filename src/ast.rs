@@ -971,10 +971,8 @@ impl<'a> AstBuilderImpl<'a> {
                                 vec![existing.name.clone()]
                             };
                             if visible.iter().any(|name| existing_names.contains(name)) {
-                                self.error_logger.print_error_position(
-                                    position.pos,
-                                    "duplicate visible struct member",
-                                );
+                                self.error_logger
+                                    .print_error_position(position.pos, "duplicate struct member");
                             }
                         }
                         members.push(StructMember {
