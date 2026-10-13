@@ -2957,6 +2957,86 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn offsetof_builtin(&mut self, token: Token) -> Node {
+        self.expect_reserved("(");
+        let base = self.expect_type();
+        let (name, mut ty, _, _, _) = self.declarator().resolve(base);
+        if name.is_some() || ty.is_variably_modified() {
+            self.error_logger
+                .print_error_position(token.pos, "offsetof requires a fixed type name");
+        }
+        self.expect_reserved(",");
+        let mut offset = 0;
+        loop {
+            let member_name = self.attempt_ident().unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(self.tokens[self.cur].pos, "offsetof member expected");
+                unreachable!()
+            });
+            let Type::Struct(st) = ty.unqualified() else {
+                self.error_logger
+                    .print_error_position(member_name.pos, "offsetof member requires an aggregate");
+                unreachable!()
+            };
+            let member = st
+                .members()
+                .into_iter()
+                .find(|member| member.name == member_name.s_value)
+                .unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(member_name.pos, "unknown offsetof member");
+                    unreachable!()
+                });
+            if member.bit_field.is_some() {
+                self.error_logger.print_error_position(
+                    member_name.pos,
+                    "offsetof cannot be applied to a bit-field",
+                );
+            }
+            offset += member.offset;
+            ty = member.ty;
+            while let Some(bracket) = self.attempt_reserved("[") {
+                let index = self.ternary();
+                if !Self::integer_constant(&index) {
+                    self.error_logger.print_error_position(
+                        bracket.pos,
+                        "offsetof index requires an integer constant",
+                    );
+                }
+                let index = self.eval(&index);
+                self.expect_reserved("]");
+                let Type::Arr(child, _) = ty.unqualified() else {
+                    self.error_logger
+                        .print_error_position(bracket.pos, "offsetof subscript requires an array");
+                    unreachable!()
+                };
+                if index < 0 {
+                    self.error_logger
+                        .print_error_position(bracket.pos, "offsetof index cannot be negative");
+                }
+                offset = (index as usize)
+                    .checked_mul(child.size_of())
+                    .and_then(|stride| offset.checked_add(stride))
+                    .unwrap_or_else(|| {
+                        self.error_logger
+                            .print_error_position(bracket.pos, "offsetof result is too large");
+                        unreachable!()
+                    });
+                ty = *child.clone();
+            }
+            if self.attempt_reserved(".").is_none() {
+                break;
+            }
+        }
+        self.expect_reserved(")");
+        Node {
+            token: Some(token),
+            value: Some(offset),
+            cty: Some(Type::integer(64, false)),
+            ..Node::default()
+        }
+    }
+
     fn sizeof_expression(&mut self, token: &Token) -> Node {
         let pending_start = self.pending_bounds.len();
         let expression = self.unary();
@@ -3263,6 +3343,9 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
+            if t.s_value == "__builtin_offsetof" {
+                return self.offsetof_builtin(t);
+            }
             if t.s_value.starts_with("__builtin_va_") {
                 return self.varargs_builtin(t);
             }

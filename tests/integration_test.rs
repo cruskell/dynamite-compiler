@@ -1070,3 +1070,19 @@ fn flexible_array_by_value_clang_interoperability(output_option: &str) {
         Some(0)
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn constant_offsetof(output_option: &str) {
+    let code = "#include <stddef.h>\nstruct S{char c;int values[3];};enum{OFFSET=offsetof(struct S,values[2])};unsigned long global=offsetof(struct S,values);int a[offsetof(struct S,values)];int main(){return OFFSET!=12 || global!=4 || sizeof(a)!=16;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn rejects_bitfield_offsetof(output_option: &str) {
+    let code =
+        "#include <stddef.h>\nstruct S{int bits:3;};int main(){return offsetof(struct S,bits);}";
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
