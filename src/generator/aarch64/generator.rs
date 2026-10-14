@@ -116,7 +116,7 @@ impl<'a> AsmGenerator<'a> {
             } else {
                 format!(".globl {}", self.with_prefix(name)).into()
             },
-            format!("  .balign {}", gv.ty.align_of()).into(),
+            format!("  .balign {}", gv.ty.align_of().max(gv.alignment)).into(),
             format!("{}:", self.with_prefix(name)).into(),
             Self::gen_initializer_element(&gv.ty, gv.data.as_ref(), self.target_os),
         ]

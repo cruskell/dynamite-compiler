@@ -3,6 +3,7 @@ use std::collections::HashMap;
 #[derive(Debug, PartialEq)]
 pub struct GlobalVariable {
     pub ty: Type,
+    pub alignment: usize,
     pub internal: bool,
     pub declaration_only: bool,
     pub data: Option<GlobalVariableData>,

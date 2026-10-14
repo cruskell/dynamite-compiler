@@ -170,6 +170,8 @@ pointer to an immutable object. LLVM output marks volatile object accesses;
 native generation emits each access directly.
 
 `_Alignof(type-name)` evaluates to the alignment of a complete object type.
+`_Alignas` applies a requested alignment to file-scope objects, block-scope
+objects, and aggregate members. Local objects are limited to 16-byte alignment.
 
 ## Floating-point values
 
