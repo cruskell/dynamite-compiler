@@ -1345,8 +1345,11 @@ impl<'a> AstBuilderImpl<'a> {
         let mut inline = false;
         let mut qualifiers = Qualifiers::default();
         let mut alignment = 0;
+        let mut thread_local = false;
         loop {
-            if self.attempt_reserved("inline").is_some() {
+            if self.attempt_reserved("_Thread_local").is_some() {
+                thread_local = true;
+            } else if self.attempt_reserved("inline").is_some() {
                 inline = true;
             } else if let Some(value) = self.attempt_alignment_specifier() {
                 alignment = alignment.max(value);
@@ -1357,8 +1360,9 @@ impl<'a> AstBuilderImpl<'a> {
                 if storage.is_some() {
                     self.error_logger
                         .print_error_position(token.pos, "conflicting storage classes");
+                } else {
+                    storage = Some(token);
                 }
-                storage = Some(token);
             } else {
                 let q = self.attempt_qualifiers();
                 if q == Qualifiers::default() {
@@ -1372,6 +1376,12 @@ impl<'a> AstBuilderImpl<'a> {
         let internal = storage.as_ref().is_some_and(|s| s.s_value == "static");
         let external = storage.as_ref().is_some_and(|s| s.s_value == "extern");
         if self.attempt_reserved("typedef").is_some() {
+            if thread_local {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur - 1].pos,
+                    "_Thread_local cannot be applied to a typedef",
+                );
+            }
             if alignment != 0 {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -1382,6 +1392,20 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(";");
             return;
         }
+        if thread_local && storage.is_none() {
+            self.error_logger.print_error_position(
+                self.tokens[self.cur - 1].pos,
+                "_Thread_local requires static or extern storage duration",
+            );
+        }
+        if storage
+            .as_ref()
+            .is_some_and(|storage| storage.s_value == "static")
+            && external
+        {
+            self.error_logger
+                .print_error_position(self.tokens[self.cur - 1].pos, "conflicting storage classes");
+        }
         let mut base = self.expect_type();
         while let Some(value) = self.attempt_alignment_specifier() {
             alignment = alignment.max(value);
@@ -1391,6 +1415,12 @@ impl<'a> AstBuilderImpl<'a> {
         }
         inline |= self.attempt_reserved("inline").is_some();
         if self.attempt_reserved(";").is_some() {
+            if thread_local {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur - 1].pos,
+                    "_Thread_local requires an object declaration",
+                );
+            }
             if inline {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -1423,6 +1453,12 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger.print_error_position(
                         token.pos,
                         "_Alignas cannot be applied to a function",
+                    );
+                }
+                if thread_local {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "_Thread_local cannot be applied to a function",
                     );
                 }
                 if self.tokens[self.cur].s_value == "{" && !stars.is_empty() {
@@ -1573,6 +1609,10 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(token.pos, "incompatible object redeclaration");
                 }
                 existing.alignment = existing.alignment.max(alignment);
+                if existing.thread_local != thread_local {
+                    self.error_logger
+                        .print_error_position(token.pos, "conflicting thread storage duration");
+                }
                 if data.is_some() && existing.data.is_some() {
                     self.error_logger
                         .print_error_position(token.pos, "object is already initialized");
@@ -1590,6 +1630,7 @@ impl<'a> AstBuilderImpl<'a> {
                     GlobalVariable {
                         ty,
                         alignment,
+                        thread_local,
                         declaration_only: external && data.is_none(),
                         internal,
                         data,
@@ -2655,6 +2696,7 @@ impl<'a> AstBuilderImpl<'a> {
             return node;
         }
         let mut requested_alignment = 0;
+        let mut thread_local = false;
         while let Some(value) = self.attempt_alignment_specifier() {
             requested_alignment = requested_alignment.max(value);
         }
@@ -2663,8 +2705,31 @@ impl<'a> AstBuilderImpl<'a> {
             .attempt_reserved("static")
             .or_else(|| self.attempt_reserved("extern"));
         let inline = inline.or_else(|| self.attempt_reserved("inline"));
-        if storage.is_some() || inline.is_some() {
-            let mut storage = storage.unwrap_or_else(|| inline.clone().unwrap());
+        let mut storage = storage;
+        loop {
+            if self.attempt_reserved("_Thread_local").is_some() {
+                thread_local = true;
+            } else if let Some(token) = self
+                .attempt_reserved("static")
+                .or_else(|| self.attempt_reserved("extern"))
+            {
+                if storage.is_some() {
+                    self.error_logger
+                        .print_error_position(token.pos, "conflicting storage classes");
+                } else {
+                    storage = Some(token);
+                }
+            } else {
+                break;
+            }
+        }
+        if storage.is_some() || inline.is_some() || thread_local {
+            let mut storage = storage.unwrap_or_else(|| {
+                inline.clone().unwrap_or_else(|| Token {
+                    s_value: "static".to_owned(),
+                    ..self.tokens[self.cur - 1].clone()
+                })
+            });
             if storage.s_value == "inline" {
                 storage.s_value = "extern".to_owned();
             }
@@ -2675,8 +2740,13 @@ impl<'a> AstBuilderImpl<'a> {
             while let Some(value) = self.attempt_alignment_specifier() {
                 requested_alignment = requested_alignment.max(value);
             }
-            let declaration =
-                self.local_static_definition(ty, &storage, inline.is_some(), requested_alignment);
+            let declaration = self.local_static_definition(
+                ty,
+                &storage,
+                inline.is_some(),
+                requested_alignment,
+                thread_local,
+            );
             self.expect_reserved(";");
             return declaration;
         }
@@ -2753,6 +2823,7 @@ impl<'a> AstBuilderImpl<'a> {
         storage: &Token,
         inline: bool,
         requested_alignment: usize,
+        thread_local: bool,
     ) -> Node {
         let mut bounds = vec![];
         loop {
@@ -2772,6 +2843,12 @@ impl<'a> AstBuilderImpl<'a> {
                 format!(".static.{}.{}", token.pos, token.s_value)
             };
             if ty.function_signature().is_some() {
+                if thread_local {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "_Thread_local cannot be applied to a function",
+                    );
+                }
                 if requested_alignment != 0 {
                     self.error_logger.print_error_position(
                         token.pos,
@@ -2876,12 +2953,17 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "incompatible object redeclaration");
                 }
+                if existing.thread_local != thread_local {
+                    self.error_logger
+                        .print_error_position(token.pos, "conflicting thread storage duration");
+                }
             } else {
                 self.global_variables.insert(
                     name,
                     GlobalVariable {
                         ty,
                         alignment: requested_alignment,
+                        thread_local,
                         data,
                         internal: !external,
                         declaration_only: external,
@@ -3664,6 +3746,7 @@ impl<'a> AstBuilderImpl<'a> {
                             GlobalVariable {
                                 ty: ty.clone(),
                                 alignment: 0,
+                                thread_local: false,
                                 data: Some(data),
                                 internal: true,
                                 declaration_only: false,
@@ -4011,6 +4094,10 @@ impl<'a> AstBuilderImpl<'a> {
             if t.s_value.starts_with("__builtin_va_") {
                 return self.varargs_builtin(t);
             }
+            let thread_local = self
+                .global_variables
+                .get(&t.s_value)
+                .is_some_and(|object| object.thread_local);
             if let Some(ident) = self.resolve_name(&t.s_value) {
                 match ident {
                     Identifier::Dynamic(ty, offset, registered) => {
@@ -4031,6 +4118,7 @@ impl<'a> AstBuilderImpl<'a> {
                         nt: NodeType::GlobalVar,
                         cty: Some(ty.clone()),
                         global_name: name.clone(),
+                        thread_local,
                         ..Node::default()
                     },
                     Identifier::Static(ty) => Node {
@@ -4038,6 +4126,7 @@ impl<'a> AstBuilderImpl<'a> {
                         nt: NodeType::GlobalVar,
                         cty: Some(ty.clone()),
                         global_name: t.s_value.clone(),
+                        thread_local,
                         ..Node::default()
                     },
                     Identifier::Constant(value) => {
@@ -4456,6 +4545,7 @@ mod tests {
                 "x".to_string(),
                 GlobalVariable {
                     alignment: 0,
+                    thread_local: false,
                     internal: false,
                     declaration_only: false,
                     ty: Type::I32,

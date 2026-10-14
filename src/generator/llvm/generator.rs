@@ -53,11 +53,21 @@ impl<'a> IrGenerator<'a> {
         Self { error_logger }
     }
     pub fn generate(&self, ast: ProgramAst) -> String {
+        let has_thread_local = ast
+            .global_variables
+            .values()
+            .any(|global| global.thread_local);
         [
-            vec![
-                "declare void @llvm.va_start(ptr)".into(),
-                "declare void @llvm.va_end(ptr)".into(),
-            ],
+            {
+                let mut declarations = vec![
+                    "declare void @llvm.va_start(ptr)".into(),
+                    "declare void @llvm.va_end(ptr)".into(),
+                ];
+                if has_thread_local {
+                    declarations.push("declare ptr @llvm.threadlocal.address.p0(ptr)".into());
+                }
+                declarations
+            },
             self.gen_string_literals(ast.string_literals),
             ast.global_variables
                 .iter()
@@ -123,16 +133,18 @@ impl<'a> IrGenerator<'a> {
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> String {
         if gv.declaration_only {
             return format!(
-                "@{} = external global {}, align {}",
+                "@{} = external {}global {}, align {}",
                 name,
+                if gv.thread_local { "thread_local " } else { "" },
                 Self::gen_type(gv.ty.clone()),
                 Self::align(&gv.ty).max(gv.alignment)
             );
         }
         format!(
-            "@{} = {}global {}, align {}",
+            "@{} = {}{}global {}, align {}",
             name,
             if gv.internal { "internal " } else { "" },
+            if gv.thread_local { "thread_local " } else { "" },
             Self::gen_initializer_element(&gv.ty, gv.data.as_ref()),
             Self::align(&gv.ty).max(gv.alignment),
         )
@@ -1112,12 +1124,22 @@ impl<'a> IrGenerator<'a> {
                 vec![]
             }
             NodeType::GlobalVar => {
-                options.register_queue.push(if node.dest.is_empty() {
+                let symbol = if node.dest.is_empty() {
                     format!("@{}", node.global_name)
                 } else {
                     node.dest.clone()
-                });
-                vec![]
+                };
+                if node.thread_local {
+                    let register = options.new_register();
+                    options.register_queue.push(format!("%{}", register));
+                    vec![format!(
+                        "  %{} = call ptr @llvm.threadlocal.address.p0(ptr {})",
+                        register, symbol
+                    )]
+                } else {
+                    options.register_queue.push(symbol);
+                    vec![]
+                }
             }
             NodeType::Deref => self.gen_node(node.lhs.as_ref().unwrap(), options),
             _ => {
