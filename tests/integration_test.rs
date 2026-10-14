@@ -1226,3 +1226,41 @@ fn static_assert_reports_message() {
     let message = result.downcast_ref::<String>().unwrap();
     assert!(message.contains("static assertion failed: layout mismatch"));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn automatic_storage_specifiers(output_option: &str) {
+    let code = "int increment(register int x){return ++x;}int main(){auto int a=2,b=3;register int c=increment(a);const register int d=4;int register e=5;auto int *p=&a;register struct S{int x;long y;}s={6,7};for(register int i=0;i<2;i++){b++;}{auto int c=9;int *q=&c;b+=*q;}return *p+b+c+d+e+s.x+s.y+sizeof(c)-45;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn register_array_parameter(output_option: &str) {
+    let code = "int sum(register int n,register int a[static n]){int result=0;for(auto int i=0;i<n;i++){result+=a[i];}return result;}int main(){int a[3]={1,2,3};return sum(3,a)-6;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "auto int global;int main(){return 0;}",
+    "register int global;int main(){return 0;}",
+    "int f(auto int x){return x;}int main(){return 0;}",
+    "int f(register void);int main(){return 0;}",
+    "int main(){register int f(void);return 0;}",
+    "int f(register int x){return *&x;}int main(){return 0;}",
+    "int main(){register int x;int *p=&x;return 0;}",
+    "int main(){register struct S{int x;}s;int *p=&s.x;return 0;}",
+    "int main(){auto register int x;return 0;}",
+    "int main(){register register int x;return 0;}",
+    "int main(){auto int f(void);return 0;}",
+], ["asm", "llvm"])]
+fn rejects_invalid_automatic_storage(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn register_vla_size(output_option: &str) {
+    let code = "int main(){int n=3;register int a[n];return sizeof(a)-12;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
