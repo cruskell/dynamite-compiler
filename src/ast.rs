@@ -3626,6 +3626,31 @@ impl<'a> AstBuilderImpl<'a> {
             }
             return self.sizeof_expression(&t);
         }
+        if let Some(token) = self.attempt_reserved("_Alignof") {
+            let pending_start = self.pending_bounds.len();
+            self.expect_reserved("(");
+            let base = self.expect_type();
+            let (name, ty, _, _, _) = self.declarator().resolve(base);
+            self.pending_bounds.truncate(pending_start);
+            self.validate_type_layout(&ty, &token);
+            if name.is_some()
+                || matches!(
+                    ty.unqualified(),
+                    Type::Void | Type::Func(..) | Type::VariadicFunc(..)
+                )
+                || ty.size_of() == 0
+            {
+                self.error_logger
+                    .print_error_position(token.pos, "_Alignof requires a complete object type");
+            }
+            self.expect_reserved(")");
+            return Node {
+                token: Some(token),
+                value: Some(ty.align_of()),
+                cty: Some(Type::integer(64, false)),
+                ..Node::default()
+            };
+        }
         if self.attempt_reserved("+").is_some() {
             return self.unary();
         } else if let Some(t) = self.attempt_reserved("-") {

@@ -169,6 +169,8 @@ diagnosed. Qualifiers on a pointer distinguish an immutable pointer from a
 pointer to an immutable object. LLVM output marks volatile object accesses;
 native generation emits each access directly.
 
+`_Alignof(type-name)` evaluates to the alignment of a complete object type.
+
 ## Floating-point values
 
 `float` and `double` use IEEE binary32 and binary64 storage. Decimal and
