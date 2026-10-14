@@ -7,7 +7,7 @@ pub const TYPES: [&str; 11] = [
     "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool", "float",
     "double",
 ];
-const RESERVED_WORDS: [&str; 26] = [
+const RESERVED_WORDS: [&str; 27] = [
     "return",
     "if",
     "else",
@@ -32,6 +32,7 @@ const RESERVED_WORDS: [&str; 26] = [
     "restrict",
     "inline",
     "_Static_assert",
+    "_Generic",
     "auto",
     "register",
 ];

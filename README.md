@@ -278,3 +278,16 @@ for automatic objects and function parameters, including adjusted array
 parameters. It does not force hardware register allocation. Taking the address
 of a register object or its struct/union members is diagnosed. File-scope use,
 `auto` parameters, and conflicting automatic storage specifiers are rejected.
+
+## Generic selections
+
+C11 `_Generic` selects an association by the controlling expression's type,
+with array/function decay and removal of top-level qualifiers. The controlling
+expression and unselected associations are not evaluated; all expressions are
+still checked. The selected expression retains its type and value category,
+including lvalues and function designators. Duplicate compatible associations,
+duplicate defaults, incomplete or variably modified association types, and
+missing matches are diagnosed.
+
+Integer type identity follows this compiler's existing width/signedness model:
+`long` and `long long` are aliases, as are `char` and `signed char`.
