@@ -223,9 +223,10 @@ supported at block scope.
 ## Basic standard headers
 
 The bundled include environment also provides `stddef.h`, `stdint.h`,
-`stdbool.h`, `limits.h`, `float.h`, `string.h`, and `math.h`. These are small
+`stdbool.h`, `limits.h`, `float.h`, `string.h`, `ctype.h`, and `math.h`. These are small
 subsets: fixed-width integer and pointer types, common limits, Boolean macros,
-size and offset utilities, and common string and math function declarations.
+size and offset utilities, character classification and case conversion, and
+common string and math function declarations.
 `offsetof` is an integer constant expression, including nested member and
 constant array-index paths; bit-field offsets are diagnosed.
 Math functions use the system C library; link with `-lm` where required.

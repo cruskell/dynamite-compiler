@@ -51,6 +51,7 @@ impl IncludeDirectory {
             ("stdint.h", include_str!("../include/stdint.h")),
             ("stdbool.h", include_str!("../include/stdbool.h")),
             ("string.h", include_str!("../include/string.h")),
+            ("ctype.h", include_str!("../include/ctype.h")),
             ("math.h", include_str!("../include/math.h")),
             ("limits.h", include_str!("../include/limits.h")),
             ("float.h", include_str!("../include/float.h")),
