@@ -1433,7 +1433,15 @@ impl<'a> IrGenerator<'a> {
                 let index = node.rhs.as_ref().unwrap();
                 let mut lines = self.gen_node(index, options);
                 let mut value = options.register_queue.pop().unwrap();
-                let index_ty = Self::gen_type(index.resolve_type().unwrap());
+                // GEP sign-extends its indices, so preserve C signedness explicitly.
+                value = Self::convert_integer(
+                    value,
+                    &index.resolve_type().unwrap(),
+                    &Type::integer(64, true),
+                    options,
+                    &mut lines,
+                );
+                let index_ty = "i64";
                 if matches!(node.nt, NodeType::Sub) {
                     let register = options.new_register();
                     options.register_queue.pop();

@@ -1314,3 +1314,9 @@ fn global_byte_sized_integer_initializers(output_option: &str) {
     let code = "unsigned char table[4]={0,127,128,255}; signed char negative=-7; _Bool enabled=1; _Bool bool_values[2]={0,1}; unsigned short wide=513; int main(){return table[0]+table[1]+table[2]+table[3]+negative+enabled+bool_values[0]+bool_values[1]+wide-1018;}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn pointer_arithmetic_preserves_integer_index_values(output_option: &str) {
+    let code = "int values[256]; unsigned char bytes[40001]; int main(){unsigned char u=255; signed char n=-128; unsigned short wide=40000; _Bool one=1; int *p=values+255; values[u]=7; p[n]=9; bytes[wide]=11; return values[255]+values[127]+bytes[40000]+(p-u==values)+(p+one==values+256)+(p+n==values+127)+(values+u==p)-31;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
