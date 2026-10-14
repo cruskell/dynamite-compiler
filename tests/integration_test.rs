@@ -1372,3 +1372,9 @@ fn bundled_character_classification_header(output_option: &str) {
     let code = "#include <ctype.h>\n#include <ctype.h>\n#include <stdio.h>\nint main(){int (*lower)(int)=tolower;return !isalnum('7')+!isalpha('Z')+!isblank(' ')+!iscntrl('\\n')+!isdigit('2')+!isgraph('!')+!islower('a')+!isprint(' ')+!ispunct('!')+!isspace('\\t')+!isupper('A')+!isxdigit('f')+(lower('A')!='a')+(toupper('z')!='Z')+(tolower(EOF)!=EOF)+(isalpha(EOF)!=0)+(isdigit((unsigned char)255)!=0);}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn bundled_allocation_and_numeric_conversion_declarations(output_option: &str) {
+    let code = "#include <stdlib.h>\n#include <stdlib.h>\nint main(){char *p=calloc(4,sizeof(char));int bad=p[0]+p[1]+p[2]+p[3];p[0]=7;void *(*resize)(void*,size_t)=realloc;p=resize(p,8);bad+=(p[0]!=7);p[7]=11;bad+=(p[7]!=11);free(p);char *end;double d=strtod(\"1.25x\",&end);bad+=(d!=1.25)+(end[0]!='x');float f=strtof(\"-1.5y\",&end);bad+=(f!=-1.5)+(end[0]!='y');long signed_value=strtol(\"-17z\",&end,10);bad+=(signed_value!=-17)+(end[0]!='z');unsigned long unsigned_value=strtoul(\"ff!\",&end,16);bad+=(unsigned_value!=255)+(end[0]!='!');long long wide_signed=strtoll(\"-123\",&end,10);bad+=(wide_signed!=-123)+end[0];unsigned long long wide_unsigned=strtoull(\"18446744073709551615\",&end,10);bad+=(wide_unsigned!=18446744073709551615ULL)+end[0];return bad+(atoi(\"-23\")!=-23)+(atol(\"123\")!=123)+(atoll(\"456\")!=456)+(atof(\"2.5\")!=2.5);}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
