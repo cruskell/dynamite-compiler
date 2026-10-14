@@ -125,6 +125,8 @@ Tentative declarations preserve an existing initializer.
 
 Adjacent string literals concatenate after escape decoding. Character arrays
 accept string initializers, infer their outer size, and zero-fill unused elements.
+The `u8` string prefix is accepted, and `\u` and `\U` escapes encode Unicode
+scalar values as UTF-8 bytes in string literals.
 Integer literals support octal notation and `U`, `L`, and `LL` suffixes. Integer
 types include signed and unsigned `char`, `short`, `int`, `long`, `long long`, and
 `_Bool`; both supported targets use 64-bit long and pointer types.
