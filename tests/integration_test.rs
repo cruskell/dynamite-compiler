@@ -1195,3 +1195,34 @@ fn inline_external_aggregate(output_option: &str) {
         Some(0)
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn static_assert_declarations(output_option: &str) {
+    let code = "#include <assert.h>\n#include <stddef.h>\nenum {N=4};static_assert(sizeof(long)==8,\"long size\");struct S{int x;_Static_assert(N==4,\"enum\");long y;char tail[];_Static_assert(sizeof(int)==4,\"after tail\");};_Static_assert(offsetof(struct S,y)==8,\"member offset\");int main(){int x=3;static_assert(N==4?1:0,\"conditional\");{_Static_assert((int)3.5==3,\"cast\");}return x-3;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "_Static_assert(0,\"failed\");int main(){return 0;}",
+    "int n;_Static_assert(n,\"variable\");int main(){return 0;}",
+    "_Static_assert(1.0,\"floating\");int main(){return 0;}",
+    "_Static_assert((int)((double)1+1),\"nonconstant cast\");int main(){return 0;}",
+    "_Static_assert(1,1);int main(){return 0;}",
+    "int main(){int n=3;int a[n];_Static_assert(sizeof(a)>0,\"vla\");return 0;}",
+], ["asm", "llvm"])]
+fn rejects_invalid_static_assert(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test]
+fn static_assert_reports_message() {
+    let result = std::panic::catch_unwind(|| {
+        dynamite_compiler::generate("_Static_assert(0,\"layout \" \"mismatch\");", "llvm", false)
+    })
+    .unwrap_err();
+    let message = result.downcast_ref::<String>().unwrap();
+    assert!(message.contains("static assertion failed: layout mismatch"));
+}

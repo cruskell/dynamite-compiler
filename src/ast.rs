@@ -889,6 +889,9 @@ impl<'a> AstBuilderImpl<'a> {
             let mut has_flexible_array = false;
             let mut align = 1;
             while self.attempt_reserved("}").is_none() {
+                if self.attempt_static_assert() {
+                    continue;
+                }
                 if has_flexible_array && !is_union {
                     self.error_logger.print_error_position(
                         self.tokens[self.cur].pos,
@@ -1100,7 +1103,49 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn attempt_static_assert(&mut self) -> bool {
+        let Some(token) = self.attempt_reserved("_Static_assert") else {
+            return false;
+        };
+        self.expect_reserved("(");
+        let expression = self.ternary();
+        if !Self::integer_constant(&expression)
+            || expression
+                .resolve_type()
+                .is_none_or(|ty| ty.integer_info().is_none())
+        {
+            self.error_logger.print_error_position(
+                token.pos,
+                "static assertion requires an integer constant expression",
+            );
+        }
+        self.expect_reserved(",");
+        let message = self.attempt(TokenType::Str).unwrap_or_else(|| {
+            self.error_logger.print_error_position(
+                self.tokens[self.cur].pos,
+                "static assertion requires a string literal message",
+            );
+            unreachable!()
+        });
+        self.expect_reserved(")");
+        self.expect_reserved(";");
+        if self.eval(&expression) == 0 {
+            let bytes = crate::tokenizer::decode_string_literal(&message.s_value).unwrap();
+            self.error_logger.print_error_position(
+                token.pos,
+                &format!(
+                    "static assertion failed: {}",
+                    String::from_utf8_lossy(&bytes)
+                ),
+            );
+        }
+        true
+    }
+
     fn global_definition(&mut self) {
+        if self.attempt_static_assert() {
+            return;
+        }
         self.offset_size = 0;
         self.pending_bounds.clear();
         self.vla_active.clear();
@@ -2171,6 +2216,12 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn stmt(&mut self) -> Node {
+        if self.attempt_static_assert() {
+            return Node {
+                nt: NodeType::Block,
+                ..Node::default()
+            };
+        }
         if self.tokens[self.cur].tt == TokenType::Ident && self.tokens[self.cur + 1].s_value == ":"
         {
             let token = self.attempt_ident().unwrap();

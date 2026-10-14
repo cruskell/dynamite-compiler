@@ -262,3 +262,11 @@ Calls use the separate external definition; no instruction inlining is promised.
 A non-inline or extern file-scope declaration makes the definition external.
 External inline-only definitions cannot define mutable local static objects or
 refer to identifiers with internal linkage. Local const static objects are allowed.
+
+## Static assertions
+
+C11 `_Static_assert(condition, "message");` declarations are supported at file,
+block, and struct/union scope. The condition must be an integer constant
+expression. A failed assertion reports its message at the declaration's source
+location and emits no code. `<assert.h>` provides the `static_assert` macro;
+runtime `assert` is not provided yet.
