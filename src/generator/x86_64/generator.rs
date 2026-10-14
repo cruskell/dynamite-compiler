@@ -76,7 +76,7 @@ impl<'a> AsmGenerator<'a> {
         } else {
             vec![
                 if let Os::MacOS = self.target_os {
-                    ".section __TEXT,__cstring,cstring_literals".into()
+                    ".section __TEXT,__const".into()
                 } else {
                     ".section .data".into()
                 },
@@ -86,6 +86,7 @@ impl<'a> AsmGenerator<'a> {
                     .map(|(i, token)| {
                         let bytes = token.encoded_string();
                         vec![
+                            format!("  .balign {}", token.string_encoding.unit_size()).into(),
                             format!("L_.str.{}:", i).into(),
                             format!(
                                 "  .byte {}",
