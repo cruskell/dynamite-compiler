@@ -12,7 +12,14 @@ mod varargs;
 #[path = "vla.rs"]
 mod vla;
 
-type Parameters = Vec<(Option<Token>, Type)>;
+#[derive(Clone, Copy, PartialEq)]
+enum AutomaticStorage {
+    Default,
+    Auto,
+    Register,
+}
+
+type Parameters = Vec<(Option<Token>, Type, bool)>;
 type ParameterScope = HashMap<String, Identifier>;
 type ResolvedDeclarator = (Option<Token>, Type, Parameters, ParameterScope, Vec<Token>);
 
@@ -54,7 +61,7 @@ impl Declarator {
                 (name, ty, parameters, scope, stars)
             }
             Self::Function(inner, parameters, variadic, scope, stars) => {
-                let types = parameters.iter().map(|(_, ty)| ty.clone()).collect();
+                let types = parameters.iter().map(|(_, ty, _)| ty.clone()).collect();
                 let ty = if variadic {
                     Type::VariadicFunc(types, Box::new(base))
                 } else {
@@ -112,8 +119,8 @@ pub enum Identifier {
     TypeDef(Type),
     Constant(i64),
     StaticObject(Type, String),
-    Local(Type, usize),
-    Dynamic(Type, usize),
+    Local(Type, usize, bool),
+    Dynamic(Type, usize, bool),
     Static(Type),
 }
 
@@ -471,7 +478,15 @@ impl<'a> AstBuilderImpl<'a> {
                             self.expect_reserved(")");
                             break;
                         }
-                        let base = self.expect_type();
+                        let (base, storage) =
+                            self.attempt_automatic_type(true).unwrap_or_else(|| {
+                                self.error_logger.print_error_position(
+                                    self.tokens[self.cur].pos,
+                                    "parameter type expected",
+                                );
+                                unreachable!()
+                            });
+                        let registered = storage == AutomaticStorage::Register;
                         if base == Type::Void
                             && parameters.is_empty()
                             && self.attempt_reserved(")").is_some()
@@ -502,10 +517,14 @@ impl<'a> AstBuilderImpl<'a> {
                         if let Some(name) = &name {
                             self.scope_stack.last_mut().unwrap().insert(
                                 name.s_value.clone(),
-                                Identifier::Local(ty.clone(), usize::MAX - parameters.len()),
+                                Identifier::Local(
+                                    ty.clone(),
+                                    usize::MAX - parameters.len(),
+                                    registered,
+                                ),
                             );
                         }
-                        parameters.push((name, ty));
+                        parameters.push((name, ty, registered));
                         if self.attempt_reserved(")").is_some() {
                             break;
                         }
@@ -641,7 +660,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             self.scope_stack.last_mut().unwrap().insert(
                 t.s_value.clone(),
-                Identifier::Dynamic(ty.clone(), self.offset_size),
+                Identifier::Dynamic(ty.clone(), self.offset_size, false),
             );
             return Self::dynamic_node(ty, self.offset_size, t);
         }
@@ -654,7 +673,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         self.scope_stack.last_mut().unwrap().insert(
             t.s_value.clone(),
-            Identifier::Local(ty.clone(), self.offset_size),
+            Identifier::Local(ty.clone(), self.offset_size, false),
         );
         Node {
             token: Some(t),
@@ -664,6 +683,78 @@ impl<'a> AstBuilderImpl<'a> {
             ..Node::default()
         }
     }
+    fn mark_registered(&mut self, node: &mut Node) {
+        let name = &node.token.as_ref().unwrap().s_value;
+        match self.scope_stack.last_mut().unwrap().get_mut(name).unwrap() {
+            Identifier::Local(_, _, registered) | Identifier::Dynamic(_, _, registered) => {
+                *registered = true
+            }
+            _ => unreachable!(),
+        }
+        node.registered = true;
+    }
+
+    fn attempt_automatic_type(&mut self, parameter: bool) -> Option<(Type, AutomaticStorage)> {
+        let saved = self.cur;
+        let mut storage: Option<Token> = None;
+        let mut qualifiers = Qualifiers::default();
+        loop {
+            if let Some(token) = self
+                .attempt_reserved("auto")
+                .or_else(|| self.attempt_reserved("register"))
+            {
+                if storage.is_some() || (parameter && token.s_value == "auto") {
+                    self.error_logger
+                        .print_error_position(token.pos, "invalid automatic storage class");
+                }
+                storage = Some(token);
+            } else {
+                let q = self.attempt_qualifiers();
+                if q == Qualifiers::default() {
+                    break;
+                }
+                qualifiers.constant |= q.constant;
+                qualifiers.volatile |= q.volatile;
+                qualifiers.restricted |= q.restricted;
+            }
+        }
+        let Some(mut ty) = self.attempt_type() else {
+            if storage.is_some() {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur].pos,
+                    "type expected after storage class",
+                );
+            }
+            self.cur = saved;
+            return None;
+        };
+        if let Some(token) = self
+            .attempt_reserved("auto")
+            .or_else(|| self.attempt_reserved("register"))
+        {
+            if storage.is_some() || (parameter && token.s_value == "auto") {
+                self.error_logger
+                    .print_error_position(token.pos, "invalid automatic storage class");
+            }
+            storage = Some(token);
+        }
+        if qualifiers != Qualifiers::default() {
+            ty = Type::Qualified(Box::new(ty), qualifiers);
+        }
+        if parameter && *ty.unqualified() == Type::Void {
+            if let Some(token) = &storage {
+                self.error_logger
+                    .print_error_position(token.pos, "storage class requires an object parameter");
+            }
+        }
+        let storage = match storage.as_ref().map(|token| token.s_value.as_str()) {
+            Some("register") => AutomaticStorage::Register,
+            Some("auto") => AutomaticStorage::Auto,
+            _ => AutomaticStorage::Default,
+        };
+        Some((ty, storage))
+    }
+
     fn attempt_qualifiers(&mut self) -> Qualifiers {
         let mut q = Qualifiers::default();
         loop {
@@ -1149,6 +1240,15 @@ impl<'a> AstBuilderImpl<'a> {
         self.offset_size = 0;
         self.pending_bounds.clear();
         self.vla_active.clear();
+        if let Some(token) = self
+            .attempt_reserved("auto")
+            .or_else(|| self.attempt_reserved("register"))
+        {
+            self.error_logger.print_error_position(
+                token.pos,
+                "automatic storage class requires block or parameter scope",
+            );
+        }
         let mut storage: Option<Token> = None;
         let mut inline = false;
         let mut qualifiers = Qualifiers::default();
@@ -1227,12 +1327,16 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 self.scope_stack.push(parameter_scope);
                 let mut args = vec![];
-                for (i, (name, ty)) in parameters.into_iter().enumerate() {
+                for (i, (name, ty, registered)) in parameters.into_iter().enumerate() {
                     let name = name.unwrap_or_else(|| Token {
                         s_value: format!(".parameter.{i}"),
                         ..token.clone()
                     });
-                    args.push(self.register_local_variable(name, ty));
+                    let mut argument = self.register_local_variable(name, ty);
+                    if registered {
+                        self.mark_registered(&mut argument);
+                    }
+                    args.push(argument);
                 }
                 self.scope_stack
                     .first_mut()
@@ -2399,11 +2503,13 @@ impl<'a> AstBuilderImpl<'a> {
             let mut cond: Option<Node> = None;
             let mut upd: Option<Node> = None;
             if self.attempt_reserved(";").is_none() {
-                ini = Some(if let Some(ty) = self.attempt_type() {
-                    self.local_variable_definition(ty)
-                } else {
-                    self.expr()
-                });
+                ini = Some(
+                    if let Some((ty, storage)) = self.attempt_automatic_type(false) {
+                        self.local_variable_definition_with_storage(ty, storage)
+                    } else {
+                        self.expr()
+                    },
+                );
                 self.expect_reserved(";");
             }
             if self.attempt_reserved(";").is_none() {
@@ -2451,14 +2557,14 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(";");
             return declaration;
         }
-        let node = if let Some(ty) = self.attempt_type() {
+        let node = if let Some((ty, storage)) = self.attempt_automatic_type(false) {
             if self.tokens[self.cur].s_value == ";" {
                 Node {
                     nt: NodeType::Block,
                     ..Node::default()
                 }
             } else {
-                self.local_variable_definition(ty)
+                self.local_variable_definition_with_storage(ty, storage)
             }
         } else if let Some(t) = self.attempt_reserved("continue") {
             let target = self.loop_stack.last().copied().unwrap_or_else(|| {
@@ -2658,9 +2764,28 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     pub fn local_variable_definition(&mut self, ty: Type) -> Node {
+        self.local_variable_definition_with_storage(ty, AutomaticStorage::Default)
+    }
+
+    fn local_variable_definition_with_storage(
+        &mut self,
+        ty: Type,
+        storage: AutomaticStorage,
+    ) -> Node {
         let mut vec = Vec::new();
         loop {
-            let node = self.new_local_variable(ty.clone());
+            let mut node = self.new_local_variable(ty.clone());
+            if storage != AutomaticStorage::Default
+                && node.resolve_type().unwrap().function_signature().is_some()
+            {
+                self.error_logger.print_error_position(
+                    node.token.as_ref().unwrap().pos,
+                    "automatic storage class requires an object declaration",
+                );
+            }
+            if storage == AutomaticStorage::Register {
+                self.mark_registered(&mut node);
+            }
             vec.extend(self.take_bounds());
             if node.resolve_type().unwrap().is_variable_array() {
                 if self.tokens[self.cur].s_value == "=" {
@@ -2687,6 +2812,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn member_node(node: Node, member: &StructMember, token: &Token) -> Node {
+        let registered = node.registered;
         let qualifiers = node
             .object_type()
             .map_or(Qualifiers::default(), |ty| ty.qualifiers());
@@ -2717,6 +2843,7 @@ impl<'a> AstBuilderImpl<'a> {
         };
         let mut result = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, pointer);
         result.bit_field = member.bit_field;
+        result.registered = registered;
         result
     }
 
@@ -3524,6 +3651,12 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if let Some(token) = self.attempt_reserved("&") {
             let operand = self.unary();
+            if operand.registered {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "cannot take the address of a register object",
+                );
+            }
             if operand.bit_field.is_some() {
                 self.error_logger
                     .print_error_position(token.pos, "cannot take the address of a bit-field");
@@ -3633,10 +3766,13 @@ impl<'a> AstBuilderImpl<'a> {
             }
             if let Some(ident) = self.resolve_name(&t.s_value) {
                 match ident {
-                    Identifier::Dynamic(ty, offset) => {
-                        Self::dynamic_node(ty.clone(), *offset, t.clone())
+                    Identifier::Dynamic(ty, offset, registered) => {
+                        let mut node = Self::dynamic_node(ty.clone(), *offset, t.clone());
+                        node.registered = *registered;
+                        node
                     }
-                    Identifier::Local(ty, offset) => Node {
+                    Identifier::Local(ty, offset, registered) => Node {
+                        registered: *registered,
                         token: Some(t.clone()),
                         nt: NodeType::LocalVar,
                         cty: Some(ty.clone()),

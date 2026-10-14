@@ -62,6 +62,7 @@ pub struct Node {
     pub bit_field: Option<BitField>,
     pub compound_literal: bool,
     pub volatile_access: bool,
+    pub registered: bool,
     pub cty: Option<Type>,
     pub token: Option<Token>,
     pub lhs: Option<Box<Node>>,

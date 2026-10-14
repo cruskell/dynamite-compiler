@@ -270,3 +270,11 @@ block, and struct/union scope. The condition must be an integer constant
 expression. A failed assertion reports its message at the declaration's source
 location and emits no code. `<assert.h>` provides the `static_assert` macro;
 runtime `assert` is not provided yet.
+
+## Automatic storage specifiers
+
+`auto` explicitly declares automatic block-scope objects. `register` is accepted
+for automatic objects and function parameters, including adjusted array
+parameters. It does not force hardware register allocation. Taking the address
+of a register object or its struct/union members is diagnosed. File-scope use,
+`auto` parameters, and conflicting automatic storage specifiers are rejected.
