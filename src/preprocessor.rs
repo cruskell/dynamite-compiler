@@ -47,6 +47,7 @@ impl IncludeDirectory {
             ("stdlib.h", include_str!("../include/stdlib.h")),
             ("stdarg.h", include_str!("../include/stdarg.h")),
             ("stddef.h", include_str!("../include/stddef.h")),
+            ("assert.h", include_str!("../include/assert.h")),
             ("stdint.h", include_str!("../include/stdint.h")),
             ("stdbool.h", include_str!("../include/stdbool.h")),
             ("string.h", include_str!("../include/string.h")),

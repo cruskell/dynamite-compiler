@@ -98,10 +98,12 @@ impl AstBuilderImpl<'_> {
             {
                 true
             }
-            NodeType::Cast | NodeType::BitNot => node
-                .lhs
-                .as_ref()
-                .is_some_and(|child| Self::integer_constant(child)),
+            NodeType::Cast => {
+                node.resolve_type()
+                    .is_some_and(|ty| ty.integer_info().is_some())
+                    && node.lhs.as_deref().is_some_and(Self::integer_constant)
+            }
+            NodeType::BitNot => node.lhs.as_deref().is_some_and(Self::integer_constant),
             NodeType::Add
             | NodeType::Sub
             | NodeType::Mul
