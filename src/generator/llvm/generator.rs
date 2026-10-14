@@ -7,6 +7,7 @@ use crate::{
     func::Func,
     global::{GlobalVariable, GlobalVariableData},
     node::{Node, NodeType},
+    token::Token,
 };
 
 #[derive(Debug)]
@@ -107,20 +108,22 @@ impl<'a> IrGenerator<'a> {
         .join("\n")
     }
 
-    fn gen_string_literals(&self, string_literals: &[String]) -> Vec<String> {
+    fn gen_string_literals(&self, string_literals: &[Token]) -> Vec<String> {
         string_literals
             .iter()
             .enumerate()
-            .map(|(i, value)| {
-                let bytes = crate::tokenizer::decode_string_literal(value).unwrap();
+            .map(|(i, token)| {
+                let bytes = token.encoded_string();
                 format!(
-                    "@.str.{} = private unnamed_addr constant [{} x i8] c\"{}\\00\", align 1",
+                    "@.str.{} = private unnamed_addr constant [{} x {}] c\"{}\", align {}",
                     i,
-                    bytes.len() + 1,
+                    bytes.len() / token.string_encoding.unit_size(),
+                    token.string_encoding.element_type(),
                     bytes
                         .iter()
                         .map(|byte| format!("\\{:02X}", byte))
-                        .collect::<String>()
+                        .collect::<String>(),
+                    token.string_encoding.unit_size()
                 )
             })
             .collect::<Vec<String>>()

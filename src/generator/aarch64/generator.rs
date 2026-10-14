@@ -12,6 +12,7 @@ use crate::generator::Os;
 use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
+use crate::token::Token;
 use std::fmt::Display;
 
 pub struct AsmGenerator<'a> {
@@ -69,7 +70,7 @@ impl<'a> AsmGenerator<'a> {
         )
     }
 
-    fn gen_string_literals(&self, string_literals: &[String]) -> Assembly {
+    fn gen_string_literals(&self, string_literals: &[Token]) -> Assembly {
         if string_literals.is_empty() {
             vec![]
         } else {
@@ -82,15 +83,14 @@ impl<'a> AsmGenerator<'a> {
                 string_literals
                     .iter()
                     .enumerate()
-                    .map(|(i, str)| {
+                    .map(|(i, token)| {
+                        let bytes = token.encoded_string();
                         vec![
                             format!("L_.str.{}:", i).into(),
                             format!(
                                 "  .byte {}",
-                                crate::tokenizer::decode_string_literal(str)
-                                    .unwrap()
+                                bytes
                                     .into_iter()
-                                    .chain([0])
                                     .map(|byte| byte.to_string())
                                     .collect::<Vec<_>>()
                                     .join(", ")
