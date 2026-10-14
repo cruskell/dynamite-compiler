@@ -13,11 +13,12 @@ use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use crate::token::Token;
-use std::fmt::Display;
+use std::{collections::HashSet, fmt::Display};
 
 pub struct AsmGenerator<'a> {
     error_logger: &'a dyn error::ErrorLogger,
     target_os: Os,
+    defined_symbols: HashSet<String>,
 }
 
 const ARGS_REG: [Register; 6] = [RDI, RSI, RDX, RCX, R8, R9];
@@ -33,10 +34,27 @@ impl<'a> AsmGenerator<'a> {
         Self {
             error_logger,
             target_os,
+            defined_symbols: HashSet::new(),
         }
     }
 
     fn generate(&self, ast: ProgramAst) -> Box<dyn crate::generator::Assembly> {
+        let generator = Self {
+            error_logger: self.error_logger,
+            target_os: self.target_os,
+            defined_symbols: ast
+                .functions
+                .iter()
+                .filter(|(_, function)| function.body.is_some() && !function.inline_only())
+                .map(|(name, _)| name.clone())
+                .chain(
+                    ast.global_variables
+                        .iter()
+                        .filter(|(_, object)| !object.declaration_only)
+                        .map(|(name, _)| name.clone()),
+                )
+                .collect(),
+        };
         Box::<Assembly>::new(
             vec![
                 ".intel_syntax noprefix".into(),
@@ -49,7 +67,7 @@ impl<'a> AsmGenerator<'a> {
                 ast.functions
                     .iter()
                     .map(|(name, func)| {
-                        self.gen_func(name, func, func.offset_size.div_ceil(16) * 16)
+                        generator.gen_func(name, func, func.offset_size.div_ceil(16) * 16)
                     })
                     .collect::<Vec<Assembly>>()
                     .into(),
@@ -61,10 +79,10 @@ impl<'a> AsmGenerator<'a> {
                 .into(),
                 ast.global_variables
                     .iter()
-                    .map(|(s, gv)| self.gen_global_variable(s, gv))
+                    .map(|(s, gv)| generator.gen_global_variable(s, gv))
                     .collect::<Vec<Assembly>>()
                     .into(),
-                self.gen_string_literals(ast.string_literals),
+                generator.gen_string_literals(ast.string_literals),
             ]
             .into(),
         )
@@ -1653,6 +1671,15 @@ impl<'a> AsmGenerator<'a> {
             NodeType::GlobalVar => vec![
                 if !node.dest.is_empty() {
                     Assembly::inst2(LEA, RAX, PtrAdd(RIP, node.dest.clone().replace('@', "L_")))
+                } else if !self.defined_symbols.contains(&node.global_name) {
+                    Assembly::inst2(
+                        MOV,
+                        RAX,
+                        PtrAdd(
+                            RIP,
+                            format!("{}@GOTPCREL", self.with_prefix(&node.global_name)),
+                        ),
+                    )
                 } else {
                     Assembly::inst2(LEA, RAX, PtrAdd(RIP, self.with_prefix(&node.global_name)))
                 },
