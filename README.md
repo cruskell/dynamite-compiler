@@ -160,6 +160,8 @@ File-scope `static` objects and functions have internal linkage. `extern` object
 declarations do not allocate storage unless accompanied by an initializer.
 Block-scope `static` objects use constant initializers and retain their values
 across calls; `extern` declarations refer to externally linked objects or functions.
+Old-style function definitions accept identifier lists and parameter declarations
+before the body; omitted parameter declarations default to `int`.
 ## Unions
 
 Union members share their starting address. The largest member and alignment

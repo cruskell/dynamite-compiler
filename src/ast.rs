@@ -466,69 +466,100 @@ impl<'a> AstBuilderImpl<'a> {
                     self.cur = saved;
                 }
                 if !empty_void && self.attempt_reserved(")").is_none() {
-                    loop {
-                        if self.attempt_reserved("...").is_some() {
-                            if parameters.is_empty() {
-                                self.error_logger.print_error_position(
-                                    self.tokens[self.cur - 1].pos,
-                                    "variadic function requires a fixed parameter",
-                                );
+                    let identifier_list_start = self.cur;
+                    let mut old_style_names = Vec::new();
+                    if let Some(name) = self.attempt(TokenType::Ident) {
+                        if matches!(self.tokens[self.cur].s_value.as_str(), "," | ")") {
+                            old_style_names.push(name);
+                            while self.attempt_reserved(",").is_some() {
+                                old_style_names.push(self.attempt_ident().unwrap_or_else(|| {
+                                    self.error_logger.print_error_position(
+                                        self.tokens[self.cur].pos,
+                                        "identifier expected in old-style parameter list",
+                                    );
+                                    unreachable!()
+                                }));
                             }
-                            variadic = true;
                             self.expect_reserved(")");
-                            break;
+                        } else {
+                            self.cur = identifier_list_start;
                         }
-                        let (base, storage, _alignment) =
-                            self.attempt_automatic_type(true).unwrap_or_else(|| {
-                                self.error_logger.print_error_position(
-                                    self.tokens[self.cur].pos,
-                                    "parameter type expected",
-                                );
-                                unreachable!()
-                            });
-                        let registered = storage == AutomaticStorage::Register;
-                        if base == Type::Void
-                            && parameters.is_empty()
-                            && self.attempt_reserved(")").is_some()
-                        {
-                            break;
-                        }
-                        self.parameter_depth += 1;
-                        let (name, ty, _, _, mut parameter_stars) = self.declarator().resolve(base);
-                        self.parameter_depth -= 1;
-                        stars.append(&mut parameter_stars);
-                        if matches!(ty.unqualified(), Type::Arr(..) | Type::Vla(..)) {
-                            self.validate_type_layout(ty.unqualified(), &self.tokens[self.cur]);
-                        }
-                        let qualifiers = ty.qualifiers();
-                        let ty = match ty.unqualified() {
-                            Type::Arr(child, _) | Type::Vla(child, _) => {
-                                let pointer = Type::Ptr(child.clone());
-                                if qualifiers == Qualifiers::default() {
-                                    pointer
-                                } else {
-                                    Type::Qualified(Box::new(pointer), qualifiers)
-                                }
-                            }
-                            Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
-                            _ => ty,
-                        };
-                        self.validate_type_layout(&ty, &self.tokens[self.cur]);
-                        if let Some(name) = &name {
+                    }
+                    if !old_style_names.is_empty() {
+                        for name in old_style_names {
+                            let ty = Type::I32;
                             self.scope_stack.last_mut().unwrap().insert(
                                 name.s_value.clone(),
-                                Identifier::Local(
-                                    ty.clone(),
-                                    usize::MAX - parameters.len(),
-                                    registered,
-                                ),
+                                Identifier::Local(ty.clone(), usize::MAX - parameters.len(), false),
                             );
+                            parameters.push((Some(name), ty, false));
                         }
-                        parameters.push((name, ty, registered));
-                        if self.attempt_reserved(")").is_some() {
-                            break;
+                    } else {
+                        loop {
+                            if self.attempt_reserved("...").is_some() {
+                                if parameters.is_empty() {
+                                    self.error_logger.print_error_position(
+                                        self.tokens[self.cur - 1].pos,
+                                        "variadic function requires a fixed parameter",
+                                    );
+                                }
+                                variadic = true;
+                                self.expect_reserved(")");
+                                break;
+                            }
+                            let (base, storage, _alignment) =
+                                self.attempt_automatic_type(true).unwrap_or_else(|| {
+                                    self.error_logger.print_error_position(
+                                        self.tokens[self.cur].pos,
+                                        "parameter type expected",
+                                    );
+                                    unreachable!()
+                                });
+                            let registered = storage == AutomaticStorage::Register;
+                            if base == Type::Void
+                                && parameters.is_empty()
+                                && self.attempt_reserved(")").is_some()
+                            {
+                                break;
+                            }
+                            self.parameter_depth += 1;
+                            let (name, ty, _, _, mut parameter_stars) =
+                                self.declarator().resolve(base);
+                            self.parameter_depth -= 1;
+                            stars.append(&mut parameter_stars);
+                            if matches!(ty.unqualified(), Type::Arr(..) | Type::Vla(..)) {
+                                self.validate_type_layout(ty.unqualified(), &self.tokens[self.cur]);
+                            }
+                            let qualifiers = ty.qualifiers();
+                            let ty = match ty.unqualified() {
+                                Type::Arr(child, _) | Type::Vla(child, _) => {
+                                    let pointer = Type::Ptr(child.clone());
+                                    if qualifiers == Qualifiers::default() {
+                                        pointer
+                                    } else {
+                                        Type::Qualified(Box::new(pointer), qualifiers)
+                                    }
+                                }
+                                Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
+                                _ => ty,
+                            };
+                            self.validate_type_layout(&ty, &self.tokens[self.cur]);
+                            if let Some(name) = &name {
+                                self.scope_stack.last_mut().unwrap().insert(
+                                    name.s_value.clone(),
+                                    Identifier::Local(
+                                        ty.clone(),
+                                        usize::MAX - parameters.len(),
+                                        registered,
+                                    ),
+                                );
+                            }
+                            parameters.push((name, ty, registered));
+                            if self.attempt_reserved(")").is_some() {
+                                break;
+                            }
+                            self.expect_reserved(",");
                         }
-                        self.expect_reserved(",");
                     }
                 }
                 let scope = self
@@ -1322,6 +1353,45 @@ impl<'a> AstBuilderImpl<'a> {
         true
     }
 
+    fn old_style_parameter_declarations(&mut self, parameters: &mut Parameters) {
+        while self.tokens[self.cur].s_value != "{" {
+            let base = self.attempt_type().unwrap_or_else(|| {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur].pos,
+                    "old-style parameter declaration expected",
+                );
+                unreachable!()
+            });
+            loop {
+                let (name, ty, _, _, _) = self.declarator().resolve(base.clone());
+                let name = name.unwrap_or_else(|| {
+                    self.error_logger
+                        .print_error_position(self.tokens[self.cur].pos, "parameter name expected");
+                    unreachable!()
+                });
+                let parameter = parameters
+                    .iter_mut()
+                    .find(|(parameter_name, _, _)| {
+                        parameter_name
+                            .as_ref()
+                            .is_some_and(|parameter_name| parameter_name.s_value == name.s_value)
+                    })
+                    .unwrap_or_else(|| {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "parameter declaration has no matching identifier",
+                        );
+                        unreachable!()
+                    });
+                parameter.1 = ty;
+                if self.attempt_reserved(",").is_none() {
+                    break;
+                }
+            }
+            self.expect_reserved(";");
+        }
+    }
+
     fn global_definition(&mut self) {
         if self.attempt_static_assert() {
             return;
@@ -1427,7 +1497,7 @@ impl<'a> AstBuilderImpl<'a> {
             return;
         }
         loop {
-            let (name, ty, parameters, parameter_scope, stars) =
+            let (name, mut ty, mut parameters, parameter_scope, stars) =
                 self.declarator().resolve(base.clone());
             let token = name.unwrap_or_else(|| {
                 self.error_logger
@@ -1446,6 +1516,17 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(token.pos, "inline requires a function declaration");
             }
             if ty.function_signature().is_some() {
+                if self.tokens[self.cur].s_value != "{"
+                    && self.tokens[self.cur].s_value != ";"
+                    && self.tokens[self.cur].s_value != ","
+                {
+                    self.old_style_parameter_declarations(&mut parameters);
+                    let (_, result, _) = ty.function_signature().unwrap();
+                    ty = Type::Func(
+                        parameters.iter().map(|(_, ty, _)| ty.clone()).collect(),
+                        Box::new(result),
+                    );
+                }
                 if alignment != 0 {
                     self.error_logger.print_error_position(
                         token.pos,

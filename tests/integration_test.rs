@@ -506,6 +506,19 @@ fn it_concatenates_adjacent_strings(output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix(["asm", "llvm"])]
+fn it_compiles_old_style_function_parameter_lists(output_option: &str) {
+    let code = "int sum(a, b) { return a + b; } int main() { return sum(19, 23) - 42; }";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn it_applies_old_style_function_parameter_declarations(output_option: &str) {
+    let code =
+        "int sum(a, b) int a; char b; { return a + b; } int main() { return sum(19, 23) - 42; }";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
 #[test_matrix([
     "int main(){char s[]=\"abc\";return sizeof(s)+s[3]-4;}",
     "char s[]=\"abc\"; int main(){return sizeof(s)+s[3]-4;}",
