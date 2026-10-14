@@ -301,7 +301,7 @@ impl<'a> AsmGenerator<'a> {
     }
 
     fn gen_func(&self, name: &str, func: &Func, offset: usize) -> Assembly {
-        if func.body.is_none() {
+        if func.body.is_none() || func.inline_only() {
             return vec![].into();
         }
         if func.cty.function_signature().unwrap().2
@@ -1095,7 +1095,11 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst2(MOV, RAX, 0),
                     if node.lhs.is_some() {
                         vec![
-                            Assembly::inst2(MOV, R10, PtrAdd(RSP, format!("{}", stack_size + 8))),
+                            // The saved callee sits above the alignment padding.
+                            Assembly::inst2(MOV, R10, PtrAdd(RSP, format!("{stack_size}"))),
+                            Assembly::inst2(ADD, R10, stack_size + 8),
+                            Assembly::inst2(ADD, R10, RSP),
+                            Assembly::inst2(MOV, R10, Ptr(R10, 8)),
                             Assembly::inst1(CALL, R10),
                         ]
                         .into()

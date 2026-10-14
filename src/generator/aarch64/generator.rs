@@ -318,7 +318,7 @@ impl<'a> AsmGenerator<'a> {
     }
 
     fn gen_func(&self, name: &str, func: &Func, offset: usize) -> Assembly {
-        if func.body.is_none() {
+        if func.body.is_none() || func.inline_only() {
             return vec![].into();
         }
         if func.cty.function_signature().unwrap().2

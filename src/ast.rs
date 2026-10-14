@@ -84,6 +84,7 @@ pub struct AstBuilderImpl<'a> {
     switch_stack: Vec<Vec<Node>>,
     switch_types: Vec<Type>,
     return_type: Option<Type>,
+    mutable_static: Option<Token>,
     return_pointer: Option<usize>,
     variadic_parameters: Option<Vec<Type>>,
     variadic_last: Option<usize>,
@@ -128,6 +129,15 @@ impl AstBuilder for AstBuilderImpl<'_> {
         for function in self.functions.values() {
             if let Some(body) = &function.body {
                 self.validate_void_expressions(body);
+                if function.inline_only() {
+                    if let Some(token) = &function.mutable_static {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "external inline definition cannot define a mutable static object",
+                        );
+                    }
+                    self.validate_inline_body(body);
+                }
             }
         }
         for function in self.functions.values_mut() {
@@ -231,6 +241,7 @@ impl<'a> AstBuilderImpl<'a> {
             switch_stack: vec![],
             switch_types: vec![],
             return_type: None,
+            mutable_static: None,
             return_pointer: None,
             variadic_parameters: None,
             variadic_last: None,
@@ -1093,9 +1104,31 @@ impl<'a> AstBuilderImpl<'a> {
         self.offset_size = 0;
         self.pending_bounds.clear();
         self.vla_active.clear();
-        let storage = self
-            .attempt_reserved("static")
-            .or_else(|| self.attempt_reserved("extern"));
+        let mut storage: Option<Token> = None;
+        let mut inline = false;
+        let mut qualifiers = Qualifiers::default();
+        loop {
+            if self.attempt_reserved("inline").is_some() {
+                inline = true;
+            } else if let Some(token) = self
+                .attempt_reserved("static")
+                .or_else(|| self.attempt_reserved("extern"))
+            {
+                if storage.is_some() {
+                    self.error_logger
+                        .print_error_position(token.pos, "conflicting storage classes");
+                }
+                storage = Some(token);
+            } else {
+                let q = self.attempt_qualifiers();
+                if q == Qualifiers::default() {
+                    break;
+                }
+                qualifiers.constant |= q.constant;
+                qualifiers.volatile |= q.volatile;
+                qualifiers.restricted |= q.restricted;
+            }
+        }
         let internal = storage.as_ref().is_some_and(|s| s.s_value == "static");
         let external = storage.as_ref().is_some_and(|s| s.s_value == "extern");
         if self.attempt_reserved("typedef").is_some() {
@@ -1103,8 +1136,18 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(";");
             return;
         }
-        let base = self.expect_type();
+        let mut base = self.expect_type();
+        if qualifiers != Qualifiers::default() {
+            base = Type::Qualified(Box::new(base), qualifiers);
+        }
+        inline |= self.attempt_reserved("inline").is_some();
         if self.attempt_reserved(";").is_some() {
+            if inline {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur - 1].pos,
+                    "inline requires a function declaration",
+                );
+            }
             return;
         }
         loop {
@@ -1121,6 +1164,10 @@ impl<'a> AstBuilderImpl<'a> {
                     token.pos,
                     "variably modified declaration requires block scope",
                 );
+            }
+            if inline && ty.function_signature().is_none() {
+                self.error_logger
+                    .print_error_position(token.pos, "inline requires a function declaration");
             }
             if ty.function_signature().is_some() {
                 if self.tokens[self.cur].s_value == "{" && !stars.is_empty() {
@@ -1164,6 +1211,14 @@ impl<'a> AstBuilderImpl<'a> {
                         .functions
                         .get(&token.s_value)
                         .is_some_and(|f| f.internal);
+                let external_definition = internal
+                    || external
+                    || !inline
+                    || self.functions[&token.s_value].external_definition;
+                self.functions
+                    .get_mut(&token.s_value)
+                    .unwrap()
+                    .external_definition = external_definition;
                 let (_, result, _) = ty.function_signature().unwrap();
                 self.return_pointer = if matches!(result, Type::Struct(_)) {
                     self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
@@ -1182,6 +1237,7 @@ impl<'a> AstBuilderImpl<'a> {
                 self.defined_labels.clear();
                 let mut bounds = self.take_bounds();
                 Self::resolve_parameter_bounds(&mut bounds, &args);
+                self.mutable_static = None;
                 let mut body = self.consume_block();
                 if let Some(body) = &mut body {
                     bounds.append(&mut body.children);
@@ -1212,6 +1268,9 @@ impl<'a> AstBuilderImpl<'a> {
                 self.functions.insert(
                     token.s_value.clone(),
                     Func {
+                        inline_definition: inline && body.is_some(),
+                        external_definition,
+                        mutable_static: self.mutable_static.take(),
                         body,
                         cty: ty,
                         token: Some(token),
@@ -1960,6 +2019,38 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn validate_inline_body(&self, node: &Node) {
+        let internal_object = self
+            .global_variables
+            .get(&node.global_name)
+            .is_some_and(|object| {
+                object.internal
+                    && !(node.global_name.starts_with(".static.")
+                        && object.ty.qualifiers().constant)
+            });
+        let internal_function = self
+            .functions
+            .get(&node.global_name)
+            .is_some_and(|function| function.internal);
+        if internal_object || internal_function {
+            self.error_logger.print_error_position(
+                node.token.as_ref().map_or(0, |token| token.pos),
+                "external inline definition cannot refer to an internal identifier",
+            );
+        }
+        for child in [
+            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.validate_inline_body(child);
+        }
+        for child in node.children.iter().chain(&node.args) {
+            self.validate_inline_body(child);
+        }
+    }
+
     fn validate_void_expressions(&self, node: &Node) {
         if matches!(
             node.nt,
@@ -2294,12 +2385,18 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(node) = self.consume_block() {
             return node;
         }
+        let inline = self.attempt_reserved("inline");
         let storage = self
             .attempt_reserved("static")
             .or_else(|| self.attempt_reserved("extern"));
-        if let Some(storage) = storage {
+        let inline = inline.or_else(|| self.attempt_reserved("inline"));
+        if storage.is_some() || inline.is_some() {
+            let mut storage = storage.unwrap_or_else(|| inline.clone().unwrap());
+            if storage.s_value == "inline" {
+                storage.s_value = "extern".to_owned();
+            }
             let ty = self.expect_type();
-            let declaration = self.local_static_definition(ty, &storage);
+            let declaration = self.local_static_definition(ty, &storage, inline.is_some());
             self.expect_reserved(";");
             return declaration;
         }
@@ -2370,7 +2467,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.cleanup_jump(node)
     }
 
-    fn local_static_definition(&mut self, base: Type, storage: &Token) -> Node {
+    fn local_static_definition(&mut self, base: Type, storage: &Token, inline: bool) -> Node {
         let mut bounds = vec![];
         loop {
             let (token, mut ty) = self.expect_ident_with_type(base.clone());
@@ -2418,6 +2515,13 @@ impl<'a> AstBuilderImpl<'a> {
                     break;
                 }
                 continue;
+            }
+            if inline {
+                self.error_logger
+                    .print_error_position(token.pos, "inline requires a function declaration");
+            }
+            if !external && !ty.qualifiers().constant && self.mutable_static.is_none() {
+                self.mutable_static = Some(token.clone());
             }
             let data = if self.attempt_reserved("=").is_some() {
                 if external {
