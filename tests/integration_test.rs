@@ -1320,3 +1320,25 @@ fn pointer_arithmetic_preserves_integer_index_values(output_option: &str) {
     let code = "int values[256]; unsigned char bytes[40001]; int main(){unsigned char u=255; signed char n=-128; unsigned short wide=40000; _Bool one=1; int *p=values+255; values[u]=7; p[n]=9; bytes[wide]=11; return values[255]+values[127]+bytes[40000]+(p-u==values)+(p+one==values+256)+(p+n==values+127)+(values+u==p)-31;}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn aggregate_copy_preserves_source_qualifiers(output_option: &str) {
+    let code = "struct S{int x;long y;};union U{long x;char bytes[8];};struct S copy(const struct S *p){struct S out;out=*p;return out;}int main(){const struct S source={7,11};const struct S *p=&source;struct S result=copy(p);volatile struct S observed={3,5};result=observed;const union U original={13};union U target;target=original;return result.x+result.y+target.x-21;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+    if output_option == "llvm" {
+        let ir = dynamite_compiler::generate(code, output_option, false);
+        assert!(ir.contains("load volatile i8"));
+    }
+}
+
+#[test_matrix([
+    "struct S{int x;};int main(){struct S a={1};const struct S b={2};b=a;return 0;}",
+    "struct S{int x;};int main(){const struct S a={1};struct S *p=&a;return p->x;}",
+    "struct A{int x;};struct B{int x;};int main(){struct A a;struct B b={1};a=b;return 0;}",
+], ["asm", "llvm"])]
+fn aggregate_copy_rejects_invalid_qualifier_conversions(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
