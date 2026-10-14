@@ -1308,3 +1308,9 @@ fn generic_selection_array_bounds(output_option: &str) {
     let code = "int first(int *a){return a[0];}int main(){int n=2;int (*p)(int*)=first;int value=_Generic(p,int(*)(int a[++n]):1,default:0);int size=_Generic(n,int:sizeof(int[++n]),default:0);return n+value+size-16;}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn global_byte_sized_integer_initializers(output_option: &str) {
+    let code = "unsigned char table[4]={0,127,128,255}; signed char negative=-7; _Bool enabled=1; _Bool bool_values[2]={0,1}; unsigned short wide=513; int main(){return table[0]+table[1]+table[2]+table[3]+negative+enabled+bool_values[0]+bool_values[1]+wide-1018;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
