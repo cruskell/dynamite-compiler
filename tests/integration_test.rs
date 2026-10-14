@@ -1264,3 +1264,41 @@ fn register_vla_size(output_option: &str) {
     let code = "int main(){int n=3;register int a[n];return sizeof(a)-12;}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn generic_selection_values(output_option: &str) {
+    let code = "#define KIND(x) _Generic((x),int:1,unsigned int:2,double:3,default:4)\nenum{N=_Generic(0,int:7,default:1)};int global=_Generic(0,unsigned int:3,int:9);int main(){int n=0;const int x=2;int a[2];const int ca[2];int *const p=a;return KIND(++n)+KIND(1U)+KIND(1.0)+KIND(x)+_Generic(a,int*:5,default:0)+_Generic(ca,const int*:6,default:0)+_Generic(p,int*:7,default:0)+_Generic((void)0,default:8)+N+global+n-49;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn generic_selection_preserves_expressions(output_option: &str) {
+    let code = "int add(int x){return x+1;}struct S{int x;};int main(){int a=1,b=2;struct S s={3};_Generic(a,int:a,default:b)=4;_Generic(s,struct S:s,default:s).x=5;int n=2;int value=_Generic(n,int:7,default:sizeof(int[++n]));int ignored=_Generic(sizeof(int[++n]),unsigned long:1,default:0);return _Generic(add,int(*)(int):add,default:add)(a)+s.x+n+value+ignored-20;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){return _Generic(0,int:1,int:2);}",
+    "typedef int I;int main(){return _Generic(0,int:1,I:2);}",
+    "int main(){return _Generic(0,default:1,default:2);}",
+    "int main(){return _Generic(0,double:1);}",
+    "int main(){return _Generic(0,void:1,default:2);}",
+    "struct S;int main(){return _Generic(0,struct S:1,default:2);}",
+    "int main(){int n=3;return _Generic(0,int[n]:1,default:2);}",
+    "int main(){return _Generic(0,int:1,default:1.0%2);}",
+    "int main(){return _Generic(1.0%2,int:1,default:2);}",
+    "int main(){const int x=1;_Generic(x,int:x,default:x)=2;return 0;}",
+    "int main(){register int x=1;int *p=&_Generic(x,int:x,default:x);return 0;}",
+], ["asm", "llvm"])]
+fn rejects_invalid_generic_selection(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn generic_qualifiers_and_nested_selection(output_option: &str) {
+    let code = "_Static_assert(_Generic(0,int:1,default:0),\"selected constant\");int main(){const int x=3;int n=0;int result=_Generic(x,const int:99,int:_Generic(1.0,float:88,double:++n));return result+n-2;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

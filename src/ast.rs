@@ -3717,8 +3717,89 @@ impl<'a> AstBuilderImpl<'a> {
         }
         self.prim()
     }
+    fn generic_selection(&mut self, token: Token) -> Node {
+        self.expect_reserved("(");
+        let bounds_start = self.pending_bounds.len();
+        let control = self.assign();
+        self.validate_void_expressions(&control);
+        self.pending_bounds.truncate(bounds_start);
+        let control_type = match control.resolve_type().unwrap() {
+            Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
+            ty @ (Type::Func(..) | Type::VariadicFunc(..)) => Type::Ptr(Box::new(ty)),
+            ty => ty,
+        };
+        self.expect_reserved(",");
+        let mut types: Vec<Type> = vec![];
+        let mut selected = None;
+        let mut fallback = None;
+        loop {
+            let association = self.tokens[self.cur].clone();
+            let ty = if self.attempt_reserved("default").is_some() {
+                if fallback.is_some() {
+                    self.error_logger.print_error_position(
+                        association.pos,
+                        "duplicate generic default association",
+                    );
+                }
+                None
+            } else {
+                let base = self.expect_type();
+                let (name, ty, _, _, _) = self.declarator().resolve(base);
+                self.validate_type_layout(&ty, &association);
+                if name.is_some()
+                    || ty.is_variably_modified()
+                    || ty.size_of() == 0
+                    || matches!(
+                        ty.unqualified(),
+                        Type::Void | Type::Func(..) | Type::VariadicFunc(..)
+                    )
+                {
+                    self.error_logger.print_error_position(
+                        association.pos,
+                        "generic association requires a complete non-variably-modified object type",
+                    );
+                }
+                if types.iter().any(|existing| {
+                    existing.qualifiers() == ty.qualifiers() && existing.compatible(&ty)
+                }) {
+                    self.error_logger.print_error_position(
+                        association.pos,
+                        "duplicate compatible generic association type",
+                    );
+                }
+                types.push(ty.clone());
+                Some(ty)
+            };
+            self.expect_reserved(":");
+            let bounds_start = self.pending_bounds.len();
+            let expression = self.assign();
+            self.validate_void_expressions(&expression);
+            let bounds = self.pending_bounds.split_off(bounds_start);
+            if let Some(ty) = ty {
+                if control_type.qualifiers() == ty.qualifiers() && control_type.compatible(&ty) {
+                    selected = Some((expression, bounds));
+                }
+            } else {
+                fallback = Some((expression, bounds));
+            }
+            if self.attempt_reserved(",").is_none() {
+                break;
+            }
+        }
+        self.expect_reserved(")");
+        let (expression, bounds) = selected.or(fallback).unwrap_or_else(|| {
+            self.error_logger
+                .print_error_position(token.pos, "generic selection has no compatible association");
+            unreachable!()
+        });
+        self.pending_bounds.extend(bounds);
+        expression
+    }
+
     fn prim(&mut self) -> Node {
-        let node = if self.attempt_reserved("(").is_some() {
+        let node = if let Some(token) = self.attempt_reserved("_Generic") {
+            self.generic_selection(token)
+        } else if self.attempt_reserved("(").is_some() {
             let node = self.expr();
             self.expect_reserved(")");
             node
