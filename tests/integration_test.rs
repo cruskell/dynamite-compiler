@@ -1378,3 +1378,25 @@ fn bundled_allocation_and_numeric_conversion_declarations(output_option: &str) {
     let code = "#include <stdlib.h>\n#include <stdlib.h>\nint main(){char *p=calloc(4,sizeof(char));int bad=p[0]+p[1]+p[2]+p[3];p[0]=7;void *(*resize)(void*,size_t)=realloc;p=resize(p,8);bad+=(p[0]!=7);p[7]=11;bad+=(p[7]!=11);free(p);char *end;double d=strtod(\"1.25x\",&end);bad+=(d!=1.25)+(end[0]!='x');float f=strtof(\"-1.5y\",&end);bad+=(f!=-1.5)+(end[0]!='y');long signed_value=strtol(\"-17z\",&end,10);bad+=(signed_value!=-17)+(end[0]!='z');unsigned long unsigned_value=strtoul(\"ff!\",&end,16);bad+=(unsigned_value!=255)+(end[0]!='!');long long wide_signed=strtoll(\"-123\",&end,10);bad+=(wide_signed!=-123)+end[0];unsigned long long wide_unsigned=strtoull(\"18446744073709551615\",&end,10);bad+=(wide_unsigned!=18446744073709551615ULL)+end[0];return bad+(atoi(\"-23\")!=-23)+(atol(\"123\")!=123)+(atoll(\"456\")!=456)+(atof(\"2.5\")!=2.5);}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn bundled_buffer_formatting_and_scanning_declarations(output_option: &str) {
+    let code = r#"
+#include <stdio.h>
+#include <stdio.h>
+#include <string.h>
+int main(){
+    char buffer[32];float f=1.5;
+    int (*format)(char*,const char*,...)=sprintf;
+    int length=format(buffer,"%d %.1f %s",17,f,"ok");
+    int bad=(length!=9)+(strcmp(buffer,"17 1.5 ok")!=0);
+    int n=0;double d=0;char word[4];
+    int count=sscanf(buffer,"%d %lf %3s",&n,&d,word);
+    bad+=(count!=3)+(n!=17)+(d!=1.5)+(strcmp(word,"ok")!=0);
+    char small[3];length=snprintf(small,sizeof(small),"%s","abcd");
+    bad+=(length!=4)+(small[0]!='a')+(small[1]!='b')+small[2];
+    bad+=(snprintf(NULL,0,"%d",123)!=3);
+    return bad;
+}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
