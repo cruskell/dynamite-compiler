@@ -1354,6 +1354,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn old_style_parameter_declarations(&mut self, parameters: &mut Parameters) {
+        let mut declared = HashSet::new();
         while self.tokens[self.cur].s_value != "{" {
             let base = self.attempt_type().unwrap_or_else(|| {
                 self.error_logger.print_error_position(
@@ -1363,12 +1364,16 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             loop {
-                let (name, ty, _, _, _) = self.declarator().resolve(base.clone());
+                let (name, mut ty, _, _, _) = self.declarator().resolve(base.clone());
                 let name = name.unwrap_or_else(|| {
                     self.error_logger
                         .print_error_position(self.tokens[self.cur].pos, "parameter name expected");
                     unreachable!()
                 });
+                if !declared.insert(name.s_value.clone()) {
+                    self.error_logger
+                        .print_error_position(name.pos, "parameter is declared more than once");
+                }
                 let parameter = parameters
                     .iter_mut()
                     .find(|(parameter_name, _, _)| {
@@ -1383,6 +1388,11 @@ impl<'a> AstBuilderImpl<'a> {
                         );
                         unreachable!()
                     });
+                ty = match ty.unqualified() {
+                    Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child.clone()),
+                    Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
+                    _ => ty,
+                };
                 parameter.1 = ty;
                 if self.attempt_reserved(",").is_none() {
                     break;
