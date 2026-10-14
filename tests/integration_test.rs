@@ -1366,3 +1366,9 @@ fn addresses_of_imported_functions_and_objects(output_option: &str) {
         Some(0)
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn bundled_character_classification_header(output_option: &str) {
+    let code = "#include <ctype.h>\n#include <ctype.h>\n#include <stdio.h>\nint main(){int (*lower)(int)=tolower;return !isalnum('7')+!isalpha('Z')+!isblank(' ')+!iscntrl('\\n')+!isdigit('2')+!isgraph('!')+!islower('a')+!isprint(' ')+!ispunct('!')+!isspace('\\t')+!isupper('A')+!isxdigit('f')+(lower('A')!='a')+(toupper('z')!='Z')+(tolower(EOF)!=EOF)+(isalpha(EOF)!=0)+(isdigit((unsigned char)255)!=0);}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
