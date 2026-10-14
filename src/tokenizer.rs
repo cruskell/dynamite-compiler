@@ -47,50 +47,66 @@ const RESERVED_SYMBOLS: [&str; 51] = [
 ];
 
 pub(crate) fn decode_string_literal(value: &str) -> Option<Vec<u8>> {
-    let mut bytes = value.bytes().peekable();
+    let mut chars = value.chars().peekable();
     let mut decoded = vec![];
-    while let Some(byte) = bytes.next() {
-        if byte != b'\\' {
-            decoded.push(byte);
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            let mut encoded = [0; 4];
+            decoded.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
             continue;
         }
-        let escaped = bytes.next()?;
-        decoded.push(match escaped {
-            b'a' => 7,
-            b'b' => 8,
-            b'f' => 12,
-            b'n' => 10,
-            b'r' => 13,
-            b't' => 9,
-            b'v' => 11,
-            b'\\' | b'\'' | b'"' | b'?' => escaped,
-            b'0'..=b'7' => {
-                let mut value = (escaped - b'0') as u16;
+        let escaped = chars.next()?;
+        match escaped {
+            'a' => decoded.push(7),
+            'b' => decoded.push(8),
+            'f' => decoded.push(12),
+            'n' => decoded.push(10),
+            'r' => decoded.push(13),
+            't' => decoded.push(9),
+            'v' => decoded.push(11),
+            '\\' | '\'' | '"' | '?' => decoded.push(escaped as u8),
+            '0'..='7' => {
+                let mut value = escaped.to_digit(8)? as u16;
                 for _ in 0..2 {
-                    if let Some(b'0'..=b'7') = bytes.peek() {
-                        value = value * 8 + (bytes.next()? - b'0') as u16;
+                    if chars
+                        .peek()
+                        .is_some_and(|character| matches!(character, '0'..='7'))
+                    {
+                        value = value * 8 + chars.next()?.to_digit(8)? as u16;
                     } else {
                         break;
                     }
                 }
-                u8::try_from(value).ok()?
+                decoded.push(u8::try_from(value).ok()?);
             }
-            b'x' => {
+            'x' => {
                 let mut value = 0u16;
                 let mut count = 0;
-                while bytes.peek().is_some_and(u8::is_ascii_hexdigit) {
+                while chars.peek().is_some_and(char::is_ascii_hexdigit) {
                     value = value
                         .checked_mul(16)?
-                        .checked_add((bytes.next()? as char).to_digit(16)? as u16)?;
+                        .checked_add(chars.next()?.to_digit(16)? as u16)?;
                     count += 1;
                 }
                 if count == 0 {
                     return None;
                 }
-                u8::try_from(value).ok()?
+                decoded.push(u8::try_from(value).ok()?);
+            }
+            'u' | 'U' => {
+                let digits = if escaped == 'u' { 4 } else { 8 };
+                let mut value = 0u32;
+                for _ in 0..digits {
+                    value = value
+                        .checked_mul(16)?
+                        .checked_add(chars.next()?.to_digit(16)?)?;
+                }
+                let character = char::from_u32(value)?;
+                let mut encoded = [0; 4];
+                decoded.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
             }
             _ => return None,
-        });
+        }
     }
     Some(decoded)
 }
@@ -257,6 +273,10 @@ impl Tokenizer {
                     continue;
                 }
             }
+            let utf8_prefix = code[pos..].starts_with("u8\"");
+            if utf8_prefix {
+                pos += 2;
+            }
             match bytes[pos] {
                 byte if byte.is_ascii_whitespace() => pos += 1,
                 b'0'..=b'9' => {
@@ -360,7 +380,8 @@ impl Tokenizer {
                     if pos >= bytes.len() {
                         return Err(error::SyntaxError::new(start, "unterminated literal"));
                     }
-                    let value = &code[start + 1..pos];
+                    let value_start = if utf8_prefix { start + 3 } else { start + 1 };
+                    let value = &code[value_start..pos];
                     let decoded = decode_string_literal(value)
                         .ok_or_else(|| error::SyntaxError::new(start, "invalid escape sequence"))?;
                     pos += 1;
