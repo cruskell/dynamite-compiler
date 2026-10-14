@@ -6,6 +6,9 @@ use crate::token::Token;
 pub struct Func {
     pub body: Option<Node>,
     pub internal: bool,
+    pub inline_definition: bool,
+    pub external_definition: bool,
+    pub mutable_static: Option<Token>,
     pub return_pointer: Option<usize>,
     pub cty: Type,
     pub offset_size: usize,
@@ -14,6 +17,10 @@ pub struct Func {
 }
 
 impl Func {
+    pub fn inline_only(&self) -> bool {
+        self.inline_definition && !self.external_definition && !self.internal
+    }
+
     pub fn to_debug_string(&self) -> String {
         format!(
             "args:\n{:?}\nbody:\n{:?}",

@@ -252,3 +252,13 @@ member access.
 and adjusted array parameters. It expresses the caller's aliasing obligations;
 the compiler does not perform alias-based optimization or runtime checks.
 Non-pointer and function-pointer applications are diagnosed.
+
+## Inline function declarations
+
+`static inline` and `extern inline` definitions emit internal and external
+functions respectively. A plain external `inline` definition supplies no
+external definition when every file-scope declaration is inline without extern.
+Calls use the separate external definition; no instruction inlining is promised.
+A non-inline or extern file-scope declaration makes the definition external.
+External inline-only definitions cannot define mutable local static objects or
+refer to identifiers with internal linkage. Local const static objects are allowed.

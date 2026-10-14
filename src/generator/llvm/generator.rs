@@ -422,7 +422,7 @@ impl<'a> IrGenerator<'a> {
         if variadic {
             parameters.push("...".into());
         }
-        if func.body.is_none() {
+        if func.body.is_none() || func.inline_only() {
             return format!("declare {return_type} @{name}({})", parameters.join(", "));
         }
         let mut number = 0;
@@ -748,7 +748,7 @@ impl<'a> IrGenerator<'a> {
         {
             return self.aggregate_function(name, func);
         }
-        if func.body.is_none() {
+        if func.body.is_none() || func.inline_only() {
             let (args, result, variadic) = func.cty.function_signature().unwrap();
             let mut arguments = args
                 .iter()

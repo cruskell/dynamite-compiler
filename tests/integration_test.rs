@@ -1144,3 +1144,52 @@ fn rejects_invalid_restrict_types(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix([
+    "static inline int add(int x){return x+1;}int main(){int (*p)(int)=add;return p(6)-7;}",
+    "extern inline int add(int x){return x+1;}int main(){return add(6)-7;}",
+    "inline int add(int x){return x+1;}int add(int x);int main(){return add(6)-7;}",
+    "int add(int x);inline int add(int x){return x+1;}int main(){return add(6)-7;}",
+    "const inline static int add(int x){static int count;return x+ ++count;}int main(){return add(6)-7;}",
+    "extern inline int add(int x){return x+1;}int main(){inline int add(int x);return add(6)-7;}",
+], ["asm", "llvm"])]
+fn inline_function_definitions(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn inline_uses_external_definition(output_option: &str) {
+    let code = "inline int value(void){static const int local=1;return local;}int main(){return value()-7;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some("int value(void){return 7;}"))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "inline int object;int main(){return 0;}",
+    "inline int mutable(void){static int x;return 0;}int main(){return 0;}",
+    "static int internal;inline int reference(void){return internal;}int main(){return 0;}",
+    "static int hidden(void){return 1;}inline int caller(void){return hidden();}int main(){return 0;}",
+    "int main(){inline int local;return 0;}",
+], ["asm", "llvm"])]
+fn rejects_invalid_inline(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn inline_external_aggregate(output_option: &str) {
+    let code = "struct Pair{long a;long b;};inline struct Pair value(struct Pair p){p.a=1;return p;}int main(){struct Pair p={3,4};p=value(p);return p.a+p.b-11;}";
+    let companion = "struct Pair{long a;long b;};struct Pair value(struct Pair p){p.a=7;return p;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
