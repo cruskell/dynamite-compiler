@@ -115,7 +115,8 @@ Compiler diagnostics retain source file names and original line numbers,
 including included files. Columns within macro-expanded lines are approximate.
 Preprocessing uses a small bundled include environment: `stdio.h` exposes the
 builtin `printf`, `puts`, and `putchar` API and `EOF`; `stdlib.h` exposes `exit`,
-`EXIT_SUCCESS`, `EXIT_FAILURE`, `malloc`, and `free`; `stdarg.h` exposes variadic
+`EXIT_SUCCESS`, `EXIT_FAILURE`, allocation functions (`malloc`, `calloc`,
+`realloc`, `free`), and integer/float text conversions; `stdarg.h` exposes variadic
 argument access. Host system headers are not searched. Custom
 headers must use the compiler's supported C-like subset.
 
