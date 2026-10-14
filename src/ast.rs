@@ -3288,7 +3288,7 @@ impl<'a> AstBuilderImpl<'a> {
             let temporary = Node {
                 nt: NodeType::LocalVar,
                 token: Some(token.clone()),
-                cty: Some(Type::Ptr(Box::new(ty.clone()))),
+                cty: Some(Type::Ptr(Box::new(operand.object_type().unwrap()))),
                 offset: Some(self.offset_size),
                 ..Node::default()
             };
@@ -3304,10 +3304,16 @@ impl<'a> AstBuilderImpl<'a> {
             let bytes = addresses
                 .iter()
                 .map(|address| {
+                    let qualifiers = address.dest_type().unwrap().qualifiers();
+                    let byte_type = if qualifiers == Qualifiers::default() {
+                        Type::I8
+                    } else {
+                        Type::Qualified(Box::new(Type::I8), qualifiers)
+                    };
                     let pointer = Node {
                         nt: NodeType::Cast,
                         token: Some(token.clone()),
-                        cty: Some(Type::Ptr(Box::new(Type::I8))),
+                        cty: Some(Type::Ptr(Box::new(byte_type))),
                         lhs: Some(Box::new(address.clone())),
                         ..Node::default()
                     };
