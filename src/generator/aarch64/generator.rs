@@ -252,8 +252,12 @@ impl<'a> AsmGenerator<'a> {
             )
             .into(),
             Type::Integer { .. } | Type::Bool => format!(
-                "  .{}byte {}",
-                ty.size_of(),
+                "  {} {}",
+                if ty.size_of() == 1 {
+                    ".byte".to_string()
+                } else {
+                    format!(".{}byte", ty.size_of())
+                },
                 if let Some(GlobalVariableData::Elem(value)) = data {
                     ty.convert_constant(value.parse().unwrap()).to_string()
                 } else {
