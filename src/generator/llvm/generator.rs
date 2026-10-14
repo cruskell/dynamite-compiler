@@ -114,16 +114,24 @@ impl<'a> IrGenerator<'a> {
             .enumerate()
             .map(|(i, token)| {
                 let bytes = token.encoded_string();
+                let width = token.string_encoding.unit_size();
+                let element_type = token.string_encoding.element_type();
+                let initializer = if width == 1 {
+                    format!(
+                        "c\"{}\"",
+                        bytes.iter().map(|byte| format!("\\{:02X}", byte)).collect::<String>()
+                    )
+                } else {
+                    let elements = bytes.chunks_exact(width).map(|chunk| {
+                        let mut value = [0u8; 4];
+                        value[..width].copy_from_slice(chunk);
+                        format!("{element_type} {}", u32::from_le_bytes(value))
+                    }).collect::<Vec<_>>().join(", ");
+                    format!("[{elements}]")
+                };
                 format!(
-                    "@.str.{} = private unnamed_addr constant [{} x {}] c\"{}\", align {}",
-                    i,
-                    bytes.len() / token.string_encoding.unit_size(),
-                    token.string_encoding.element_type(),
-                    bytes
-                        .iter()
-                        .map(|byte| format!("\\{:02X}", byte))
-                        .collect::<String>(),
-                    token.string_encoding.unit_size()
+                    "@.str.{i} = private unnamed_addr constant [{} x {element_type}] {initializer}, align {width}",
+                    bytes.len() / width,
                 )
             })
             .collect::<Vec<String>>()

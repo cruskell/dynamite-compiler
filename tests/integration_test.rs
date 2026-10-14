@@ -1342,3 +1342,15 @@ fn aggregate_copy_rejects_invalid_qualifier_conversions(code: &str, output_optio
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn string_literals_retain_array_type(output_option: &str) {
+    let code = r#"char *global="hello"+2;char (*array_pointer)[4]=&"abc";int main(){char *selected=1?"x":"longer";return sizeof("")+sizeof("ab")+sizeof("a\0b")+sizeof("a" "bc")+sizeof(u8"é")+sizeof(u"😀")+sizeof(U"😀")+sizeof(L"ab")+sizeof(*array_pointer)+global[0]+(*array_pointer)[2]+selected[0]-372;}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn prefixed_string_literal_code_units(output_option: &str) {
+    let code = r#"int main(){unsigned short *u=u"😀";unsigned int *v=U"😀";unsigned int *w=L"ab";return (u[0]!=55357)+(u[1]!=56832)+u[2]+(v[0]!=128512)+v[1]+(w[0]!=97)+(w[1]!=98)+w[2]+("a\0b"[2]!=98);}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

@@ -62,7 +62,9 @@ Comma expressions evaluate operands from left to right and produce the last valu
 Commas in declarations, initializers, and argument lists remain separators.
 
 `sizeof` accepts expressions and type names, including pointers and fixed arrays.
-Its expression operand is not evaluated.
+Its expression operand is not evaluated. String literals retain their array type
+for `sizeof` and address-taking, including the terminating code unit; ordinary
+value uses decay to pointers.
 
 Fixed array dimensions accept positive integer constant expressions.
 

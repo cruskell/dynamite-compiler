@@ -1913,7 +1913,14 @@ impl<'a> AstBuilderImpl<'a> {
                     matches!(ty, Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..))
                 }) =>
             {
-                Some((node.global_name.clone(), 0))
+                Some((
+                    if node.dest.is_empty() {
+                        node.global_name.clone()
+                    } else {
+                        node.dest.trim_start_matches('@').to_string()
+                    },
+                    0,
+                ))
             }
             NodeType::Addr => {
                 let child = node.lhs.as_ref().unwrap();
@@ -4093,17 +4100,12 @@ impl<'a> AstBuilderImpl<'a> {
                     Type::integer(32, false)
                 }
             };
-            let node = Node {
-                token: Some(t.clone()),
-                nt: NodeType::GlobalVar,
-                dest: self.new_string_literal(&t),
-                ..Node::default()
-            };
+            let count = t.encoded_string().len() / t.string_encoding.unit_size();
             Node {
                 token: Some(t.clone()),
-                nt: NodeType::Addr,
-                cty: Some(Type::Ptr(Box::new(element_type))),
-                lhs: Some(Box::new(node)),
+                nt: NodeType::GlobalVar,
+                cty: Some(Type::Arr(Box::new(element_type), count)),
+                dest: self.new_string_literal(&t),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt(TokenType::Float) {
