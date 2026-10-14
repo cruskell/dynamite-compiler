@@ -1088,7 +1088,6 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                     let flexible = matches!(member_type.unqualified(), Type::Arr(_, 0));
                     let member_alignment = member_type.align_of().max(requested_alignment);
-                    align = align.max(member_alignment);
                     if flexible {
                         if is_union || members.is_empty() || name.is_none() {
                             self.error_logger.print_error_position(position.pos,
@@ -1132,8 +1131,11 @@ impl<'a> AstBuilderImpl<'a> {
                         if is_union {
                             bit_address = 0;
                         }
-                        bit_address =
-                            bit_address.div_ceil(member_alignment * 8) * member_alignment * 8;
+                        if requested_alignment > member_type.align_of() {
+                            bit_address =
+                                bit_address.div_ceil(member_alignment * 8) * member_alignment * 8;
+                            align = align.max(member_alignment);
+                        }
                         if width == 0 || usize::from(width) > container - bit_address % container {
                             bit_address = bit_address.div_ceil(container) * container;
                         }
