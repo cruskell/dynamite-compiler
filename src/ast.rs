@@ -106,13 +106,13 @@ pub struct AstBuilderImpl<'a> {
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
     pub global_variables: HashMap<String, GlobalVariable>,
-    pub string_literals: Vec<String>,
+    pub string_literals: Vec<Token>,
 }
 
 pub struct ProgramAst<'a> {
     pub functions: &'a HashMap<String, Func>,
     pub global_variables: &'a HashMap<String, GlobalVariable>,
-    pub string_literals: &'a Vec<String>,
+    pub string_literals: &'a Vec<Token>,
 }
 
 pub enum Identifier {
@@ -595,10 +595,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn initializer_count(&mut self) -> usize {
         if let Some(token) = self.attempt(TokenType::Str) {
-            return crate::tokenizer::decode_string_literal(&token.s_value)
-                .unwrap()
-                .len()
-                + 1;
+            return token.string_bytes.len() / token.string_encoding.unit_size() + 1;
         }
         self.expect_reserved("{");
         let mut depth = 0;
@@ -1313,7 +1310,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.expect_reserved(")");
         self.expect_reserved(";");
         if self.eval(&expression) == 0 {
-            let bytes = crate::tokenizer::decode_string_literal(&message.s_value).unwrap();
+            let bytes = message.string_bytes.clone();
             self.error_logger.print_error_position(
                 token.pos,
                 &format!(
@@ -1808,25 +1805,34 @@ impl<'a> AstBuilderImpl<'a> {
         Self::set_global_element(&child, &mut elements[path[0]], &path[1..], value);
     }
     fn global_initializer(&mut self, ty: &Type) -> GlobalVariableData {
-        if matches!(ty.unqualified(),Type::Arr(child,_) if *child.unqualified()==Type::I8)
+        if matches!(ty.unqualified(), Type::Arr(child, _) if child.unqualified().size_of() == self.tokens[self.cur].string_encoding.unit_size())
             && self.tokens[self.cur].tt == TokenType::Str
         {
             let token = self.attempt(TokenType::Str).unwrap();
-            let mut bytes = crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
+            let mut bytes = token.string_bytes.clone();
+            let unit_size = token.string_encoding.unit_size();
             let Type::Arr(_, size) = ty.unqualified() else {
                 unreachable!()
             };
-            if *size != 0 && bytes.len() > *size {
+            if *size != 0 && bytes.len() / unit_size > *size {
                 self.error_logger
                     .print_error_position(token.pos, "string initializer is too long");
             }
-            if *size == 0 || bytes.len() < *size {
-                bytes.push(0);
+            if *size == 0 || bytes.len() / unit_size < *size {
+                bytes.extend(vec![0; unit_size]);
             }
             return GlobalVariableData::Arr(
                 bytes
-                    .into_iter()
-                    .map(|b| GlobalVariableData::Elem(b.to_string()))
+                    .chunks(unit_size)
+                    .map(|unit| {
+                        GlobalVariableData::Elem(
+                            unit.iter()
+                                .enumerate()
+                                .map(|(index, byte)| usize::from(*byte) << (index * 8))
+                                .sum::<usize>()
+                                .to_string(),
+                        )
+                    })
                     .collect(),
             );
         }
@@ -2897,26 +2903,34 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "block extern cannot have an initializer");
                 }
-                if matches!(&ty,Type::Arr(child,_) if **child==Type::I8)
+                if matches!(&ty, Type::Arr(child, _) if child.unqualified().size_of() == self.tokens[self.cur].string_encoding.unit_size())
                     && self.tokens[self.cur].tt == TokenType::Str
                 {
                     let string = self.attempt(TokenType::Str).unwrap();
-                    let mut bytes =
-                        crate::tokenizer::decode_string_literal(&string.s_value).unwrap();
+                    let mut bytes = string.string_bytes.clone();
                     let Type::Arr(_, size) = &ty else {
                         unreachable!()
                     };
-                    if *size != 0 && bytes.len() > *size {
+                    let unit_size = string.string_encoding.unit_size();
+                    if *size != 0 && bytes.len() / unit_size > *size {
                         self.error_logger
                             .print_error_position(string.pos, "string initializer is too long");
                     }
-                    if *size == 0 || bytes.len() < *size {
-                        bytes.push(0);
+                    if *size == 0 || bytes.len() / unit_size < *size {
+                        bytes.extend(vec![0; unit_size]);
                     }
                     Some(GlobalVariableData::Arr(
                         bytes
-                            .into_iter()
-                            .map(|byte| GlobalVariableData::Elem(byte.to_string()))
+                            .chunks(unit_size)
+                            .map(|unit| {
+                                GlobalVariableData::Elem(
+                                    unit.iter()
+                                        .enumerate()
+                                        .map(|(index, byte)| usize::from(*byte) << (index * 8))
+                                        .sum::<usize>()
+                                        .to_string(),
+                                )
+                            })
                             .collect(),
                     ))
                 } else {
@@ -3146,15 +3160,16 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
-        if matches!(node.resolve_type(), Some(Type::Arr(child, _)) if *child.unqualified() == Type::I8)
+        if matches!(node.resolve_type(), Some(Type::Arr(child, _)) if child.unqualified().size_of() == self.tokens[self.cur].string_encoding.unit_size())
             && self.tokens[self.cur].tt == TokenType::Str
         {
             let token = self.attempt(TokenType::Str).unwrap();
-            let bytes = crate::tokenizer::decode_string_literal(&token.s_value).unwrap();
+            let bytes = token.string_bytes.clone();
+            let unit_size = token.string_encoding.unit_size();
             let Type::Arr(_, size) = node.resolve_type().unwrap() else {
                 unreachable!()
             };
-            if bytes.len() > size {
+            if bytes.len() / unit_size > size {
                 self.error_logger
                     .print_error_position(token.pos, "string initializer is too long");
             }
@@ -3169,7 +3184,16 @@ impl<'a> AstBuilderImpl<'a> {
                             Self::array_element(node, index, &token),
                             Node::new_with_num(
                                 Some(token.clone()),
-                                bytes.get(index).copied().unwrap_or(0) as usize,
+                                (0..unit_size)
+                                    .map(|byte| {
+                                        usize::from(
+                                            bytes
+                                                .get(index * unit_size + byte)
+                                                .copied()
+                                                .unwrap_or(0),
+                                        ) << (byte * 8)
+                                    })
+                                    .sum(),
                             ),
                         )
                     })
@@ -4054,16 +4078,25 @@ impl<'a> AstBuilderImpl<'a> {
             node
         } else if let Some(t) = self.attempt(TokenType::Str) {
             // String literal
+            let element_type = match t.string_encoding {
+                crate::token::StringEncoding::Narrow | crate::token::StringEncoding::Utf8 => {
+                    Type::I8
+                }
+                crate::token::StringEncoding::Utf16 => Type::integer(16, false),
+                crate::token::StringEncoding::Utf32 | crate::token::StringEncoding::Wide => {
+                    Type::integer(32, false)
+                }
+            };
             let node = Node {
                 token: Some(t.clone()),
                 nt: NodeType::GlobalVar,
-                dest: self.new_string_literal(&t.s_value),
+                dest: self.new_string_literal(&t),
                 ..Node::default()
             };
             Node {
                 token: Some(t.clone()),
                 nt: NodeType::Addr,
-                cty: Some(Type::Ptr(Box::new(Type::I8))),
+                cty: Some(Type::Ptr(Box::new(element_type))),
                 lhs: Some(Box::new(node)),
                 ..Node::default()
             }
@@ -4358,8 +4391,8 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn new_string_literal(&mut self, s: &str) -> String {
-        self.string_literals.push(s.to_string());
+    fn new_string_literal(&mut self, token: &Token) -> String {
+        self.string_literals.push(token.clone());
         format!("@.str.{}", self.string_literals.len() - 1)
     }
 
@@ -4510,30 +4543,35 @@ mod tests {
                 pos: 0,
                 s_value: "int".to_string(),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Ident,
                 pos: 0,
                 i_value: 0,
                 s_value: "x".to_string(),
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
                 i_value: 0,
                 s_value: "=".to_string(),
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Num,
                 pos: 0,
                 i_value: 42,
                 s_value: String::new(),
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
                 i_value: 0,
                 s_value: ";".to_string(),
+                ..Token::default()
             },
         ];
         let mut ast_builder = AstBuilderImpl::new(&error_logger, tokens);

@@ -1,5 +1,5 @@
 use crate::error;
-use crate::token::{Token, TokenType};
+use crate::token::{StringEncoding, Token, TokenType};
 use crate::trie::Trie;
 use std::collections::HashSet;
 
@@ -110,6 +110,38 @@ pub(crate) fn decode_string_literal(value: &str) -> Option<Vec<u8>> {
         }
     }
     Some(decoded)
+}
+
+fn encode_string_literal(value: &str, encoding: StringEncoding) -> Vec<u8> {
+    let utf8 = decode_string_literal(value).unwrap_or_default();
+    if encoding == StringEncoding::Narrow || encoding == StringEncoding::Utf8 {
+        return utf8;
+    }
+    let text = String::from_utf8_lossy(&utf8);
+    let mut bytes = Vec::new();
+    for character in text.chars() {
+        let scalar = character as u32;
+        match encoding {
+            StringEncoding::Utf16 => {
+                let value = scalar as u16;
+                if scalar > 0xffff {
+                    let value = scalar - 0x10000;
+                    for unit in [
+                        0xd800 | (value >> 10) as u16,
+                        0xdc00 | (value & 0x3ff) as u16,
+                    ] {
+                        bytes.extend_from_slice(&unit.to_ne_bytes());
+                    }
+                } else {
+                    bytes.extend_from_slice(&value.to_ne_bytes());
+                }
+            }
+            StringEncoding::Utf32 => bytes.extend_from_slice(&scalar.to_ne_bytes()),
+            StringEncoding::Wide => bytes.extend_from_slice(&scalar.to_ne_bytes()),
+            StringEncoding::Narrow | StringEncoding::Utf8 => unreachable!(),
+        }
+    }
+    bytes
 }
 
 pub struct Tokenizer {}
@@ -253,6 +285,7 @@ impl Tokenizer {
                     value.to_bits() as usize
                 },
                 s_value: if single { "f" } else { "d" }.into(),
+                ..Token::default()
             },
             pos,
         )))
@@ -274,10 +307,23 @@ impl Tokenizer {
                     continue;
                 }
             }
-            let utf8_prefix = code[pos..].starts_with("u8\"");
-            if utf8_prefix {
-                pos += 2;
-            }
+            let (string_encoding, prefix_size) = if code[pos..].starts_with("u8\"") {
+                (StringEncoding::Utf8, 2)
+            } else if matches!(bytes[pos], b'L' | b'u' | b'U') && bytes.get(pos + 1) == Some(&b'\"')
+            {
+                (
+                    match bytes[pos] {
+                        b'L' => StringEncoding::Wide,
+                        b'u' => StringEncoding::Utf16,
+                        b'U' => StringEncoding::Utf32,
+                        _ => unreachable!(),
+                    },
+                    1,
+                )
+            } else {
+                (StringEncoding::Narrow, 0)
+            };
+            pos += prefix_size;
             match bytes[pos] {
                 byte if byte.is_ascii_whitespace() => pos += 1,
                 b'0'..=b'9' => {
@@ -381,24 +427,32 @@ impl Tokenizer {
                     if pos >= bytes.len() {
                         return Err(error::SyntaxError::new(start, "unterminated literal"));
                     }
-                    let value_start = if utf8_prefix { start + 3 } else { start + 1 };
+                    let literal_start = start + prefix_size;
+                    let value_start = literal_start + 1;
                     let value = &code[value_start..pos];
                     let decoded = decode_string_literal(value)
                         .ok_or_else(|| error::SyntaxError::new(start, "invalid escape sequence"))?;
+                    let encoded = if quote == b'"' {
+                        encode_string_literal(value, string_encoding)
+                    } else {
+                        decoded
+                    };
                     pos += 1;
                     if quote == b'\'' {
-                        if decoded.len() != 1 {
+                        if encoded.len() != 1 {
                             return Err(error::SyntaxError::new(
                                 start,
                                 "character constant must contain one byte",
                             ));
                         }
-                        tokens.push(Self::num_token(start, decoded[0] as usize));
+                        tokens.push(Self::num_token(start, encoded[0] as usize));
                     } else {
                         tokens.push(Token {
                             tt: TokenType::Str,
                             pos: start,
                             s_value: value.to_string(),
+                            string_encoding,
+                            string_bytes: encoded,
                             ..Token::default()
                         });
                     }
@@ -417,11 +471,36 @@ impl Tokenizer {
         for token in tokens {
             if token.tt == TokenType::Str && joined.last().is_some_and(|t| t.tt == TokenType::Str) {
                 let previous = joined.last_mut().unwrap();
-                let bytes = decode_string_literal(&previous.s_value)
-                    .unwrap()
-                    .into_iter()
-                    .chain(decode_string_literal(&token.s_value).unwrap());
-                previous.s_value = bytes.map(|byte| format!("\\{:03o}", byte)).collect();
+                let encoding = match (previous.string_encoding, token.string_encoding) {
+                    (left, right) if left == right => left,
+                    (StringEncoding::Narrow, right) => right,
+                    (left, StringEncoding::Narrow) => left,
+                    _ => {
+                        return Err(error::SyntaxError::new(
+                            token.pos,
+                            "incompatible string literal encodings",
+                        ));
+                    }
+                };
+                let unit_size = encoding.unit_size();
+                if previous.string_encoding != encoding {
+                    previous.string_bytes = encode_string_literal(&previous.s_value, encoding);
+                }
+                let token_bytes = if token.string_encoding != encoding {
+                    encode_string_literal(&token.s_value, encoding)
+                } else {
+                    token.string_bytes
+                };
+                previous.string_bytes.extend(token_bytes);
+                previous.string_encoding = encoding;
+                previous.s_value = previous
+                    .string_bytes
+                    .iter()
+                    .map(|byte| format!("\\{:03o}", byte))
+                    .collect();
+                previous
+                    .string_bytes
+                    .truncate(previous.string_bytes.len() / unit_size * unit_size);
             } else {
                 joined.push(token);
             }
@@ -466,54 +545,63 @@ mod tests {
                 pos: 0,
                 s_value: String::from("int"),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Ident,
                 pos: 4,
                 s_value: String::from("main"),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 8,
                 s_value: String::from("("),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 9,
                 s_value: String::from(")"),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 11,
                 s_value: String::from("{"),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 13,
                 s_value: String::from("return"),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Num,
                 pos: 20,
                 s_value: String::new(),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 21,
                 s_value: String::from(";"),
                 i_value: 0,
+                ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 23,
                 s_value: String::from("}"),
                 i_value: 0,
+                ..Token::default()
             },
         ];
         let mut expected = expected;
@@ -537,6 +625,24 @@ mod tests {
             decode_string_literal("\\x41\\101\\0").unwrap(),
             vec![65, 65, 0]
         );
+    }
+
+    #[test]
+    fn wide_string_prefixes_encode_code_units_and_concatenate() {
+        let tokens = Tokenizer::tokenize("u\"A\" \"B\"", false).unwrap();
+        assert_eq!(tokens[0].string_encoding, StringEncoding::Utf16);
+        assert_eq!(tokens[0].string_bytes, vec![65, 0, 66, 0]);
+    }
+
+    #[test]
+    fn utf32_and_wide_strings_encode_scalar_units() {
+        assert!(Tokenizer::tokenize("U\"😀\" L\"x\"", false).is_err());
+        let utf32 = Tokenizer::tokenize("U\"😀\"", false).unwrap();
+        assert_eq!(utf32[0].string_encoding, StringEncoding::Utf32);
+        assert_eq!(utf32[0].string_bytes, vec![0x00, 0xf6, 0x01, 0x00]);
+        let wide = Tokenizer::tokenize("L\"x\"", false).unwrap();
+        assert_eq!(wide[0].string_encoding, StringEncoding::Wide);
+        assert_eq!(wide[0].string_bytes, vec![120, 0, 0, 0]);
     }
 
     #[test]
