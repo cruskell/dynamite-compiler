@@ -123,9 +123,10 @@ impl<'a> IrGenerator<'a> {
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> String {
         if gv.declaration_only {
             return format!(
-                "@{} = external global {}",
+                "@{} = external global {}, align {}",
                 name,
-                Self::gen_type(gv.ty.clone())
+                Self::gen_type(gv.ty.clone()),
+                Self::align(&gv.ty).max(gv.alignment)
             );
         }
         format!(
@@ -133,7 +134,7 @@ impl<'a> IrGenerator<'a> {
             name,
             if gv.internal { "internal " } else { "" },
             Self::gen_initializer_element(&gv.ty, gv.data.as_ref()),
-            Self::align(&gv.ty),
+            Self::align(&gv.ty).max(gv.alignment),
         )
     }
 
@@ -153,14 +154,24 @@ impl<'a> IrGenerator<'a> {
                     ty.align_of() * 8
                 )
             }
-            Type::Struct(ty) => format!(
-                "{{ {} }}",
-                ty.members()
-                    .iter()
-                    .map(|member| Self::gen_type(member.ty.clone()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            Type::Struct(ty) => {
+                let aggregate = Type::Struct(ty.clone());
+                let mut fields = vec![];
+                let mut offset = 0usize;
+                for member in ty.members() {
+                    let aligned_offset =
+                        offset.div_ceil(member.ty.align_of()) * member.ty.align_of();
+                    if member.offset > aligned_offset {
+                        fields.push(format!("[{} x i8]", member.offset - aligned_offset));
+                    }
+                    fields.push(Self::gen_type(member.ty.clone()));
+                    offset = member.offset + member.ty.size_of();
+                }
+                if aggregate.size_of() > offset {
+                    fields.push(format!("[{} x i8]", aggregate.size_of() - offset));
+                }
+                format!("{{ {} }}", fields.join(", "))
+            }
             Type::I8 => "i8".to_string(),
             Type::I32 => "i32".to_string(),
             Type::Integer { bits, .. } => format!("i{bits}"),
@@ -247,20 +258,26 @@ impl<'a> IrGenerator<'a> {
             Type::Qualified(child, _) => Self::gen_initializer_element(child, data),
             Type::Struct(struct_type) => {
                 if let Some(GlobalVariableData::Arr(elements)) = data {
-                    format!(
-                        "{} {{ {} }}",
-                        Self::gen_type(ty.clone()),
-                        struct_type
-                            .members()
-                            .iter()
-                            .enumerate()
-                            .map(|(i, member)| Self::gen_initializer_element(
-                                &member.ty,
-                                elements.get(i)
-                            ))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+                    let mut fields = vec![];
+                    let mut offset = 0usize;
+                    for (index, member) in struct_type.members().iter().enumerate() {
+                        let aligned_offset =
+                            offset.div_ceil(member.ty.align_of()) * member.ty.align_of();
+                        if member.offset > aligned_offset {
+                            let padding = format!("[{} x i8]", member.offset - aligned_offset);
+                            fields.push(format!("{padding} zeroinitializer"));
+                        }
+                        fields.push(Self::gen_initializer_element(
+                            &member.ty,
+                            elements.get(index),
+                        ));
+                        offset = member.offset + member.ty.size_of();
+                    }
+                    if ty.size_of() > offset {
+                        let padding = format!("[{} x i8]", ty.size_of() - offset);
+                        fields.push(format!("{padding} zeroinitializer"));
+                    }
+                    format!("{} {{ {} }}", Self::gen_type(ty.clone()), fields.join(", "))
                 } else {
                     format!("{} zeroinitializer", Self::gen_type(ty.clone()))
                 }

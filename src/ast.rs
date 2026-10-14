@@ -478,7 +478,7 @@ impl<'a> AstBuilderImpl<'a> {
                             self.expect_reserved(")");
                             break;
                         }
-                        let (base, storage) =
+                        let (base, storage, _alignment) =
                             self.attempt_automatic_type(true).unwrap_or_else(|| {
                                 self.error_logger.print_error_position(
                                     self.tokens[self.cur].pos,
@@ -561,7 +561,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.validate_type_layout(&ty, &token);
         (token, ty)
     }
-    fn new_local_variable(&mut self, ty: Type) -> Node {
+    fn new_local_variable(&mut self, ty: Type, alignment: usize) -> Node {
         let (t, ty) = self.expect_ident_with_type(ty);
         let ty = if matches!(ty, Type::Arr(_, 0)) {
             let saved = self.cur;
@@ -572,7 +572,7 @@ impl<'a> AstBuilderImpl<'a> {
         } else {
             ty
         };
-        self.register_local_variable(t, ty)
+        self.register_local_variable_aligned(t, ty, alignment)
     }
 
     fn infer_array_size(&self, ty: Type, count: usize, token: &Token) -> Type {
@@ -651,6 +651,22 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn register_local_variable(&mut self, t: Token, ty: Type) -> Node {
+        self.register_local_variable_aligned(t, ty, 0)
+    }
+
+    fn register_local_variable_aligned(
+        &mut self,
+        t: Token,
+        ty: Type,
+        requested_alignment: usize,
+    ) -> Node {
+        let alignment = ty.align_of().max(requested_alignment);
+        if alignment > 16 {
+            self.error_logger.print_error_position(
+                t.pos,
+                "requested local alignment exceeds the supported stack alignment",
+            );
+        }
         if ty.is_variable_array() {
             self.expect_object_type(&ty, &t);
             self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
@@ -666,7 +682,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         self.expect_object_type(&ty, &t);
         self.offset_size += ty.size_of();
-        self.offset_size = self.offset_size.div_ceil(ty.align_of()) * ty.align_of();
+        self.offset_size = self.offset_size.div_ceil(alignment) * alignment;
         if self.scope_stack.last().unwrap().contains_key(&t.s_value) {
             self.error_logger
                 .print_error_position(t.pos, "invalid redeclaration");
@@ -694,12 +710,18 @@ impl<'a> AstBuilderImpl<'a> {
         node.registered = true;
     }
 
-    fn attempt_automatic_type(&mut self, parameter: bool) -> Option<(Type, AutomaticStorage)> {
+    fn attempt_automatic_type(
+        &mut self,
+        parameter: bool,
+    ) -> Option<(Type, AutomaticStorage, usize)> {
         let saved = self.cur;
         let mut storage: Option<Token> = None;
         let mut qualifiers = Qualifiers::default();
+        let mut alignment = 0;
         loop {
-            if let Some(token) = self
+            if let Some(value) = self.attempt_alignment_specifier() {
+                alignment = alignment.max(value);
+            } else if let Some(token) = self
                 .attempt_reserved("auto")
                 .or_else(|| self.attempt_reserved("register"))
             {
@@ -728,6 +750,9 @@ impl<'a> AstBuilderImpl<'a> {
             self.cur = saved;
             return None;
         };
+        while let Some(value) = self.attempt_alignment_specifier() {
+            alignment = alignment.max(value);
+        }
         if let Some(token) = self
             .attempt_reserved("auto")
             .or_else(|| self.attempt_reserved("register"))
@@ -752,7 +777,19 @@ impl<'a> AstBuilderImpl<'a> {
             Some("auto") => AutomaticStorage::Auto,
             _ => AutomaticStorage::Default,
         };
-        Some((ty, storage))
+        if storage == AutomaticStorage::Register && alignment != 0 {
+            self.error_logger.print_error_position(
+                self.tokens[saved].pos,
+                "_Alignas cannot be applied to a register object",
+            );
+        }
+        if parameter && alignment != 0 {
+            self.error_logger.print_error_position(
+                self.tokens[saved].pos,
+                "_Alignas cannot be applied to a parameter",
+            );
+        }
+        Some((ty, storage, alignment))
     }
 
     fn attempt_qualifiers(&mut self) -> Qualifiers {
@@ -770,6 +807,48 @@ impl<'a> AstBuilderImpl<'a> {
         }
         q
     }
+
+    fn attempt_alignment_specifier(&mut self) -> Option<usize> {
+        let token = self.attempt_reserved("_Alignas")?;
+        self.expect_reserved("(");
+        let alignment = if let Some(base) = self.attempt_type() {
+            let (name, ty, _, _, _) = self.declarator().resolve(base);
+            if name.is_some() {
+                self.error_logger
+                    .print_error_position(token.pos, "_Alignas requires a type name");
+            }
+            if matches!(
+                ty.unqualified(),
+                Type::Void | Type::Func(..) | Type::VariadicFunc(..)
+            ) || ty.size_of() == 0
+            {
+                self.error_logger
+                    .print_error_position(token.pos, "_Alignas requires a complete object type");
+            }
+            ty.align_of()
+        } else {
+            let expression = self.ternary();
+            if !Self::integer_constant(&expression) {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "_Alignas requires an integer constant expression",
+                );
+            }
+            let value = self.eval(&expression);
+            if value < 0 {
+                self.error_logger
+                    .print_error_position(token.pos, "_Alignas value cannot be negative");
+            }
+            value as usize
+        };
+        self.expect_reserved(")");
+        if alignment != 0 && !alignment.is_power_of_two() {
+            self.error_logger
+                .print_error_position(token.pos, "_Alignas value must be zero or a power of two");
+        }
+        Some(alignment)
+    }
+
     fn attempt_type(&mut self) -> Option<Type> {
         let saved = self.cur;
         let mut q = self.attempt_qualifiers();
@@ -989,7 +1068,14 @@ impl<'a> AstBuilderImpl<'a> {
                         "flexible array member must be last",
                     );
                 }
+                let mut requested_alignment = 0;
+                while let Some(value) = self.attempt_alignment_specifier() {
+                    requested_alignment = requested_alignment.max(value);
+                }
                 let base = self.expect_type();
+                while let Some(value) = self.attempt_alignment_specifier() {
+                    requested_alignment = requested_alignment.max(value);
+                }
                 loop {
                     let (name, member_type, _, _, _) = self.declarator().resolve(base.clone());
                     let position = name.as_ref().unwrap_or(&token);
@@ -1001,6 +1087,8 @@ impl<'a> AstBuilderImpl<'a> {
                         );
                     }
                     let flexible = matches!(member_type.unqualified(), Type::Arr(_, 0));
+                    let member_alignment = member_type.align_of().max(requested_alignment);
+                    align = align.max(member_alignment);
                     if flexible {
                         if is_union || members.is_empty() || name.is_none() {
                             self.error_logger.print_error_position(position.pos,
@@ -1044,6 +1132,8 @@ impl<'a> AstBuilderImpl<'a> {
                         if is_union {
                             bit_address = 0;
                         }
+                        bit_address =
+                            bit_address.div_ceil(member_alignment * 8) * member_alignment * 8;
                         if width == 0 || usize::from(width) > container - bit_address % container {
                             bit_address = bit_address.div_ceil(container) * container;
                         }
@@ -1064,8 +1154,8 @@ impl<'a> AstBuilderImpl<'a> {
                             self.error_logger
                                 .print_error_position(token.pos, "member name expected");
                         }
-                        size = size.div_ceil(member_type.align_of()) * member_type.align_of();
-                        align = align.max(member_type.align_of());
+                        size = size.div_ceil(member_alignment) * member_alignment;
+                        align = align.max(member_alignment);
                         let offset = if is_union { 0 } else { size };
                         size = if is_union {
                             size.max(member_type.size_of())
@@ -1252,9 +1342,12 @@ impl<'a> AstBuilderImpl<'a> {
         let mut storage: Option<Token> = None;
         let mut inline = false;
         let mut qualifiers = Qualifiers::default();
+        let mut alignment = 0;
         loop {
             if self.attempt_reserved("inline").is_some() {
                 inline = true;
+            } else if let Some(value) = self.attempt_alignment_specifier() {
+                alignment = alignment.max(value);
             } else if let Some(token) = self
                 .attempt_reserved("static")
                 .or_else(|| self.attempt_reserved("extern"))
@@ -1277,11 +1370,20 @@ impl<'a> AstBuilderImpl<'a> {
         let internal = storage.as_ref().is_some_and(|s| s.s_value == "static");
         let external = storage.as_ref().is_some_and(|s| s.s_value == "extern");
         if self.attempt_reserved("typedef").is_some() {
+            if alignment != 0 {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur - 1].pos,
+                    "_Alignas cannot be applied to a typedef",
+                );
+            }
             self.typedef_definition();
             self.expect_reserved(";");
             return;
         }
         let mut base = self.expect_type();
+        while let Some(value) = self.attempt_alignment_specifier() {
+            alignment = alignment.max(value);
+        }
         if qualifiers != Qualifiers::default() {
             base = Type::Qualified(Box::new(base), qualifiers);
         }
@@ -1315,6 +1417,12 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(token.pos, "inline requires a function declaration");
             }
             if ty.function_signature().is_some() {
+                if alignment != 0 {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "_Alignas cannot be applied to a function",
+                    );
+                }
                 if self.tokens[self.cur].s_value == "{" && !stars.is_empty() {
                     self.error_logger.print_error_position(
                         stars[0].pos,
@@ -1462,6 +1570,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "incompatible object redeclaration");
                 }
+                existing.alignment = existing.alignment.max(alignment);
                 if data.is_some() && existing.data.is_some() {
                     self.error_logger
                         .print_error_position(token.pos, "object is already initialized");
@@ -1478,6 +1587,7 @@ impl<'a> AstBuilderImpl<'a> {
                     token.s_value,
                     GlobalVariable {
                         ty,
+                        alignment,
                         declaration_only: external && data.is_none(),
                         internal,
                         data,
@@ -2504,8 +2614,8 @@ impl<'a> AstBuilderImpl<'a> {
             let mut upd: Option<Node> = None;
             if self.attempt_reserved(";").is_none() {
                 ini = Some(
-                    if let Some((ty, storage)) = self.attempt_automatic_type(false) {
-                        self.local_variable_definition_with_storage(ty, storage)
+                    if let Some((ty, storage, alignment)) = self.attempt_automatic_type(false) {
+                        self.local_variable_definition_with_storage(ty, storage, alignment)
                     } else {
                         self.expr()
                     },
@@ -2542,6 +2652,10 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(node) = self.consume_block() {
             return node;
         }
+        let mut requested_alignment = 0;
+        while let Some(value) = self.attempt_alignment_specifier() {
+            requested_alignment = requested_alignment.max(value);
+        }
         let inline = self.attempt_reserved("inline");
         let storage = self
             .attempt_reserved("static")
@@ -2552,19 +2666,26 @@ impl<'a> AstBuilderImpl<'a> {
             if storage.s_value == "inline" {
                 storage.s_value = "extern".to_owned();
             }
+            while let Some(value) = self.attempt_alignment_specifier() {
+                requested_alignment = requested_alignment.max(value);
+            }
             let ty = self.expect_type();
-            let declaration = self.local_static_definition(ty, &storage, inline.is_some());
+            while let Some(value) = self.attempt_alignment_specifier() {
+                requested_alignment = requested_alignment.max(value);
+            }
+            let declaration =
+                self.local_static_definition(ty, &storage, inline.is_some(), requested_alignment);
             self.expect_reserved(";");
             return declaration;
         }
-        let node = if let Some((ty, storage)) = self.attempt_automatic_type(false) {
+        let node = if let Some((ty, storage, alignment)) = self.attempt_automatic_type(false) {
             if self.tokens[self.cur].s_value == ";" {
                 Node {
                     nt: NodeType::Block,
                     ..Node::default()
                 }
             } else {
-                self.local_variable_definition_with_storage(ty, storage)
+                self.local_variable_definition_with_storage(ty, storage, alignment)
             }
         } else if let Some(t) = self.attempt_reserved("continue") {
             let target = self.loop_stack.last().copied().unwrap_or_else(|| {
@@ -2624,7 +2745,13 @@ impl<'a> AstBuilderImpl<'a> {
         self.cleanup_jump(node)
     }
 
-    fn local_static_definition(&mut self, base: Type, storage: &Token, inline: bool) -> Node {
+    fn local_static_definition(
+        &mut self,
+        base: Type,
+        storage: &Token,
+        inline: bool,
+        requested_alignment: usize,
+    ) -> Node {
         let mut bounds = vec![];
         loop {
             let (token, mut ty) = self.expect_ident_with_type(base.clone());
@@ -2643,6 +2770,12 @@ impl<'a> AstBuilderImpl<'a> {
                 format!(".static.{}.{}", token.pos, token.s_value)
             };
             if ty.function_signature().is_some() {
+                if requested_alignment != 0 {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "_Alignas cannot be applied to a function",
+                    );
+                }
                 if !external {
                     self.error_logger.print_error_position(
                         token.pos,
@@ -2746,6 +2879,7 @@ impl<'a> AstBuilderImpl<'a> {
                     name,
                     GlobalVariable {
                         ty,
+                        alignment: requested_alignment,
                         data,
                         internal: !external,
                         declaration_only: external,
@@ -2764,17 +2898,18 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     pub fn local_variable_definition(&mut self, ty: Type) -> Node {
-        self.local_variable_definition_with_storage(ty, AutomaticStorage::Default)
+        self.local_variable_definition_with_storage(ty, AutomaticStorage::Default, 0)
     }
 
     fn local_variable_definition_with_storage(
         &mut self,
         ty: Type,
         storage: AutomaticStorage,
+        alignment: usize,
     ) -> Node {
         let mut vec = Vec::new();
         loop {
-            let mut node = self.new_local_variable(ty.clone());
+            let mut node = self.new_local_variable(ty.clone(), alignment);
             if storage != AutomaticStorage::Default
                 && node.resolve_type().unwrap().function_signature().is_some()
             {
@@ -3526,6 +3661,7 @@ impl<'a> AstBuilderImpl<'a> {
                             name.s_value.clone(),
                             GlobalVariable {
                                 ty: ty.clone(),
+                                alignment: 0,
                                 data: Some(data),
                                 internal: true,
                                 declaration_only: false,
@@ -4317,6 +4453,7 @@ mod tests {
             map.insert(
                 "x".to_string(),
                 GlobalVariable {
+                    alignment: 0,
                     internal: false,
                     declaration_only: false,
                     ty: Type::I32,
