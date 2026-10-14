@@ -13,11 +13,12 @@ use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use crate::token::Token;
-use std::fmt::Display;
+use std::{collections::HashSet, fmt::Display};
 
 pub struct AsmGenerator<'a> {
     error_logger: &'a dyn error::ErrorLogger,
     target_os: Os,
+    defined_symbols: HashSet<String>,
 }
 
 const ARGS_REG: [Register; 8] = [X0, X1, X2, X3, X4, X5, X6, X7];
@@ -39,9 +40,26 @@ impl<'a> AsmGenerator<'a> {
         Self {
             error_logger,
             target_os,
+            defined_symbols: HashSet::new(),
         }
     }
     fn generate(&self, ast: ProgramAst) -> Box<dyn crate::generator::Assembly> {
+        let generator = Self {
+            error_logger: self.error_logger,
+            target_os: self.target_os,
+            defined_symbols: ast
+                .functions
+                .iter()
+                .filter(|(_, function)| function.body.is_some() && !function.inline_only())
+                .map(|(name, _)| name.clone())
+                .chain(
+                    ast.global_variables
+                        .iter()
+                        .filter(|(_, object)| !object.declaration_only)
+                        .map(|(name, _)| name.clone()),
+                )
+                .collect(),
+        };
         Box::<Assembly>::new(
             vec![
                 if let Os::MacOS = self.target_os {
@@ -54,17 +72,17 @@ impl<'a> AsmGenerator<'a> {
                     .iter()
                     .map(|(name, f)| {
                         let func_offset_with_alignment = f.offset_size.div_ceil(16) * 16;
-                        self.gen_func(name, f, func_offset_with_alignment)
+                        generator.gen_func(name, f, func_offset_with_alignment)
                     })
                     .collect::<Vec<Assembly>>()
                     .into(),
                 ".data".into(),
                 ast.global_variables
                     .iter()
-                    .map(|(s, gv)| self.gen_global_variable(s, gv))
+                    .map(|(s, gv)| generator.gen_global_variable(s, gv))
                     .collect::<Vec<Assembly>>()
                     .into(),
-                self.gen_string_literals(ast.string_literals),
+                generator.gen_string_literals(ast.string_literals),
             ]
             .into(),
         )
@@ -1706,6 +1724,17 @@ impl<'a> AsmGenerator<'a> {
                                 }
                             },
                         ),
+                    ]
+                    .into()
+                } else if !self.defined_symbols.contains(&node.global_name) {
+                    let symbol = self.with_prefix(&node.global_name);
+                    let (page, offset) = match self.target_os {
+                        Os::MacOS => (format!("{symbol}@GOTPAGE"), format!("{symbol}@GOTPAGEOFF")),
+                        Os::Linux => (format!(":got:{symbol}"), format!(":got_lo12:{symbol}")),
+                    };
+                    vec![
+                        Assembly::inst2(ADRP, X8, page),
+                        Assembly::inst2(LDR, X8, PtrAdd(X8, offset)),
                     ]
                     .into()
                 } else {

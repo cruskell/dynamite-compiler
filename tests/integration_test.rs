@@ -1354,3 +1354,15 @@ fn prefixed_string_literal_code_units(output_option: &str) {
     let code = r#"int main(){unsigned short *u=u"😀";unsigned int *v=U"😀";unsigned int *w=L"ab";return (u[0]!=55357)+(u[1]!=56832)+u[2]+(v[0]!=128512)+v[1]+(w[0]!=97)+(w[1]!=98)+w[2]+("a\0b"[2]!=98);}"#;
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn addresses_of_imported_functions_and_objects(output_option: &str) {
+    let code = "extern int external_value;int external_add(int x);static int local_add(int x){return x+1;}int main(){void *(*allocate)(unsigned long)=malloc;void (*release)(void*)=free;int *p=allocate(sizeof(int));*p=7;int (*f)(int)=external_add;int (*g)(int)=local_add;int *v=&external_value;int result=f(*p)+g(*v);release(p);return result-42;}";
+    let companion = "int external_value=17;int external_add(int x){return x+17;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
