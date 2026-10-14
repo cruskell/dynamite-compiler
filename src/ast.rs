@@ -3734,6 +3734,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut fallback = None;
         loop {
             let association = self.tokens[self.cur].clone();
+            let type_bounds_start = self.pending_bounds.len();
             let ty = if self.attempt_reserved("default").is_some() {
                 if fallback.is_some() {
                     self.error_logger.print_error_position(
@@ -3770,6 +3771,8 @@ impl<'a> AstBuilderImpl<'a> {
                 types.push(ty.clone());
                 Some(ty)
             };
+            // Prototype parameter bounds in association types are unevaluated.
+            self.pending_bounds.truncate(type_bounds_start);
             self.expect_reserved(":");
             let bounds_start = self.pending_bounds.len();
             let expression = self.assign();
