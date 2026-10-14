@@ -63,6 +63,7 @@ pub struct Node {
     pub compound_literal: bool,
     pub volatile_access: bool,
     pub registered: bool,
+    pub thread_local: bool,
     pub cty: Option<Type>,
     pub token: Option<Token>,
     pub lhs: Option<Box<Node>>,

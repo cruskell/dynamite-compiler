@@ -4,6 +4,7 @@ use std::collections::HashMap;
 pub struct GlobalVariable {
     pub ty: Type,
     pub alignment: usize,
+    pub thread_local: bool,
     pub internal: bool,
     pub declaration_only: bool,
     pub data: Option<GlobalVariableData>,

@@ -111,6 +111,11 @@ impl<'a> AsmGenerator<'a> {
             return vec![].into();
         }
         vec![
+            if let Os::MacOS = self.target_os {
+                ".section __DATA,__data".into()
+            } else {
+                ".section .data".into()
+            },
             if gv.internal {
                 vec![].into()
             } else {
