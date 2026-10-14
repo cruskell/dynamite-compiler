@@ -1148,6 +1148,8 @@ fn rejects_invalid_restrict_types(code: &str, output_option: &str) {
 #[test_matrix([
     "static inline int add(int x){return x+1;}int main(){int (*p)(int)=add;return p(6)-7;}",
     "extern inline int add(int x){return x+1;}int main(){return add(6)-7;}",
+    "static inline int add(int a,int b,int c,int d,int e,int f,int g){return a+b+c+d+e+f+g;}int main(){int (*p)(int,int,int,int,int,int,int)=add;return 1+p(1,2,3,4,5,6,7)-29;}",
+    "static inline int add(int x){return x+1;}int main(){long extra=2;int (*p)(int)=add;return extra+p(6)-9;}",
     "inline int add(int x){return x+1;}int add(int x);int main(){return add(6)-7;}",
     "int add(int x);inline int add(int x){return x+1;}int main(){return add(6)-7;}",
     "const inline static int add(int x){static int count;return x+ ++count;}int main(){return add(6)-7;}",
