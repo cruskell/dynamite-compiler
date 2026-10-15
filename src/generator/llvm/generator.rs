@@ -1689,35 +1689,65 @@ impl<'a> IrGenerator<'a> {
         options: &mut Options,
     ) -> Vec<String> {
         let mut lines = vec![];
-        let input = node
-            .lhs
-            .as_ref()
-            .map(|input| {
-                lines.extend(self.gen_node(input, options));
-                let value = options.register_queue.pop().unwrap();
-                format!("{} {value}", Self::gen_type(input.resolve_type().unwrap()))
+        let matching = node.lhs.as_ref().map(|input| {
+            lines.extend(self.gen_node(input, options));
+            let value = options.register_queue.pop().unwrap();
+            format!("{} {value}", Self::gen_type(input.resolve_type().unwrap()))
+        });
+        let mut arguments = vec![];
+        for input in &node.args {
+            lines.extend(self.gen_node(input, options));
+            let value = options.register_queue.pop().unwrap();
+            arguments.push(format!(
+                "{} {value}",
+                Self::gen_type(input.resolve_type().unwrap())
+            ));
+        }
+        let template = render_inline_assembly(&node.dest.replace('$', "$$"), |index, modifier| {
+            let arch = if cfg!(target_arch = "aarch64") {
+                crate::generator::Arch::Aarch64
+            } else {
+                crate::generator::Arch::X86_64
+            };
+            crate::generator::asm_register_width(arch, modifier, 8)?;
+            Some(if let Some(modifier) = modifier {
+                format!("${{{index}:{modifier}}}")
+            } else {
+                format!("${index}")
             })
-            .unwrap_or_default();
-        let template = render_inline_assembly(&node.dest.replace('$', "$$"), "$0").unwrap();
+        })
+        .unwrap_or_else(|| {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "unsupported asm register modifier for target",
+            );
+            unreachable!()
+        });
         let template = template
             .bytes()
             .map(|byte| format!("\\{byte:02X}"))
             .collect::<String>();
-        let clobbers = if cfg!(target_arch = "x86_64") {
-            "~{dirflag},~{fpsr},~{flags}"
+        let mut constraints = vec!["=r"; node.args.len() + 1];
+        for constraint in &mut constraints[1..] {
+            *constraint = "r";
+        }
+        if let Some(matching) = matching {
+            constraints.push("0");
+            arguments.push(matching);
+        }
+        constraints.extend(if cfg!(target_arch = "x86_64") {
+            vec!["~{dirflag}", "~{fpsr}", "~{flags}"]
         } else {
-            "~{cc}"
-        };
-        let constraints = format!(
-            "=r{},{clobbers}",
-            if node.lhs.is_some() { ",0" } else { "" }
-        );
+            vec!["~{cc}"]
+        });
         let result = format!("%{}", options.new_register());
         options.register_queue.push(result.clone());
         lines.push(format!(
-            "  {result} = call {} asm {}\"{template}\", \"{constraints}\"({input})",
+            "  {result} = call {} asm {}\"{template}\", \"{}\"({})",
             Self::gen_type(node.resolve_type().unwrap()),
-            if volatile { "sideeffect " } else { "" }
+            if volatile { "sideeffect " } else { "" },
+            constraints.join(","),
+            arguments.join(", ")
         ));
         lines
     }

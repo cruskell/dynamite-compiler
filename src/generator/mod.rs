@@ -14,6 +14,22 @@ pub enum Arch {
     X86_64,
 }
 
+/// Register width requested by the supported GNU target operand modifiers.
+pub(crate) fn asm_register_width(
+    arch: Arch,
+    modifier: Option<char>,
+    natural: usize,
+) -> Option<usize> {
+    match (arch, modifier) {
+        (_, None) => Some(natural),
+        (Arch::Aarch64, Some('x')) | (Arch::X86_64, Some('q')) => Some(8),
+        (Arch::Aarch64, Some('w')) | (Arch::X86_64, Some('k')) => Some(4),
+        (Arch::X86_64, Some('w')) => Some(2),
+        (Arch::X86_64, Some('b')) => Some(1),
+        _ => None,
+    }
+}
+
 use crate::{ast::ProgramAst, error::ErrorLogger};
 
 pub trait Assembly {

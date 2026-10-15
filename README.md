@@ -904,14 +904,15 @@ evaluated once; volatile objects receive one volatile read and one volatile writ
 LLVM ties the input register to output zero, and native output loads the same
 register before executing the template. Empty templates preserve the input value.
 
-Templates use `%0` for the output register and `%%` for a literal percent sign.
+Templates use `%0` for the output, numbered `%1` and later input registers,
+and `%%` for a literal percent sign.
 The register width follows the output type. Native x86_64 templates use GNU AT&T
 syntax; AArch64 templates use its normal assembler syntax. LLVM output preserves
 side effects for volatile assembly and emits conservative condition-code clobbers.
 Assembly text remains target-specific and must obey the declared register effects.
 
-Independent input operands, multiple or named outputs, memory constraints,
-explicit clobbers, register modifiers, basic assembly and asm-goto are not yet
+Multiple or named outputs, non-register input constraints,
+explicit clobbers, unsupported register modifiers, basic assembly and asm-goto are not yet
 supported and are diagnosed. Empty input and clobber sections are accepted.
 Narrow ASCII templates are supported, including concatenation and escaped
 newlines; embedded nulls and wide strings are rejected.
@@ -970,3 +971,18 @@ Portable sources can therefore select their scalar alternatives. Target
 architecture and ABI macros, ordinary floating-point operations and the supported
 storage/type-query subset of vector typedefs remain available. This controls
 source feature selection rather than changing the generated code's target CPU.
+
+## Extended assembly register inputs
+
+The register-output assembly subset accepts up to six independent `"r"` inputs
+alongside one `"=r"` or `"+r"` output. Operands use 32-bit/64-bit integer or
+pointer values; arrays and function designators decay to pointers. Each input is
+evaluated once, and read/write matching inputs do not change the source operand
+numbers. Floating-point, narrow integer and named operands remain unsupported.
+
+AArch64 templates support `%wN` and `%xN` register-width modifiers; x86_64 supports
+`%bN`, `%wN`, `%kN` and `%qN`. Unsupported modifiers and operand indices receive
+source diagnostics. Native output reserves separate caller-saved input registers;
+LLVM uses numbered register constraints and target operand modifiers. Normal GNU
+assembly rules still apply: templates must respect their declared register effects
+and write their output after reading any input that can share its register.

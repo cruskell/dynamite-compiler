@@ -1195,14 +1195,55 @@ impl<'a> AsmGenerator<'a> {
         breakable_branch_num: usize,
     ) -> Assembly {
         let ty = node.resolve_type().unwrap();
-        let register = if ty.size_of() == 4 { "%eax" } else { "%rax" };
-        let template = render_inline_assembly(&node.dest, register).unwrap();
+        let registers = [RAX, R10, R11, RCX, RDX, RSI, RDI];
+        let names = [
+            ["%al", "%ax", "%eax", "%rax"],
+            ["%r10b", "%r10w", "%r10d", "%r10"],
+            ["%r11b", "%r11w", "%r11d", "%r11"],
+            ["%cl", "%cx", "%ecx", "%rcx"],
+            ["%dl", "%dx", "%edx", "%rdx"],
+            ["%sil", "%si", "%esi", "%rsi"],
+            ["%dil", "%di", "%edi", "%rdi"],
+        ];
+        let template = render_inline_assembly(&node.dest, |index, modifier| {
+            let natural = if index == 0 {
+                ty.size_of()
+            } else {
+                node.args.get(index - 1)?.resolve_type()?.size_of()
+            };
+            let width = crate::generator::asm_register_width(
+                crate::generator::Arch::X86_64,
+                modifier,
+                natural,
+            )?;
+            Some(names.get(index)?[width.trailing_zeros() as usize].into())
+        })
+        .unwrap_or_else(|| {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "unsupported asm register modifier for x86_64",
+            );
+            unreachable!()
+        });
         let mut lines = vec![];
         if let Some(input) = &node.lhs {
-            lines.extend([
-                self.gen_node(input, offset, breakable_branch_num),
-                Assembly::inst1(POP, RAX),
-            ]);
+            lines.push(self.gen_node(input, offset, breakable_branch_num));
+        }
+        for input in &node.args {
+            lines.push(self.gen_node(input, offset, breakable_branch_num));
+        }
+        for (index, input) in node.args.iter().enumerate().rev() {
+            let register = registers[index + 1];
+            lines.push(Assembly::inst1(POP, register));
+            if input.resolve_type().unwrap().size_of() == 4 {
+                lines.push(Self::normalize_integer(&Type::integer(32, false), register));
+            }
+        }
+        if node.lhs.is_some() {
+            lines.push(Assembly::inst1(POP, RAX));
+            if ty.size_of() == 4 {
+                lines.push(Self::normalize_integer(&Type::integer(32, false), RAX));
+            }
         }
         lines.extend([
             Assembly::inst1(InlineAsm, InlineAsmTemplate(template)),
