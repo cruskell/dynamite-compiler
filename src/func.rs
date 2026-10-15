@@ -7,6 +7,7 @@ pub struct Func {
     pub body: Option<Node>,
     pub internal: bool,
     pub inline_definition: bool,
+    pub gnu_inline: bool,
     pub external_definition: bool,
     pub mutable_static: Option<Token>,
     pub return_pointer: Option<usize>,

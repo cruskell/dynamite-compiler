@@ -1234,6 +1234,72 @@ fn invalid_gnu_inline_spellings_are_diagnosed(
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_inline_attributes_preserve_definition_and_reference_linkage(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r"
+#if !__has_attribute(gnu_inline) || !__has_attribute(__gnu_inline__)
+#error GNU inline attribute missing
+#endif
+extern int only(void);
+extern __inline __attribute__((__gnu_inline__)) int only(void){return 3;}
+extern int only(void);
+__attribute__((gnu_inline)) inline int emitted(void){return 9;}
+extern inline int replaced(void) __attribute__((gnu_inline));
+extern inline __attribute__((gnu_inline)) int replaced(void){return 1;}
+int replaced(void){return 11;}
+extern inline __attribute__((gnu_inline)) int inherited(int);
+inline int inherited(int x){return x+13;}
+static int internal=5;
+extern inline __attribute__((gnu_inline)) int private_body(void){static int x;return ++x+internal;}
+inline int standard(void){return 1;}
+struct Pair{long x;long y;};
+__attribute__((gnu_inline)) inline struct Pair record(long n){struct Pair p={n,n+1};return p;}
+int compare(int (*f)(void),int expected);
+int check_emitted(void);
+int main(){
+    struct Pair p=record(7);
+    return compare(only,7)+compare(standard,17)+compare(private_body,21)
+        +check_emitted()+(emitted()!=9)+(replaced()!=11)+(inherited(2)!=15)
+        +(p.x!=7)+(p.y!=8);
+}
+";
+    let companion = r"
+int only(void){return 7;}
+int standard(void){return 17;}
+int private_body(void){return 21;}
+int emitted(void);int inherited(int);int replaced(void);
+int compare(int (*f)(void),int expected){return f()!=expected;}
+int check_emitted(void){return emitted()!=9 || inherited(2)!=15 || replaced()!=11;}
+";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int x __attribute__((gnu_inline));",
+    "__attribute__((gnu_inline)) int f(void);",
+    "inline int f(void) __attribute__((gnu_inline(1)));",
+    "inline int (*p)(void) __attribute__((gnu_inline));",
+    "inline int f(int x __attribute__((gnu_inline)));",
+    "inline int f(void){return 0;}inline int f(void) __attribute__((gnu_inline));",
+    "extern inline __attribute__((gnu_inline)) int f(void){return 1;}extern inline __attribute__((gnu_inline)) int f(void){return 2;}",
+    "inline int f(void){return 1;}int f(void){return 2;}",
+    "inline struct S{int x __attribute__((gnu_inline));} f(void);",
+], ["asm", "llvm"])]
+fn invalid_gnu_inline_attributes_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn inline_uses_external_definition(output_option: &str) {
     let code = "inline int value(void){static const int local=1;return local;}int main(){return value()-7;}";

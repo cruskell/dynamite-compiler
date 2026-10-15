@@ -92,6 +92,11 @@ impl Declarator {
     }
 }
 
+#[derive(Default)]
+struct FunctionAttributes {
+    gnu_inline: bool,
+}
+
 pub struct AstBuilderImpl<'a> {
     error_logger: &'a dyn error::ErrorLogger,
     tokens: &'a Vec<Token>,
@@ -110,6 +115,7 @@ pub struct AstBuilderImpl<'a> {
     variadic_last: Option<usize>,
     pending_bounds: Vec<Node>,
     parameter_depth: usize,
+    function_attributes: Option<FunctionAttributes>,
     dynamic_objects: Vec<Node>,
     vla_active: Vec<usize>,
     jump_depths: Vec<usize>,
@@ -201,7 +207,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
             if let Some(body) = &function.body {
                 self.validate_void_expressions(body);
                 self.validate_storage_only_expressions(body, false);
-                if function.inline_only() {
+                if function.inline_only() && !function.gnu_inline {
                     if let Some(token) = &function.mutable_static {
                         self.error_logger.print_error_position(
                             token.pos,
@@ -322,6 +328,7 @@ impl<'a> AstBuilderImpl<'a> {
             variadic_last: None,
             pending_bounds: vec![],
             parameter_depth: 0,
+            function_attributes: None,
             dynamic_objects: vec![],
             vla_active: vec![],
             jump_depths: vec![],
@@ -521,6 +528,24 @@ impl<'a> AstBuilderImpl<'a> {
                 if !matches!(name.tt, TokenType::Ident | TokenType::Reserved) {
                     self.error_logger
                         .print_error_position(name.pos, "attribute name expected");
+                }
+                if name.s_value.trim_matches('_') == "gnu_inline" {
+                    if self.parameter_depth != 0 || self.function_attributes.is_none() {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "gnu_inline requires a file-scope inline function declaration",
+                        );
+                    }
+                    self.cur += 1;
+                    if self.tokens[self.cur].s_value == "(" {
+                        self.error_logger
+                            .print_error_position(name.pos, "gnu_inline does not take arguments");
+                    }
+                    self.function_attributes.as_mut().unwrap().gnu_inline = true;
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
                 }
                 let supported = METADATA_ATTRIBUTES.contains(&name.s_value.trim_matches('_'));
                 if name.s_value.trim_matches('_') == "packed" {
@@ -1446,6 +1471,13 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn struct_type(&mut self, token: Token) -> Type {
+        let attributes = self.function_attributes.take();
+        let result = self.struct_type_body(token);
+        self.function_attributes = attributes;
+        result
+    }
+
+    fn struct_type_body(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
         let packing = token.packing;
         let (mut requested_record_alignment, mut packed) = self.record_attributes();
@@ -1872,6 +1904,8 @@ impl<'a> AstBuilderImpl<'a> {
         if self.attempt_static_assert() {
             return;
         }
+        // Attribute collection belongs to this declaration header, not its body or parameters.
+        self.function_attributes = Some(FunctionAttributes::default());
         self.offset_size = 0;
         self.pending_bounds.clear();
         self.vla_active.clear();
@@ -1920,6 +1954,16 @@ impl<'a> AstBuilderImpl<'a> {
         let internal = storage.as_ref().is_some_and(|s| s.s_value == "static");
         let external = storage.as_ref().is_some_and(|s| s.s_value == "extern");
         if self.attempt_reserved("typedef").is_some() {
+            if self
+                .function_attributes
+                .take()
+                .is_some_and(|a| a.gnu_inline)
+            {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur - 1].pos,
+                    "gnu_inline cannot be applied to a typedef",
+                );
+            }
             if thread_local {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -1959,6 +2003,16 @@ impl<'a> AstBuilderImpl<'a> {
         }
         inline |= self.attempt_inline().is_some();
         if self.attempt_reserved(";").is_some() {
+            if self
+                .function_attributes
+                .take()
+                .is_some_and(|a| a.gnu_inline)
+            {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur - 1].pos,
+                    "gnu_inline requires an inline function declaration",
+                );
+            }
             if thread_local {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -1982,6 +2036,13 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             self.assembler_label(&token);
+            let attributes = self.function_attributes.take().unwrap_or_default();
+            if attributes.gnu_inline && (!inline || ty.function_signature().is_none()) {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "gnu_inline requires an inline function declaration",
+                );
+            }
             self.validate_type_layout(&ty, &token);
             if ty.is_variably_modified() {
                 self.error_logger.print_error_position(
@@ -2051,10 +2112,25 @@ impl<'a> AstBuilderImpl<'a> {
                         .functions
                         .get(&token.s_value)
                         .is_some_and(|f| f.internal);
-                let external_definition = internal
-                    || external
-                    || !inline
-                    || self.functions[&token.s_value].external_definition;
+                let previous = &self.functions[&token.s_value];
+                if attributes.gnu_inline && previous.body.is_some() && !previous.gnu_inline {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "gnu_inline must be declared before the function definition",
+                    );
+                }
+                let gnu_inline = attributes.gnu_inline || previous.gnu_inline;
+                let replaceable_inline_body = previous.gnu_inline && previous.inline_only();
+                let definition = self.tokens[self.cur].s_value == "{";
+                let external_definition = if gnu_inline {
+                    if !definition && previous.body.is_some() {
+                        previous.external_definition
+                    } else {
+                        internal || !inline || !external
+                    }
+                } else {
+                    internal || external || !inline || previous.external_definition
+                };
                 self.functions
                     .get_mut(&token.s_value)
                     .unwrap()
@@ -2113,15 +2189,19 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 if self.functions[&token.s_value].body.is_some() {
                     if body.is_some() {
-                        self.error_logger
-                            .print_error_position(token.pos, "function is already defined");
+                        if !replaceable_inline_body || !external_definition {
+                            self.error_logger
+                                .print_error_position(token.pos, "function is already defined");
+                        }
+                    } else {
+                        return;
                     }
-                    return;
                 }
                 self.functions.insert(
                     token.s_value.clone(),
                     Func {
                         inline_definition: inline && body.is_some(),
+                        gnu_inline,
                         external_definition,
                         mutable_static: self.mutable_static.take(),
                         body,

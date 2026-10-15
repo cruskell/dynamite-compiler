@@ -294,6 +294,15 @@ GNU `__inline` and `__inline__` spellings are accepted wherever the standard
 `inline` function specifier is accepted. They preserve the existing C99 inline
 linkage rules and diagnostics; they do not request GNU89 inline semantics.
 
+File-scope inline function declarations accept `__attribute__((gnu_inline))`
+(including `__gnu_inline__`). GNU inline definitions with `extern` supply no
+external definition, even when their address is taken. Without `extern` they
+supply an external definition; static functions retain internal linkage. The
+attribute is inherited by later declarations. An extern GNU inline body may be
+followed by an ordinary external definition in the same translation unit.
+These rules do not add an inlining optimization. Applying the attribute after
+an unannotated definition or in unsupported non-function contexts is diagnosed.
+
 `static inline` and `extern inline` definitions emit internal and external
 functions respectively. A plain external `inline` definition supplies no
 external definition when every file-scope declaration is inline without extern.
