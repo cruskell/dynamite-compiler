@@ -2435,3 +2435,99 @@ int main(){struct Packed p={1,7};return p.x!=7;}
 "#;
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn object_size_bounds_match_clang(output_option: &str, optimization: &str) {
+    let shared = r#"
+struct Buffers{char first[10];int count;char last[10];};
+#define DEFINE_SIZES(name) \
+int name(int choice){ \
+    char small[10];char large[20];int grid[3][4];struct Buffers object; \
+    return __builtin_object_size(small,0)!=10 \
+        || __builtin_object_size(small+3,1)!=7 \
+        || __builtin_object_size(2+small,2)!=8 \
+        || __builtin_object_size((small+6)-2,3)!=6 \
+        || __builtin_object_size(small+10,0)!=0 \
+        || __builtin_object_size(small+11,0)!=0 \
+        || __builtin_object_size(&object.first[1],0)!=sizeof(object)-1 \
+        || __builtin_object_size(&object.first[1],1)!=9 \
+        || __builtin_object_size(&object.count,0)!=sizeof(object)-__builtin_offsetof(struct Buffers,count) \
+        || __builtin_object_size(&object.count,1)!=sizeof(int) \
+        || __builtin_object_size(&object.last[2],0)!=sizeof(object)-__builtin_offsetof(struct Buffers,last)-2 \
+        || __builtin_object_size(&object.last[2],3)!=8 \
+        || __builtin_object_size(grid[1],0)!=32 \
+        || __builtin_object_size(grid[1],1)!=16 \
+        || __builtin_object_size(&grid[1],1)!=32 \
+        || __builtin_object_size(&grid[1][1],1)!=12 \
+        || __builtin_object_size("abc",0)!=4 \
+        || __builtin_object_size(u"abc",0)!=8 \
+        || __builtin_object_size((char*)small,0)!=10 \
+        || __builtin_object_size(choice?(char*)small:(char*)large,0)!=20 \
+        || __builtin_object_size(choice?(char*)small:(char*)large,2)!=10; \
+}
+"#;
+    let code = [
+        shared,
+        r#"
+char global[5];
+_Static_assert(__builtin_object_size(global,0)==5,"global bound");
+DEFINE_SIZES(local_sizes)
+int foreign_sizes(int);
+int main(){return local_sizes(0) || local_sizes(1) || foreign_sizes(0) || foreign_sizes(1)
+    || _Generic(__builtin_object_size(global,0),unsigned long:0,default:1);}
+"#,
+    ]
+    .concat();
+    let companion = [shared, "DEFINE_SIZES(foreign_sizes)"].concat();
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn object_size_uses_unknown_bounds_without_evaluating_effects(output_option: &str) {
+    let code = r#"
+char storage[20];int calls;
+char *next(){calls++;return storage;}
+unsigned long unknown(char *pointer,int n){
+    char dynamic[n];
+    return __builtin_object_size(pointer,0)!=(unsigned long)-1
+        || __builtin_object_size(pointer,1)!=(unsigned long)-1
+        || __builtin_object_size(pointer,2)!=0 || __builtin_object_size(pointer,3)!=0
+        || __builtin_object_size(dynamic,0)!=(unsigned long)-1;
+}
+int main(){
+    char buffer[10];char *pointer=buffer;int n=2;
+    unsigned long a=__builtin_object_size(next(),0);
+    unsigned long b=__builtin_object_size(pointer++,1);
+    unsigned long c=__builtin_object_size((char(*)[n++])buffer,0);
+    volatile int choice=1;
+    unsigned long d=__builtin_object_size(choice?buffer:storage,0);
+    volatile char bytes[3];
+    return a!=(unsigned long)-1 || b!=(unsigned long)-1 || c!=(unsigned long)-1
+        || d!=(unsigned long)-1 || pointer!=buffer || calls!=0 || n!=2
+        || __builtin_object_size((char*)(int)(unsigned long)buffer,0)!=(unsigned long)-1
+        || __builtin_object_size((void*)0,0)!=(unsigned long)-1
+        || __builtin_object_size(bytes,0)!=3 || __builtin_object_size(&bytes,0)!=3
+        || unknown(buffer,4);
+}
+"#;
+    let result = compile_and_run(code, output_option);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){char a[2];return __builtin_object_size(a);}",
+    "int main(){char a[2];return __builtin_object_size(a,0,1);}",
+    "int main(){char a[2];int n=0;return __builtin_object_size(a,n);}",
+    "int main(){char a[2];return __builtin_object_size(a,4);}",
+    "int main(){char a[2];return __builtin_object_size(a,-1);}",
+    "int main(){char a[2];return __builtin_object_size(a,0.0);}",
+    "struct S{int x;};int main(){struct S s;return __builtin_object_size(s,0);}",
+], ["asm", "llvm"])]
+fn invalid_object_size_queries_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
