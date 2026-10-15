@@ -109,7 +109,9 @@ from `PATH`. This supports includes, object-like and function-like macros,
 conditional compilation, token pasting, stringification, and predefined macros.
 Quoted includes in CLI input are resolved relative to the input file; library
 callers may use `generate_with_path` to supply that location. Ordinary source
-without directives or predefined macros does not invoke Clang.
+without directives or predefined macros does not invoke Clang. Preprocessing
+uses C mode with the unsupported Blocks extension disabled, including its feature
+macros, in both bundled-header and system-header modes.
 
 Compiler diagnostics retain source file names and original line numbers,
 including included files. Columns within macro-expanded lines are approximate.
