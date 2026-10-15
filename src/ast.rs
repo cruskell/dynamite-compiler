@@ -5101,6 +5101,79 @@ impl<'a> AstBuilderImpl<'a> {
         })
     }
 
+    fn population_count_builtin(&mut self, token: Token, bits: u8) -> Node {
+        self.expect_reserved("(");
+        let mut argument = self.assign();
+        self.expect_reserved(")");
+        let ty = Type::integer(bits, false);
+        self.expect_conversion(&ty, &argument);
+        Self::cast_integer(&mut argument, &ty);
+        if Self::integer_constant(&argument) {
+            let value = self.eval(&argument) as u64 & (u64::MAX >> (64 - bits));
+            return Node::new_with_num(Some(token), value.count_ones() as usize);
+        }
+        if self.return_type.is_none() {
+            self.error_logger.print_error_position(
+                token.pos,
+                "population-count operand is not a constant expression",
+            );
+        }
+        let temporary = self.register_local_variable(
+            Token {
+                s_value: format!(".popcount.{}.{}", token.pos, self.offset_size),
+                ..token.clone()
+            },
+            ty.clone(),
+        );
+        let binary = |nt, lhs, rhs| Node::new_with_op(Some(token.clone()), nt, lhs, rhs);
+        let number = |value| Node {
+            cty: Some(ty.clone()),
+            ..Node::new_with_num(Some(token.clone()), value & (usize::MAX >> (64 - bits)))
+        };
+        let assign = |value| binary(NodeType::Assign, temporary.clone(), value);
+        let shift = |amount| binary(NodeType::BitRight, temporary.clone(), number(amount));
+        let mut children = vec![assign(argument)];
+        // Sum adjacent groups of bits, then accumulate the byte counts.
+        children.push(assign(binary(
+            NodeType::Sub,
+            temporary.clone(),
+            binary(NodeType::BitAnd, shift(1), number(0x5555_5555_5555_5555)),
+        )));
+        children.push(assign(binary(
+            NodeType::Add,
+            binary(
+                NodeType::BitAnd,
+                temporary.clone(),
+                number(0x3333_3333_3333_3333),
+            ),
+            binary(NodeType::BitAnd, shift(2), number(0x3333_3333_3333_3333)),
+        )));
+        children.push(assign(binary(
+            NodeType::BitAnd,
+            binary(NodeType::Add, temporary.clone(), shift(4)),
+            number(0x0f0f_0f0f_0f0f_0f0f),
+        )));
+        for amount in [8, 16, 32]
+            .into_iter()
+            .filter(|amount| *amount < usize::from(bits))
+        {
+            children.push(assign(binary(
+                NodeType::Add,
+                temporary.clone(),
+                shift(amount),
+            )));
+        }
+        let mut result = binary(NodeType::BitAnd, temporary.clone(), number(127));
+        Self::cast_integer(&mut result, &Type::I32);
+        children.push(result);
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children,
+            ..Node::default()
+        }
+    }
+
     fn byte_swap_builtin(&mut self, token: Token, bits: u8) -> Node {
         self.expect_reserved("(");
         let mut argument = self.assign();
@@ -5236,6 +5309,13 @@ impl<'a> AstBuilderImpl<'a> {
                 "__builtin_fabsf" | "__builtin_fabs" | "__builtin_fabsl"
             ) {
                 return self.floating_abs_builtin(t);
+            }
+            if let Some(bits) = match t.s_value.as_str() {
+                "__builtin_popcount" => Some(32),
+                "__builtin_popcountl" | "__builtin_popcountll" => Some(64),
+                _ => None,
+            } {
+                return self.population_count_builtin(t, bits);
             }
             if let Some(bits) = match t.s_value.as_str() {
                 "__builtin_bswap16" => Some(16),

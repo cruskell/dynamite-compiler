@@ -42,6 +42,9 @@ fn compiler_macros(command: &mut Command) {
         "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
     ]);
     for name in [
+        "__builtin_popcount",
+        "__builtin_popcountl",
+        "__builtin_popcountll",
         "__builtin_bswap16",
         "__builtin_bswap32",
         "__builtin_bswap64",
@@ -476,6 +479,9 @@ mod option_tests {
 #endif
 #if __has_feature(blocks) || __has_extension(c_atomic) || __has_c_attribute(nodiscard)
 #error Unsupported language feature
+#endif
+#if !__has_builtin(__builtin_popcount) || !__has_builtin(__builtin_popcountl) || !__has_builtin(__builtin_popcountll)
+#error Population-count operation missing
 #endif
 #if !__has_builtin(__builtin_bswap32) || !__has_attribute(__packed__)
 #error Supported operation missing
