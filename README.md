@@ -362,8 +362,8 @@ with `asm("name")`, `__asm("name")`, or `__asm__("name")`. The supported labels
 contain letters, digits, underscores, periods, and dollar signs. Labels affect
 definitions, references, function pointers, and symbolic initializers consistently
 in native and LLVM output, including declarations made after an earlier use.
-Conflicting labels are diagnosed. This is declaration syntax; inline assembly
-statements and register-variable bindings are not supported by this feature.
+Conflicting labels are diagnosed. Register-variable bindings remain unsupported;
+statement assembly support is described under Register-output extended assembly.
 
 ## Pointer nullability annotations
 
@@ -886,3 +886,23 @@ objects keep their normal internal or TLS linkage, as with Clang. Functions,
 block-scope objects, parameters, typedefs, arguments to the attribute and
 combinations with `weak_import` are diagnosed. Both native backends emit the
 platform common-symbol directive, and LLVM output uses common global linkage.
+
+## Register-output extended assembly
+
+Block-scope `asm`, `__asm` and `__asm__` statements support one `"=r"` output
+into a writable 32-bit or 64-bit integer or pointer object, with optional
+`volatile` (including its GNU spellings). The output address is evaluated once
+before the assembly executes. Packed members, indirect destinations and volatile
+output stores retain their normal behavior.
+
+Templates use `%0` for the output register and `%%` for a literal percent sign.
+The register width follows the output type. Native x86_64 templates use GNU AT&T
+syntax; AArch64 templates use its normal assembler syntax. LLVM output preserves
+side effects for volatile assembly and emits conservative condition-code clobbers.
+Assembly text remains target-specific and must obey the declared register effects.
+
+Input operands, multiple or named outputs, read/write or memory constraints,
+explicit clobbers, register modifiers, basic assembly and asm-goto are not yet
+supported and are diagnosed. Empty input and clobber sections are accepted.
+Narrow ASCII templates are supported, including concatenation and escaped
+newlines; embedded nulls and wide strings are rejected.

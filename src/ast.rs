@@ -9,6 +9,8 @@ use std::{cell::RefCell, rc::Rc};
 
 #[path = "atomic.rs"]
 mod atomic;
+#[path = "inline_asm.rs"]
+mod inline_asm;
 #[path = "object_size.rs"]
 mod object_size;
 #[path = "overflow.rs"]
@@ -3667,6 +3669,14 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn stmt(&mut self) -> Node {
         self.declaration_attributes(false, None, true);
+        if matches!(
+            self.tokens[self.cur].s_value.as_str(),
+            "asm" | "__asm" | "__asm__"
+        ) {
+            let token = self.tokens[self.cur].clone();
+            self.cur += 1;
+            return self.inline_assembly(token);
+        }
         if self.attempt_static_assert() {
             return Node {
                 nt: NodeType::Block,

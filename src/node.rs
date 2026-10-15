@@ -22,7 +22,20 @@ pub enum AtomicOperation {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum InlineAsmPart {
+    Text(String),
+    Output,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct InlineAssembly {
+    pub parts: Vec<InlineAsmPart>,
+    pub volatile: bool,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
+    InlineAsm(Box<InlineAssembly>),
     Atomic(AtomicOperation),
     VaStart,
     VaEnd,
@@ -129,7 +142,8 @@ impl Node {
     fn has_effects(node: &Self, value: bool) -> bool {
         if matches!(
             node.nt,
-            NodeType::Atomic(_)
+            NodeType::InlineAsm(_)
+                | NodeType::Atomic(_)
                 | NodeType::Assign
                 | NodeType::CallFunc
                 | NodeType::AddOverflow
@@ -317,7 +331,7 @@ impl Node {
                     }
                 }
             }
-            NodeType::Cast | NodeType::FloatAbs => self.cty.clone(),
+            NodeType::Cast | NodeType::FloatAbs | NodeType::InlineAsm(_) => self.cty.clone(),
             NodeType::Num => Some(self.cty.clone().unwrap_or(Type::I32)),
             NodeType::Sequence => self.children.last().and_then(Node::resolve_type),
             NodeType::Add | NodeType::Sub => {
