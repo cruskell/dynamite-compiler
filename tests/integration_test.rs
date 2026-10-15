@@ -1826,6 +1826,25 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn integer128_capability_selects_portable_arithmetic(output_option: &str, optimization: &str) {
+    let code = r#"
+#ifdef __SIZEOF_INT128__
+#error Arithmetic for this extension is not supported
+#else
+unsigned long multiply_low(unsigned long a,unsigned long b){return a*b;}
+#endif
+__uint128_t storage;
+int main(){return multiply_low(7,9)!=63 || sizeof(storage)!=16 || _Alignof(__int128)!=16;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn register_output_inline_assembly_preserves_values_and_lvalues(
     output_option: &str,
     optimization: &str,
