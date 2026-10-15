@@ -1799,3 +1799,51 @@ int main(){
         Some(0)
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn compatible_typedef_redeclarations_preserve_types_and_scopes(output_option: &str) {
+    let code = r#"
+typedef int Number;
+typedef Number Number;
+typedef const int Fixed;
+typedef const int Fixed;
+typedef int Function(const int);
+typedef int Function(int);
+typedef const int Row[2];
+typedef Fixed Row[2];
+typedef int Incomplete[];
+typedef int Incomplete[];
+struct S;
+typedef struct S Record;
+typedef struct S Record;
+struct S{int x;};
+typedef __builtin_va_list SystemList;
+typedef __builtin_va_list SystemList;
+int main(){
+    Number n=3;
+    Row row={4,5};
+    Record record={7};
+    {typedef char Number;typedef char Number;Number x=2;n+=x;}
+    return n+row[0]+row[1]+record.x-21;
+}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "typedef int T;typedef char T;",
+    "typedef int T;typedef const int T;",
+    "typedef int *Pointer;typedef const int *Pointer;",
+    "typedef int T[2];typedef const int T[2];",
+    "typedef int T[2][3];typedef const int T[2][3];",
+    "typedef int T[2];typedef int T[3];",
+    "typedef int T[];typedef int T[3];",
+    "int value;typedef int value;",
+    "int main(){int n=3;typedef int T[n];typedef int T[n];return 0;}",
+    "int main(){int n=3;typedef int T[n];typedef int T[3];return 0;}",
+], ["asm", "llvm"])]
+fn incompatible_typedef_redeclarations_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

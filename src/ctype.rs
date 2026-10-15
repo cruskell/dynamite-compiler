@@ -134,7 +134,9 @@ impl Type {
                 left.qualifiers() == right.qualifiers() && left.compatible(right)
             }
             (Self::Arr(left, count), Self::Arr(right, other_count)) => {
-                count == other_count && left.compatible(right)
+                count == other_count
+                    && left.qualifiers() == right.qualifiers()
+                    && left.compatible(right)
             }
             (Self::Func(args, result), Self::Func(other_args, other_result))
             | (Self::VariadicFunc(args, result), Self::VariadicFunc(other_args, other_result)) => {
