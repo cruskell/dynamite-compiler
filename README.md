@@ -5,6 +5,73 @@ A compiler for a language with syntax similar to the C language, written in Rust
 > [!IMPORTANT]
 > This project is development phase and is not ready for use.
 
+## Proposed direction
+
+Dynamite aims to shorten the time from editing C code to seeing results and
+understanding failures. The intended experience is to edit a function, observe
+its effect quickly, and receive a useful explanation when something goes wrong.
+The roadmap below is a proposal, not a description of available features or a
+claim of measured performance advantages.
+
+### Fast iteration in existing applications
+
+The initial focus would be frequently edited C components: game logic, image and
+audio filters, numerical kernels, and application plugins. Preserving the host
+ABI would let projects adopt Dynamite for individual components alongside code
+compiled with Clang, rather than requiring a complete toolchain migration.
+
+Development would progress from a single build-and-run command to caching with
+dependency tracking, then to limited function hot reloading. The first reload
+model would allow function-body changes only when function signatures and data
+layouts remain unchanged. State migration after layout changes and replacement
+of active function invocations require separate designs and are outside that
+initial scope.
+
+### Diagnostics that explain failures
+
+An optional runtime checking mode would aim to report the operation, relevant
+values, and source locations behind a failure. Initial candidates include
+fixed-size array bounds, integer overflow, and invalid shifts. For example, a
+bounds diagnostic could identify the index, valid range, and array declaration.
+
+Existing object-size analysis and checked builtins provide a starting point,
+but do not constitute general memory safety. Tracking arbitrary pointer bounds
+or detecting use-after-free would require additional metadata and runtime
+support. Each checking mode should state its coverage and overhead explicitly.
+Structured diagnostics would make the same information usable by the CLI,
+editors, and embedding applications.
+
+### Two code generation paths
+
+The native assembly backend would prioritize low compilation latency, with
+incremental improvements to instruction selection, register use, and unnecessary
+loads, stores, and stack operations. The LLVM IR path would support a workflow
+that spends more time optimizing release builds through LLVM tooling.
+
+A small typed intermediate representation should be considered when a concrete
+need, such as function caching or register allocation, justifies its complexity.
+Profile-guided replacement of hot functions with optimized versions is a possible
+later experiment, after reloading and measurement are established.
+
+### Milestones and evidence
+
+1. Establish reproducible benchmarks for cold builds, rebuilds after an edit,
+   time to execution, generated-code performance, and peak memory use. Measure
+   preprocessing, code generation, assembly, and linking separately as well as
+   end to end. Compare equivalent workloads and settings with Clang and, where
+   supported, GCC and TCC; no speed advantage is assumed in advance.
+2. Make one representative small application work end to end. Prioritize
+   compatibility work that enables that application and validates interoperability.
+3. Complete the iteration workflow on one initial platform: build and run,
+   dependency-aware caching, and restricted function reloading. Expand platform
+   coverage after validating the design.
+4. Add explanatory runtime checks and structured diagnostics, measuring their
+   effect on both iteration latency and execution performance.
+
+The first success criterion is a demonstrably shorter edit-to-result cycle in a
+real application. Broad compatibility and general-purpose optimization remain
+valuable, but work should be prioritized by how it improves that experience.
+
 ## Architecture
 
 This program adopts pipeline architecture and processes source code as input in the flow depicted in the diagram below, resulting in assembly language or LLVM IR output.
