@@ -254,7 +254,12 @@ to compound literals directly.
 
 Local and global aggregate initializers accept array indices and member names,
 including paths such as `.items[2].value = 7`. A following undesignated element
-continues after the designated outer element. Omitted elements are initialized
+continues with the next subobject, including remaining elements inside a nested
+aggregate. Inner braces may be omitted for global aggregates and explicitly
+bounded automatic aggregates; scalar expressions fill subobjects in order,
+while string literals and compatible record values initialize whole subobjects.
+Brace elision in inferred-bound automatic arrays is currently diagnosed rather
+than inferring an incorrect bound. Omitted elements are initialized
 to zero, and the highest initialized index determines an omitted array bound.
 ## Storage duration and linkage
 
