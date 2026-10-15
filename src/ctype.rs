@@ -117,6 +117,8 @@ impl fmt::Debug for StructType {
 pub enum Type {
     Void,
     Qualified(Box<Type>, Qualifiers),
+    /// Object alignment supplied by a scalar typedef, independent of type identity.
+    Aligned(Box<Type>, usize),
     Struct(StructType),
     I8,
     I32,
@@ -250,7 +252,7 @@ impl Type {
             Self::I32 => Some((32, true)),
             Self::Integer { bits, signed } => Some((*bits, *signed)),
             Self::Bool => Some((8, false)),
-            Self::Qualified(child, _) => child.integer_info(),
+            Self::Qualified(child, _) | Self::Aligned(child, _) => child.integer_info(),
             _ => None,
         }
     }
@@ -304,12 +306,13 @@ impl Type {
     }
     pub fn unqualified(&self) -> &Self {
         match self {
-            Self::Qualified(child, _) => child.unqualified(),
+            Self::Qualified(child, _) | Self::Aligned(child, _) => child.unqualified(),
             _ => self,
         }
     }
     pub fn qualifiers(&self) -> Qualifiers {
         match self {
+            Self::Aligned(child, _) => child.qualifiers(),
             Self::Qualified(child, q) => {
                 let inherited = child.qualifiers();
                 Qualifiers {
@@ -332,6 +335,9 @@ impl Type {
 
     pub fn without_qualifiers(&self) -> Self {
         match self {
+            Self::Aligned(child, alignment) => {
+                Self::Aligned(Box::new(child.without_qualifiers()), *alignment)
+            }
             Self::Qualified(child, _) => child.without_qualifiers(),
             Self::Ptr(child) => Self::Ptr(Box::new(child.without_qualifiers())),
             Self::Arr(child, size) => Self::Arr(Box::new(child.without_qualifiers()), *size),
@@ -375,7 +381,7 @@ impl Type {
 
     pub fn size_of(&self) -> usize {
         match self {
-            Type::Qualified(child, _) => child.size_of(),
+            Type::Qualified(child, _) | Type::Aligned(child, _) => child.size_of(),
             Type::Void => 0,
             Type::Struct(ty) => ty.definition().borrow().size,
             Type::I8 => 1,
@@ -416,7 +422,24 @@ impl Type {
         }
     }
 
+    pub fn contains_reduced_alignment(&self) -> bool {
+        match self {
+            Self::Aligned(child, alignment) => *alignment < child.natural_align_of(),
+            Self::Qualified(child, _) | Self::Arr(child, _) | Self::Vla(child, _) => {
+                child.contains_reduced_alignment()
+            }
+            Self::Struct(record) => record
+                .members()
+                .iter()
+                .any(|member| member.ty.contains_reduced_alignment()),
+            _ => false,
+        }
+    }
+
     pub fn natural_align_of(&self) -> usize {
+        if let Self::Aligned(child, _) | Self::Qualified(child, _) = self {
+            return child.natural_align_of();
+        }
         if let Self::Struct(ty) = self.unqualified() {
             let definition = ty.definition();
             let definition = definition.borrow();
@@ -429,6 +452,7 @@ impl Type {
 
     pub fn align_of(&self) -> usize {
         match self {
+            Self::Aligned(_, alignment) => *alignment,
             Self::Qualified(child, _) => child.align_of(),
             Self::Void => 1,
             Self::Struct(ty) => ty.definition().borrow().align.max(1),
@@ -438,7 +462,7 @@ impl Type {
     }
     pub fn dest_type(&self) -> Option<Type> {
         match self {
-            Type::Qualified(child, _) => child.dest_type(),
+            Type::Qualified(child, _) | Type::Aligned(child, _) => child.dest_type(),
             Type::Ptr(c) => Some(*c.clone()),
             Type::Arr(c, _) | Type::Vla(c, _) => Some(*c.clone()),
             _ => None,

@@ -444,6 +444,11 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(token.pos, "invalid function result type");
                 }
                 for ty in args.iter().chain(std::iter::once(result.as_ref())) {
+                    if matches!(ty.unqualified(), Type::Struct(_))
+                        && ty.contains_reduced_alignment()
+                    {
+                        self.error_logger.print_error_position(token.pos, "records containing reduced-alignment typedefs cannot be passed or returned by value");
+                    }
                     if ty.contains_vector() {
                         self.error_logger.print_error_position(token.pos, "vectors and records containing vectors cannot be passed or returned by value");
                     }
@@ -2151,13 +2156,14 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn typedef_definition(&mut self) {
         let saved_attributes = self.declaration_attributes_state.take();
+        let prefix_alignments = self.declaration_attributes(true, None, false);
         let base = self.expect_type();
         loop {
             self.declaration_attributes_state = Some(DeclarationAttributes {
                 typedef_declarator: true,
                 ..DeclarationAttributes::default()
             });
-            let mut alignments = vec![];
+            let mut alignments = prefix_alignments.clone();
             let (name, mut ty, _, _, _) = self
                 .declarator_with_alignment(Some(&mut alignments))
                 .resolve(base.clone());
@@ -2184,23 +2190,29 @@ impl<'a> AstBuilderImpl<'a> {
                 };
             }
             self.validate_type_layout(&ty, &token);
-            if !alignments.is_empty()
-                && (!ty.is_complete_object()
-                    || matches!(ty.unqualified(), Type::Func(..) | Type::VariadicFunc(..))
-                    || alignments
-                        .iter()
-                        .any(|alignment| *alignment != ty.align_of()))
-            {
-                self.error_logger.print_error_position(
-                    token.pos,
-                    "only natural alignment attributes on complete object typedefs are supported",
-                );
+            if let Some(alignment) = alignments.into_iter().max() {
+                if !ty.is_complete_object() || ty.function_signature().is_some() {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "typedef alignment requires a complete object type",
+                    );
+                }
+                if alignment != ty.align_of() {
+                    if alignment > ty.natural_align_of()
+                        || !(ty.integer_info().is_some()
+                            || matches!(ty.unqualified(), Type::Float(32 | 64) | Type::Ptr(_)))
+                    {
+                        self.error_logger.print_error_position(token.pos, "non-natural typedef alignment is supported only for scalar alignment reductions");
+                    }
+                    ty = Type::Aligned(Box::new(ty), alignment);
+                }
             }
             if let Some(previous) = self.scope_stack.last().unwrap().get(&token.s_value) {
                 let valid = matches!(previous, Identifier::TypeDef(previous)
                     if !previous.is_variably_modified()
                         && !ty.is_variably_modified()
                         && previous.qualifiers() == ty.qualifiers()
+                        && previous.align_of() == ty.align_of()
                         && previous.compatible(&ty));
                 if !valid {
                     self.error_logger
@@ -3477,6 +3489,18 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn validate_storage_only_expressions(&self, node: &Node, address_only: bool) {
+        if node.nt == NodeType::CallFunc
+            && node
+                .args
+                .iter()
+                .filter_map(Node::resolve_type)
+                .chain(node.resolve_type())
+                .any(|ty| {
+                    matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_reduced_alignment()
+                })
+        {
+            self.error_logger.print_error_position(node.token.as_ref().map_or(0, |token| token.pos), "records containing reduced-alignment typedefs cannot be passed or returned by value");
+        }
         if node.nt == NodeType::CallFunc
             && node
                 .args

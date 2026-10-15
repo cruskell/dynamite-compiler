@@ -1826,6 +1826,98 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
     );
 }
 
+#[test_matrix([
+    ("unsigned int",1,4), ("unsigned int",2,4), ("unsigned long",1,8),
+    ("double",1,8), ("double",4,8), ("void *",1,8),
+], ["asm", "llvm"], ["-O0", "-O2"])]
+fn reduced_typedef_alignment_matches_clang(
+    case: (&str, usize, usize),
+    output_option: &str,
+    optimization: &str,
+) {
+    let (element, alignment, size) = case;
+    let declarations = format!(
+        r#"
+typedef __attribute__((aligned({alignment}))) {element} T;
+typedef T Alias;typedef const T Const;
+typedef __attribute__((aligned(1))) int Mixed __attribute__((aligned(2)));
+typedef {element} Base;typedef Base Suffix __attribute__((aligned({alignment}))), Ordinary;
+struct S{{char tag;T value;char tail;}};
+"#
+    );
+    let code = format!(
+        r#"{declarations}
+T scalar=(T)5,array[2]={{(T)11,(T)13}};struct S global={{1,(T)7,2}};
+int inspect(struct S*,T*,T*);
+int main(void){{
+ if(sizeof(T)!={size} || _Alignof(T)!={alignment} || _Alignof(Alias)!={alignment} || _Alignof(Const)!={alignment})return 1;
+ if(_Alignof(Suffix)!={alignment} || _Alignof(Ordinary)!={size} || _Alignof(Mixed)!=2)return 2;
+ if(sizeof(struct S)!={size}+2*{alignment} || _Alignof(struct S)!={alignment} || __builtin_offsetof(struct S,value)!={alignment})return 3;
+ if(_Generic((T*)0,{element}*:0,default:1))return 4;
+ struct S local={{3,(T)17,4}};if(local.value!=(T)17)return 5;
+ unsigned char bytes[64];T *unaligned=(T*)(bytes+1);*unaligned=(T)21;if(*unaligned!=(T)21)return 6;
+ int n=2;T variable[n];variable[1]=(T)23;if(sizeof(variable)!=2*{size} || variable[1]!=(T)23)return 7;
+ if(inspect(&global,&scalar,array))return 8;
+ return scalar!=(T)29 || global.value!=(T)31;
+}}
+"#
+    );
+    let companion = format!(
+        r#"{declarations}
+int inspect(struct S *s,T *scalar,T *array){{
+ if((char*)&s->value-(char*)s!=__builtin_offsetof(struct S,value) || (char*)&array[1]-(char*)array!=sizeof(T))return 1;
+ if(s->tag!=1 || s->value!=(T)7 || s->tail!=2 || *scalar!=(T)5 || array[1]!=(T)13)return 2;
+ *scalar=(T)29;s->value=(T)31;return 0;
+}}
+"#
+    );
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn reduced_typedef_alignment_preserves_scalar_call_abi(output_option: &str, optimization: &str) {
+    let declarations = "typedef long T __attribute__((aligned(1)));";
+    let signature = "int a,int b,int c,int d,int e,int f,int g,int h,char tag,T x,T y";
+    let code = format!(
+        "{declarations}T foreign({signature});T own({signature}){{return a+b+c+d+e+f+g+h+tag+x+y;}}int main(){{return foreign(1,2,3,4,5,6,7,8,9,10,11)!=66;}}"
+    );
+    let companion = format!(
+        "{declarations}T own({signature});T foreign({signature}){{return own(a,b,c,d,e,f,g,h,tag,x,y);}}"
+    );
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "typedef int T __attribute__((aligned(1)));typedef int T;",
+    "typedef long T __attribute__((aligned(16)));",
+    "typedef struct S{int n;}T __attribute__((aligned(1)));",
+    "typedef __int128 T __attribute__((aligned(1)));",
+    "typedef int T __attribute__((aligned(1)));struct S{T n;};void f(struct S);",
+    "typedef int T __attribute__((aligned(1)));struct S;void f(struct S);struct S{T n;};",
+    "typedef int T __attribute__((aligned(1)));struct S{T n;};int f(int,...);int main(){struct S s;return f(0,s);}",
+], ["asm", "llvm"])]
+fn unsupported_reduced_typedef_alignment_has_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn prefixed_character_constants_preserve_values_and_types(output_option: &str, optimization: &str) {
     let code = r#"
@@ -3821,8 +3913,8 @@ int main(){
 
 #[test_matrix([
     "typedef int Word __attribute__((aligned(8)));",
-    "typedef long Wide __attribute__((aligned(4)));",
-    "typedef int Word __attribute__((aligned(4),aligned(2)));",
+    "typedef long Wide __attribute__((aligned(16)));",
+    "typedef int Word __attribute__((aligned(8),aligned(2)));",
     "typedef int Function(void) __attribute__((aligned(1)));",
     "typedef struct Missing Record __attribute__((aligned(1)));",
     "typedef int Word __attribute__((aligned(3)));",

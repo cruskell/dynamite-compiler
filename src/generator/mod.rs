@@ -70,7 +70,11 @@ pub fn scalar_arguments(
         } else {
             let compact = compact_stack && index < fixed;
             let size = if compact { ty.size_of() } else { 8 };
-            let align = if compact { ty.align_of() } else { 8 };
+            let align = if compact {
+                ty.unqualified().align_of()
+            } else {
+                8
+            };
             stack = stack.div_ceil(align) * align;
             let location = ScalarLocation::Stack(stack, size);
             stack += size;
