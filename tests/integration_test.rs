@@ -2889,3 +2889,81 @@ int main(){
         compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"]) ]
+fn checked_formatted_output_preserves_results_and_effects(output_option: &str, optimization: &str) {
+    let code = r#"
+#include <string.h>
+char output[32];int destinations,sizes,flags,bounds,formats,texts,integers,floats;
+char *destination(){destinations++;return output;}
+unsigned long size(){sizes++;return 32;}
+int flag(){flags++;return 0;}
+unsigned long bound(unsigned long n){bounds++;return n;}
+const char *format(){formats++;return "%s:%d:%.1f";}
+const char *text(){texts++;return "ok";}
+int integer(){integers++;return 7;}
+double floating(){floats++;return 2.5;}
+int main(){
+    int n=__builtin___snprintf_chk(destination(),size(),flag(),bound(__builtin_object_size(output,1)),format(),text(),integer(),floating());
+    if(n!=8 || strcmp(output,"ok:7:2.5"))return 1;
+    if(destinations!=1 || sizes!=1 || flags!=1 || bounds!=1 || formats!=1 || texts!=1 || integers!=1 || floats!=1)return 2;
+    n=__builtin___sprintf_chk(output,1,32,"%s/%ld/%.1f","done",-9l,1.5);
+    if(n!=11 || strcmp(output,"done/-9/1.5"))return 3;
+    char tiny[4];n=__builtin___snprintf_chk(tiny,4,0,__builtin_object_size(tiny,1),"%s","abcdef");
+    if(n!=6 || strcmp(tiny,"abc"))return 4;
+    if(__builtin___snprintf_chk((char*)0,0,0,0,"%s","hello")!=5)return 5;
+    return _Generic(__builtin___snprintf_chk(output,32,0,32,"x"),int:0,default:1);
+}
+"#;
+    let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([false,true], ["asm", "llvm"], ["-O0", "-O2"])]
+fn checked_formatted_output_rejects_capacity_violations(
+    bounded: bool,
+    output_option: &str,
+    optimization: &str,
+) {
+    let call = if bounded {
+        "__builtin___snprintf_chk(storage,read_size(),0,4,\"%s\",\"x\")"
+    } else {
+        "__builtin___sprintf_chk(storage,0,4,\"%s\",\"abcdefgh\")"
+    };
+    let code = format!(
+        r#"
+void install_failure_handler(char *);unsigned long read_size(void);
+int main(){{char storage[12]={{0,0,0,0,55,55,55,55,0,0,0,0}};
+    install_failure_handler(storage+4);{call};return 99;}}
+"#
+    );
+    let companion = r#"
+#include <signal.h>
+#include <stdlib.h>
+static volatile unsigned char *watched;
+static void on_failure(int number){
+    (void)number;_Exit(watched[0]==55 && watched[1]==55 && watched[2]==55 && watched[3]==55 ? 73 : 74);
+}
+void install_failure_handler(char *value){watched=(unsigned char*)value;signal(SIGABRT,on_failure);signal(SIGTRAP,on_failure);signal(SIGILL,on_failure);}
+unsigned long read_size(void){return 5;}
+"#;
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(73), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){char a[4];return __builtin___sprintf_chk(a,0,4);}",
+    "int main(){char a[4];return __builtin___snprintf_chk(a,4,0,4);}",
+    "int main(){const char a[4]={0};return __builtin___sprintf_chk(a,0,4,\"x\");}",
+    "int main(){char a[4];return __builtin___snprintf_chk(a,a,0,4,\"x\");}",
+    "int main(){char a[4];return __builtin___snprintf_chk(a,4,a,4,\"x\");}",
+    "int main(){char a[4];return __builtin___sprintf_chk(a,0,4,1);}",
+    "int main(){void *p=__builtin___snprintf_chk;}",
+], ["asm", "llvm"])]
+fn invalid_checked_formatted_output_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
