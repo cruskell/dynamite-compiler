@@ -288,7 +288,10 @@ support tags, anonymous typedefs, member access, first-member brace initializati
 and assignment.
 ## Type qualifiers
 
-`const` and `volatile` qualify object types and pointer declarators. Writes to
+`const` and `volatile` qualify object types and pointer declarators. Qualifiers
+may appear between fundamental type specifiers, as in `unsigned const char`
+or `long volatile unsigned int`; compatible specifier orders name the same type.
+Writes to
 const objects and implicit conversions that discard pointee qualifiers are
 diagnosed. Qualifiers on a pointer distinguish an immutable pointer from a
 pointer to an immutable object. LLVM output marks volatile object accesses;

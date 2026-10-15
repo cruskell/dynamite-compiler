@@ -6760,3 +6760,55 @@ fn incomplete_records_in_definitions_and_calls_are_diagnosed(code: &str, output_
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn interspersed_type_qualifiers_preserve_types(output_option: &str, optimization: &str) {
+    let code = r#"
+unsigned const char a=255;
+short volatile unsigned int b=65535;
+long const unsigned long int c=18446744073709551615ULL;
+signed const char d=-1;
+const int volatile unsigned e=7;
+const double volatile f=3.5;
+typedef unsigned const short int Word;
+unsigned const __int128 wide;
+_Static_assert(__builtin_types_compatible_p(__typeof__(&a),const unsigned char*),"char qualification");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&b),volatile unsigned short*),"short qualification");
+_Static_assert(__builtin_types_compatible_p(__typeof__(c),unsigned long long),"long long identity");
+_Static_assert(__builtin_types_compatible_p(__typeof__(d),signed char),"signed char identity");
+_Static_assert(sizeof(wide)==16,"integer128 storage");
+int read_byte(unsigned const char *p){return *p;}
+int main(void){Word n=9;int value=read_byte((unsigned const char*)&a);b=5;
+    return value!=255 || b!=5 || c!=~0ULL || d!=-1 || e!=7 || f!=3.5 || n!=9;}
+"#;
+    let output = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn interspersed_long_double_qualifiers(output_option: &str, optimization: &str) {
+    let code = "long const double a=1.5L;double volatile long b=2.5L;int main(){return a+b!=4.0L;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){unsigned const char x=1;x=2;return 0;}",
+    "long const long long x;",
+    "unsigned volatile signed int x;",
+    "short const char x;",
+    "double const unsigned x;",
+    "long volatile float x;",
+    "int restrict unsigned x;",
+], ["asm", "llvm"])]
+fn invalid_interspersed_type_specifiers_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

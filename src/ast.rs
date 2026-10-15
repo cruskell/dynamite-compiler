@@ -1492,7 +1492,7 @@ impl<'a> AstBuilderImpl<'a> {
         let saved = self.cur;
         let mut nullability = None;
         let mut q = self.qualifiers_with_nullability(&mut nullability);
-        let Some(ty) = self.attempt_unqualified_type() else {
+        let Some(ty) = self.attempt_unqualified_type(&mut q) else {
             self.cur = saved;
             return None;
         };
@@ -1573,7 +1573,7 @@ impl<'a> AstBuilderImpl<'a> {
         ty
     }
 
-    fn attempt_unqualified_type(&mut self) -> Option<Type> {
+    fn attempt_unqualified_type(&mut self, qualifiers: &mut Qualifiers) -> Option<Type> {
         if self.tokens[self.cur].tt != TokenType::Reserved {
             if self.tokens[self.cur].tt == TokenType::Ident {
                 let name = self.tokens[self.cur].s_value.clone();
@@ -1592,37 +1592,6 @@ impl<'a> AstBuilderImpl<'a> {
         {
             return Some(self.typeof_type(token));
         }
-        let word = self.tokens[self.cur].s_value.as_str();
-        if matches!(word, "__int128" | "__int128_t" | "__uint128_t") {
-            let mut signed = word != "__uint128_t";
-            self.cur += 1;
-            if word == "__int128" {
-                if self.attempt_reserved("unsigned").is_some() {
-                    signed = false;
-                } else {
-                    self.attempt_reserved("signed");
-                }
-            }
-            return Some(Type::Integer128 { signed });
-        }
-        if matches!(word, "signed" | "unsigned")
-            && self.tokens[self.cur + 1].tt == TokenType::Reserved
-            && self.tokens[self.cur + 1].s_value == "__int128"
-        {
-            let signed = word == "signed";
-            self.cur += 2;
-            return Some(Type::Integer128 { signed });
-        }
-        if self.tokens[self.cur + 1].tt == TokenType::Reserved
-            && ((self.tokens[self.cur].s_value == "long"
-                && self.tokens[self.cur + 1].s_value == "double")
-                || (self.tokens[self.cur].s_value == "double"
-                    && self.tokens[self.cur + 1].s_value == "long"))
-        {
-            let token = self.tokens[self.cur].clone();
-            self.cur += 2;
-            return Some(self.long_double_type(&token));
-        }
         if let Some(token) = self.attempt_reserved("enum") {
             return Some(self.enum_type(token));
         }
@@ -1632,75 +1601,80 @@ impl<'a> AstBuilderImpl<'a> {
         {
             return Some(self.struct_type(token));
         }
-        if self.attempt_reserved("_Float16").is_some() {
-            return Some(Type::Float16);
-        }
-        for (name, bits) in [("float", 32), ("double", 64)] {
-            if self.attempt_reserved(name).is_some() {
-                return Some(Type::Float(bits));
+        let mut specifiers = vec![];
+        loop {
+            let q = self.attempt_qualifiers();
+            qualifiers.constant |= q.constant;
+            qualifiers.volatile |= q.volatile;
+            qualifiers.restricted |= q.restricted;
+            let token = &self.tokens[self.cur];
+            if token.tt != TokenType::Reserved
+                || !crate::tokenizer::TYPES.contains(&token.s_value.as_str())
+                || matches!(token.s_value.as_str(), "typeof" | "__typeof" | "__typeof__")
+            {
+                break;
             }
-        }
-        if self.attempt_reserved("void").is_some() {
-            return Some(Type::Void);
-        }
-        if self.attempt_reserved("_Bool").is_some() || self.attempt_reserved("bool").is_some() {
-            return Some(Type::Bool);
-        }
-        let mut bits = 32;
-        let mut signed = true;
-        let mut found = false;
-        let mut width = false;
-        let mut sign = false;
-        let mut longs = 0;
-        while self.tokens[self.cur].tt == TokenType::Reserved {
-            let word = self.tokens[self.cur].s_value.as_str();
-            match word {
-                "unsigned" | "signed" => {
-                    if sign {
-                        self.error_logger.print_error_position(
-                            self.tokens[self.cur].pos,
-                            "duplicate signedness",
-                        );
-                    }
-                    signed = word == "signed";
-                    sign = true;
-                }
-                "char" | "short" | "long" | "int" => {
-                    if word == "long" {
-                        longs += 1;
-                        if longs > 2 {
-                            self.error_logger.print_error_position(
-                                self.tokens[self.cur].pos,
-                                "invalid integer type",
-                            );
-                        }
-                        bits = 64;
-                    } else if word != "int" {
-                        if width {
-                            self.error_logger.print_error_position(
-                                self.tokens[self.cur].pos,
-                                "conflicting integer widths",
-                            );
-                        }
-                        bits = if word == "char" { 8 } else { 16 };
-                    }
-                    width = width || word != "int";
-                }
-                _ => break,
-            }
-            found = true;
+            specifiers.push(token.clone());
             self.cur += 1;
         }
-        if found {
-            return Some(if longs == 2 {
+        if specifiers.is_empty() {
+            return None;
+        }
+        let count = |name: &str| {
+            specifiers
+                .iter()
+                .filter(|token| token.s_value == name)
+                .count()
+        };
+        let signs = count("signed") + count("unsigned");
+        if signs > 1 {
+            self.error_logger
+                .print_error_position(specifiers[0].pos, "duplicate signedness");
+        }
+        let signed = count("unsigned") == 0;
+        let ints = count("int");
+        let longs = count("long");
+        let others = specifiers.len() - signs - ints - longs;
+        let ty = if others == 0 && ints <= 1 && longs <= 2 {
+            Some(if longs == 2 {
                 Type::LongLong { signed }
-            } else if bits == 8 && signed && sign {
+            } else {
+                Type::integer(if longs == 1 { 64 } else { 32 }, signed)
+            })
+        } else if others == 1 && count("char") == 1 && ints == 0 && longs == 0 {
+            Some(if signed && signs != 0 {
                 Type::SignedChar
             } else {
-                Type::integer(bits, signed)
-            });
+                Type::integer(8, signed)
+            })
+        } else if others == 1 && count("short") == 1 && ints <= 1 && longs == 0 {
+            Some(Type::integer(16, signed))
+        } else if others == 1 && count("__int128") == 1 && ints == 0 && longs == 0 {
+            Some(Type::Integer128 { signed })
+        } else if others == 1 && count("double") == 1 && ints == 0 && signs == 0 && longs <= 1 {
+            Some(if longs == 1 {
+                self.long_double_type(&specifiers[0])
+            } else {
+                Type::Float(64)
+            })
+        } else if specifiers.len() == 1 {
+            match specifiers[0].s_value.as_str() {
+                "void" => Some(Type::Void),
+                "bool" | "_Bool" => Some(Type::Bool),
+                "float" => Some(Type::Float(32)),
+                "_Float16" => Some(Type::Float16),
+                "__int128_t" => Some(Type::Integer128 { signed: true }),
+                "__uint128_t" => Some(Type::Integer128 { signed: false }),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if ty.is_none() {
+            self.error_logger
+                .print_error_position(specifiers[0].pos, "invalid combination of type specifiers");
         }
-        None
+        ty
     }
     fn enum_integer_type(&self, minimum: i128, maximum: i128, token: &Token) -> Type {
         if minimum >= i128::from(i32::MIN) && maximum <= i128::from(i32::MAX) {
