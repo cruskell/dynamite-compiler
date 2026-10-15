@@ -21,6 +21,7 @@ pub struct Options<'a> {
     return_pointer: Option<String>,
     break_labels: Vec<String>,
     expression_slots: HashMap<usize, usize>,
+    argument_slots: HashMap<(usize, usize), usize>,
 }
 
 impl Options<'_> {
@@ -173,9 +174,84 @@ impl<'a> IrGenerator<'a> {
             self.symbol_name(name),
             if gv.internal { "internal " } else { "" },
             if gv.thread_local { "thread_local " } else { "" },
-            self.gen_initializer_element(&gv.ty, gv.data.as_ref()),
+            if Self::contains_packed_record(&gv.ty) {
+                self.packed_global_initializer(&gv.ty, gv.data.as_ref())
+            } else {
+                self.gen_initializer_element(&gv.ty, gv.data.as_ref())
+            },
             Self::align(&gv.ty).max(gv.alignment),
         )
+    }
+
+    fn contains_packed_record(ty: &Type) -> bool {
+        match ty.unqualified() {
+            Type::Struct(record) => {
+                record.definition().borrow().packing.is_some()
+                    || record
+                        .members()
+                        .iter()
+                        .any(|member| Self::contains_packed_record(&member.ty))
+            }
+            Type::Arr(child, _) => Self::contains_packed_record(child),
+            _ => false,
+        }
+    }
+
+    fn packed_global_initializer(&self, ty: &Type, data: Option<&GlobalVariableData>) -> String {
+        let mut bytes = vec![0; ty.size_of()];
+        let mut addresses = HashMap::new();
+        crate::global::initializer_bytes(ty, data, 0, &mut bytes, &mut addresses);
+        let mut addresses = addresses.into_iter().collect::<Vec<_>>();
+        addresses.sort_by_key(|(offset, _)| *offset);
+        let mut types = vec![];
+        let mut values = vec![];
+        let mut cursor = 0;
+        for (offset, (symbol, delta)) in addresses {
+            if offset > cursor {
+                let count = offset - cursor;
+                types.push(format!("[{count} x i8]"));
+                values.push(format!(
+                    "[{count} x i8] c\"{}\"",
+                    bytes[cursor..offset]
+                        .iter()
+                        .map(|byte| format!("\\{byte:02X}"))
+                        .collect::<String>()
+                ));
+            }
+            types.push("ptr".into());
+            let pointer = if delta == 0 {
+                self.symbol_name(&symbol)
+            } else {
+                format!(
+                    "getelementptr (i8, ptr {}, i64 {delta})",
+                    self.symbol_name(&symbol)
+                )
+            };
+            values.push(format!("ptr {pointer}"));
+            cursor = offset + 8;
+        }
+        if cursor < bytes.len() {
+            let count = bytes.len() - cursor;
+            types.push(format!("[{count} x i8]"));
+            values.push(format!(
+                "[{count} x i8] c\"{}\"",
+                bytes[cursor..]
+                    .iter()
+                    .map(|byte| format!("\\{byte:02X}"))
+                    .collect::<String>()
+            ));
+        }
+        // Opaque pointers allow the definition to use an exact packed storage
+        // type, including relocations at offsets below pointer alignment.
+        format!("<{{ {} }}> <{{ {} }}>", types.join(", "), values.join(", "))
+    }
+
+    fn access_alignment(node: &Node) -> usize {
+        if matches!(node.nt, NodeType::Deref) {
+            1
+        } else {
+            node.resolve_type().unwrap().align_of()
+        }
     }
 
     fn float_literal(ty: &Type, bits: usize) -> String {
@@ -209,7 +285,11 @@ impl<'a> IrGenerator<'a> {
             Type::Float(bits) | Type::LongDouble(bits) => {
                 if bits == 32 { "float" } else { "double" }.to_string()
             }
-            Type::Struct(ty) if ty.definition().borrow().is_union || ty.has_bit_fields() => {
+            Type::Struct(ty)
+                if ty.definition().borrow().is_union
+                    || ty.has_bit_fields()
+                    || ty.definition().borrow().packing.is_some() =>
+            {
                 let ty = Type::Struct(ty);
                 let width = ty.align_of().min(8);
                 let storage = format!("[{} x i{}]", ty.size_of() / width, width * 8);
@@ -538,6 +618,38 @@ impl<'a> IrGenerator<'a> {
         ));
         format!("%{register}")
     }
+    fn aggregate_load_part(
+        part: &crate::generator::abi::Part,
+        size: usize,
+        base: &str,
+        options: &mut Options,
+        lines: &mut Vec<String>,
+    ) -> String {
+        let pointer = Self::aggregate_pointer(base, part.offset, options, lines);
+        let register = options.new_register();
+        options.register_queue.pop();
+        let remaining = size - part.offset;
+        let loaded_type = if remaining < part.ty.size_of() {
+            format!("i{}", remaining * 8)
+        } else {
+            Self::gen_type(part.ty.clone())
+        };
+        lines.push(format!(
+            "  %{register} = load {loaded_type}, ptr {pointer}, align 1"
+        ));
+        if remaining < part.ty.size_of() {
+            let extended = options.new_register();
+            options.register_queue.pop();
+            lines.push(format!(
+                "  %{extended} = zext {loaded_type} %{register} to {}",
+                Self::gen_type(part.ty.clone())
+            ));
+            format!("%{extended}")
+        } else {
+            format!("%{register}")
+        }
+    }
+
     fn aggregate_function(&self, name: &str, func: &Func) -> String {
         let (types, result, variadic) = func.cty.function_signature().unwrap();
         let signature = Self::aggregate_signature(&types, &result, types.len(), variadic);
@@ -589,6 +701,7 @@ impl<'a> IrGenerator<'a> {
             return_pointer: signature.indirect_result.then(|| "%abi.result".into()),
             break_labels: vec![],
             expression_slots: HashMap::new(),
+            argument_slots: HashMap::new(),
         };
         let mut lines = vec![format!(
             "define {}{return_type} {}({}) {{",
@@ -717,7 +830,19 @@ impl<'a> IrGenerator<'a> {
                 continue;
             }
             if argument.memory.is_some() || argument.indirect {
-                arguments.push(format!("{} {value}", parameter_types[0]));
+                let slot = options.argument_slots[&(node.token.as_ref().unwrap().pos, index)];
+                let register = options.new_register();
+                options.register_queue.pop();
+                let alignment = ty.align_of().max(argument.stack_alignment);
+                lines.push(format!(
+                    "  %{register} = load {}, ptr {value}, align 1",
+                    Self::gen_type(ty.clone())
+                ));
+                lines.push(format!(
+                    "  store {} %{register}, ptr %{slot}, align {alignment}",
+                    Self::gen_type(ty.clone())
+                ));
+                arguments.push(format!("{} %{slot}", parameter_types[0]));
             } else if aggregate && (parameter_types[0] == "i128") {
                 let register = options.new_register();
                 options.register_queue.pop();
@@ -730,15 +855,7 @@ impl<'a> IrGenerator<'a> {
                 let mut values = vec![];
                 for (part, _) in &argument.parts {
                     let value = if aggregate {
-                        let pointer =
-                            Self::aggregate_pointer(&value, part.offset, options, &mut lines);
-                        let register = options.new_register();
-                        options.register_queue.pop();
-                        lines.push(format!(
-                            "  %{register} = load {}, ptr {pointer}, align 1",
-                            Self::gen_type(part.ty.clone())
-                        ));
-                        format!("%{register}")
+                        Self::aggregate_load_part(part, ty.size_of(), &value, options, &mut lines)
                     } else {
                         value.clone()
                     };
@@ -839,9 +956,22 @@ impl<'a> IrGenerator<'a> {
                         value.clone()
                     };
                     let pointer = Self::aggregate_pointer(&slot, part.offset, options, &mut lines);
+                    let remaining = result.size_of() - part.offset;
+                    let mut stored_type = Self::gen_type(part.ty.clone());
+                    let value = if remaining < part.ty.size_of() {
+                        let narrowed = options.new_register();
+                        options.register_queue.pop();
+                        let narrow_type = format!("i{}", remaining * 8);
+                        lines.push(format!(
+                            "  %{narrowed} = trunc {stored_type} {value} to {narrow_type}"
+                        ));
+                        stored_type = narrow_type;
+                        format!("%{narrowed}")
+                    } else {
+                        value
+                    };
                     lines.push(format!(
-                        "  store {} {value}, ptr {pointer}, align 1",
-                        Self::gen_type(part.ty.clone())
+                        "  store {stored_type} {value}, ptr {pointer}, align 1"
                     ));
                 }
             }
@@ -865,9 +995,8 @@ impl<'a> IrGenerator<'a> {
             let register = options.new_register();
             options.register_queue.pop();
             lines.push(format!(
-                "  %{register} = load {}, ptr {address}, align {}",
-                Self::gen_type(ty.clone()),
-                ty.align_of()
+                "  %{register} = load {}, ptr {address}, align 1",
+                Self::gen_type(ty.clone())
             ));
             lines.push(format!(
                 "  store {} %{register}, ptr {pointer}, align {}",
@@ -879,35 +1008,17 @@ impl<'a> IrGenerator<'a> {
             let return_type = Self::aggregate_result_type(&ty);
             let mut result = "poison".to_string();
             for (index, part) in parts.iter().enumerate() {
-                let pointer = Self::aggregate_pointer(&address, part.offset, options, &mut lines);
-                let register = options.new_register();
-                options.register_queue.pop();
-                let remaining = ty.size_of() - part.offset;
-                let loaded_type = if remaining < part.ty.size_of() {
-                    format!("i{}", remaining * 8)
-                } else {
-                    Self::gen_type(part.ty.clone())
-                };
-                lines.push(format!(
-                    "  %{register} = load {loaded_type}, ptr {pointer}, align 1"
-                ));
-                let register = if remaining < part.ty.size_of() {
-                    let extended = options.new_register();
-                    options.register_queue.pop();
-                    lines.push(format!(
-                        "  %{extended} = zext {loaded_type} %{register} to {}",
-                        Self::gen_type(part.ty.clone())
-                    ));
-                    extended
-                } else {
-                    register
-                };
+                let value =
+                    Self::aggregate_load_part(part, ty.size_of(), &address, options, &mut lines);
                 if parts.len() == 1 {
-                    result = format!("%{register}");
+                    result = value;
                 } else {
                     let combined = options.new_register();
                     options.register_queue.pop();
-                    lines.push(format!("  %{combined} = insertvalue {return_type} {result}, {} %{register}, {index}",Self::gen_type(part.ty.clone())));
+                    lines.push(format!(
+                        "  %{combined} = insertvalue {return_type} {result}, {} {value}, {index}",
+                        Self::gen_type(part.ty.clone())
+                    ));
                     result = format!("%{combined}");
                 }
             }
@@ -950,6 +1061,7 @@ impl<'a> IrGenerator<'a> {
             return_pointer: None,
             break_labels: vec![],
             expression_slots: HashMap::new(),
+            argument_slots: HashMap::new(),
         };
         [
             vec![format!(
@@ -1039,6 +1151,34 @@ impl<'a> IrGenerator<'a> {
                     },
                     Self::align(&ty)
                 ));
+            }
+        }
+        if node.nt == NodeType::CallFunc {
+            let types = node
+                .args
+                .iter()
+                .rev()
+                .map(|arg| arg.resolve_type().unwrap())
+                .collect::<Vec<_>>();
+            let signature = Self::aggregate_signature(
+                &types,
+                &node.resolve_type().unwrap(),
+                node.parameter_types.len(),
+                node.variadic,
+            );
+            for (index, (ty, argument)) in types.iter().zip(&signature.arguments).enumerate() {
+                if argument.memory.is_some() || argument.indirect {
+                    let register = options.new_register();
+                    options.register_queue.pop();
+                    options
+                        .argument_slots
+                        .insert((node.token.as_ref().unwrap().pos, index), register);
+                    lines.push(format!(
+                        "  %{register} = alloca {}, align {}",
+                        Self::gen_type(ty.clone()),
+                        ty.align_of().max(argument.stack_alignment)
+                    ));
+                }
             }
         }
         if matches!(
@@ -1509,7 +1649,7 @@ impl<'a> IrGenerator<'a> {
                     Self::gen_type_with_opaque_ptr(ty.clone()),
                     value,
                     address,
-                    Self::align(&ty)
+                    Self::access_alignment(node.lhs.as_ref().unwrap())
                 ));
                 options.register_queue.push(value);
                 return lines;
@@ -1535,7 +1675,7 @@ impl<'a> IrGenerator<'a> {
                         },
                         Self::gen_type_with_opaque_ptr(ty.clone()),
                         address,
-                        Self::align(&ty)
+                        Self::access_alignment(node)
                     ));
                 }
                 return lines;
@@ -1901,7 +2041,7 @@ impl<'a> IrGenerator<'a> {
                     },
                     Self::gen_type(ty.clone()),
                     address,
-                    Self::align(&ty)
+                    Self::access_alignment(operand)
                 ));
                 let new = options.new_register();
                 options.register_queue.pop();
@@ -1962,7 +2102,7 @@ impl<'a> IrGenerator<'a> {
                     Self::gen_type(ty.clone()),
                     new,
                     address,
-                    Self::align(&ty)
+                    Self::access_alignment(operand)
                 ));
                 options.register_queue.push(format!("%{}", old));
                 return lines;

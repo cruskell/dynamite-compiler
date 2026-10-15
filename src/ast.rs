@@ -1380,6 +1380,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn struct_type(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
+        let packing = token.packing;
         let mut requested_record_alignment = self.record_alignment_attributes();
         let name = self.attempt_ident();
         self.declaration_annotations();
@@ -1470,7 +1471,10 @@ impl<'a> AstBuilderImpl<'a> {
                         );
                     }
                     let flexible = matches!(member_type.unqualified(), Type::Arr(_, 0));
-                    let member_alignment = member_type.align_of().max(requested_alignment);
+                    let member_alignment = member_type
+                        .align_of()
+                        .max(requested_alignment)
+                        .min(packing.unwrap_or(usize::MAX));
                     if flexible {
                         if is_union || members.is_empty() || name.is_none() {
                             self.error_logger.print_error_position(position.pos,
@@ -1491,6 +1495,10 @@ impl<'a> AstBuilderImpl<'a> {
                         }
                     }
                     let (field, offset) = if self.attempt_reserved(":").is_some() {
+                        if packing.is_some_and(|limit| member_type.align_of() > limit) {
+                            self.error_logger.print_error_position(position.pos,
+                                "bit-field storage exceeding pragma pack alignment is not supported");
+                        }
                         if !member_alignments.is_empty() {
                             self.error_logger.print_error_position(
                                 position.pos,
@@ -1626,6 +1634,7 @@ impl<'a> AstBuilderImpl<'a> {
                 size: size.div_ceil(align) * align,
                 align,
                 natural_align,
+                packing,
                 complete: true,
             };
         }

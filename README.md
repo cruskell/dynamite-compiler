@@ -374,6 +374,26 @@ declaration; weaker requests do not lower natural alignment. Bit-field alignment
 attributes, larger alignments, general object declarator alignment attributes,
 and packed attributes remain diagnosed as unsupported.
 
+## Record packing pragmas
+
+`#pragma pack(n)` caps ordinary struct and union member alignment at 1, 2, 4, 8,
+or 16 bytes. `pack()` and `pack(0)` restore the default. `pack(push[, name][, n])`
+and `pack(pop[, name][, n])` save and restore settings, including named frames.
+Resetting the current setting leaves saved frames intact. Invalid settings and
+pops without a matching saved frame are diagnosed.
+
+A record uses the setting at the start of its definition. Packing also caps
+member alignment attributes and `_Alignas`; record-level alignment attributes
+can still raise the complete record's alignment. Native assembly and LLVM use
+the same member offsets, storage size, and target ABI classification. LLVM uses
+raw record storage and packed global initializer fragments so pointer relocations
+do not introduce padding. Source-derived loads and stores allow unaligned access.
+
+Bit-fields whose declared storage alignment exceeds the packing limit remain
+unsupported and are diagnosed. GNU `packed` attributes are still unsupported.
+On macOS, static pointer initializers at unaligned offsets may require linking
+with `-Wl,-no_fixup_chains`, as with the equivalent Clang-generated definitions.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their

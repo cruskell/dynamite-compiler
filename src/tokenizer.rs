@@ -160,6 +160,123 @@ fn encode_string_literal(value: &str, encoding: StringEncoding) -> Vec<u8> {
     bytes
 }
 
+#[derive(Default)]
+struct Packing {
+    current: Option<usize>,
+    stack: Vec<(Option<String>, Option<usize>)>,
+}
+
+impl Packing {
+    fn alignment(value: &str, pos: usize) -> Result<Option<usize>, error::SyntaxError> {
+        let digits = value.trim_end_matches(['u', 'U', 'l', 'L']);
+        if !matches!(
+            value[digits.len()..].to_ascii_lowercase().as_str(),
+            "" | "u" | "l" | "ul" | "lu" | "ll" | "ull" | "llu"
+        ) {
+            return Err(error::SyntaxError::new(
+                pos,
+                "invalid pragma pack alignment",
+            ));
+        }
+        let value = digits;
+        let parsed = if let Some(value) = value
+            .strip_prefix("0x")
+            .or_else(|| value.strip_prefix("0X"))
+        {
+            usize::from_str_radix(value, 16)
+        } else if value.len() > 1 && value.starts_with('0') {
+            usize::from_str_radix(&value[1..], 8)
+        } else {
+            value.parse::<usize>()
+        };
+        match parsed {
+            Ok(0) => Ok(None),
+            Ok(value @ (1 | 2 | 4 | 8 | 16)) => Ok(Some(value)),
+            _ => Err(error::SyntaxError::new(
+                pos,
+                "invalid pragma pack alignment",
+            )),
+        }
+    }
+
+    fn identifier(value: &str) -> bool {
+        !value.is_empty()
+            && value.bytes().enumerate().all(|(index, byte)| {
+                byte == b'_' || byte.is_ascii_alphabetic() || (index > 0 && byte.is_ascii_digit())
+            })
+    }
+
+    fn directive(&mut self, text: &str, pos: usize) -> Result<(), error::SyntaxError> {
+        let Some(text) = text
+            .strip_prefix('#')
+            .unwrap()
+            .trim_start()
+            .strip_prefix("pragma")
+        else {
+            return Ok(());
+        };
+        if !text.starts_with(char::is_whitespace) {
+            return Ok(());
+        }
+        let Some(text) = text.trim_start().strip_prefix("pack") else {
+            return Ok(());
+        };
+        if !text.is_empty() && !text.starts_with('(') && !text.starts_with(char::is_whitespace) {
+            return Ok(());
+        }
+        let invalid = || error::SyntaxError::new(pos, "invalid pragma pack directive");
+        let text = text
+            .trim()
+            .strip_prefix('(')
+            .and_then(|text| text.strip_suffix(')'))
+            .ok_or_else(invalid)?;
+        if text.trim().is_empty() {
+            self.current = None;
+            return Ok(());
+        }
+        let args = text.split(',').map(str::trim).collect::<Vec<_>>();
+        if !matches!(args[0], "push" | "pop") {
+            if args.len() != 1 {
+                return Err(invalid());
+            }
+            self.current = Self::alignment(args[0], pos)?;
+            return Ok(());
+        }
+        let mut label = None;
+        let mut alignment = None;
+        let mut next = 1;
+        if args.get(next).is_some_and(|value| Self::identifier(value)) {
+            label = Some(args[next]);
+            next += 1;
+        }
+        if let Some(value) = args.get(next) {
+            alignment = Some(Self::alignment(value, pos)?);
+            next += 1;
+        }
+        if next != args.len() {
+            return Err(invalid());
+        }
+        if args[0] == "push" {
+            self.stack.push((label.map(str::to_owned), self.current));
+        } else {
+            let index = if let Some(label) = label {
+                self.stack
+                    .iter()
+                    .rposition(|(name, _)| name.as_deref() == Some(label))
+            } else {
+                self.stack.len().checked_sub(1)
+            }
+            .ok_or_else(invalid)?;
+            self.current = self.stack[index].1;
+            self.stack.truncate(index);
+        }
+        if let Some(alignment) = alignment {
+            self.current = alignment;
+        }
+        Ok(())
+    }
+}
+
 pub struct Tokenizer {}
 
 impl Tokenizer {
@@ -316,6 +433,8 @@ impl Tokenizer {
     }
     pub fn tokenize(code: &str, is_debug: bool) -> Result<Vec<Token>, error::SyntaxError> {
         let mut tokens = vec![];
+        let mut packing = Packing::default();
+        let mut packing_changes = vec![];
         let reserved_words = RESERVED_WORDS.into_iter().collect::<HashSet<_>>();
         let reserved_symbols = Trie::new(&RESERVED_SYMBOLS);
         let bytes = code.as_bytes();
@@ -422,6 +541,8 @@ impl Tokenizer {
                     while pos < bytes.len() && bytes[pos] != b'\n' {
                         pos += 1;
                     }
+                    packing.directive(&code[start..pos], start)?;
+                    packing_changes.push((pos, packing.current));
                 }
                 b'/' if code[pos..].starts_with("//") => {
                     while pos < bytes.len() && bytes[pos] != b'\n' {
@@ -530,6 +651,15 @@ impl Tokenizer {
             }
         }
         let mut tokens = joined;
+        let mut change = 0;
+        let mut current = None;
+        for token in &mut tokens {
+            while change < packing_changes.len() && packing_changes[change].0 <= token.pos {
+                current = packing_changes[change].1;
+                change += 1;
+            }
+            token.packing = current;
+        }
         tokens.push(Token {
             tt: TokenType::EOF,
             pos: code.len(),
@@ -688,5 +818,42 @@ mod tests {
     fn test_tokenize_error() {
         let code = "int main() { char *s = \"hello; return 0; }";
         assert!(Tokenizer::tokenize(code, false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod packing_tests {
+    use super::*;
+
+    #[test]
+    fn packing_tracks_nested_named_frames_and_resets() {
+        let code = "a;\n#pragma pack(push,outer,4)\nb;\n#pragma pack(push,inner,1)\nc;\n#pragma pack(pop,outer,2)\nd;\n#pragma pack(0)\ne;\n#pragma pack(push,8)\nf;\n#pragma pack()\ng;\n#pragma pack(pop)\nh;";
+        let tokens = Tokenizer::tokenize(code, false).unwrap();
+        let packing = tokens
+            .iter()
+            .filter(|token| token.tt == TokenType::Ident)
+            .map(|token| token.packing)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            packing,
+            vec![None, Some(4), Some(1), Some(2), None, Some(8), None, None]
+        );
+    }
+
+    #[test]
+    fn malformed_packing_is_diagnosed() {
+        for code in [
+            "#pragma pack(3)",
+            "#pragma pack(4uuu)",
+            "#pragma pack(32)",
+            "#pragma pack(-1)",
+            "#pragma pack(pop)",
+            "#pragma pack(push,4,1)",
+            "#pragma pack(push,)",
+            "#pragma pack(push,label,2,4)",
+            "#pragma pack(push,label,2)\n#pragma pack(pop,missing)",
+        ] {
+            assert!(Tokenizer::tokenize(code, false).is_err(), "{code}");
+        }
     }
 }
