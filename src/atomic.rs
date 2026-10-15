@@ -67,7 +67,17 @@ impl AstBuilderImpl<'_> {
                 ty.clone()
             };
             self.expect_conversion(&value_type, &value);
-            Self::cast_integer(&mut value, &value_type);
+            if matches!(value_type, Type::Ptr(_)) {
+                value = Node {
+                    nt: NodeType::Cast,
+                    cty: Some(value_type),
+                    token: value.token.clone(),
+                    lhs: Some(Box::new(value)),
+                    ..Node::default()
+                };
+            } else {
+                Self::cast_integer(&mut value, &value_type);
+            }
             args.push(value);
         }
         self.expect_reserved(",");
