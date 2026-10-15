@@ -205,7 +205,8 @@ homogeneous floating aggregates, stack arguments, and indirect large results.
 
 ## Variadic argument access
 
-The bundled `stdarg.h` provides `va_list`, `va_start`, `va_arg`, `va_copy`, and
+The compiler provides `__builtin_va_list` using the target calling convention.
+The bundled `stdarg.h` aliases this type and provides `va_list`, `va_start`, `va_arg`, `va_copy`, and
 `va_end`. Variadic definitions can receive promoted scalar values and aggregate
 values, including arguments that overflow the register banks. `va_start` must
 name the last fixed parameter. Retrieve `float` as `double`, and retrieve narrow
