@@ -1519,7 +1519,7 @@ fn invalid_nullability_and_const_pointer_writes_are_diagnosed(code: &str, output
 
 #[test_matrix(["asm", "llvm"])]
 fn incomplete_extern_arrays_link_without_allocating_storage(output_option: &str) {
-    let code = "extern int values[];int *offset=values+2;int read_values(){extern int values[];return values[0]+*offset;}int main(){return read_values()-9;}";
+    let code = "extern int values[];int *value_tail=values+2;int read_values(){extern int values[];return values[0]+*value_tail;}int main(){return read_values()-9;}";
     let companion = "int values[3]={2,3,7};";
     assert_eq!(
         compile_and_run_with_c(code, output_option, Some(companion))
