@@ -2149,6 +2149,59 @@ fn invalid_record_alignment_is_diagnosed(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn population_count_builtins_match_clang(output_option: &str, optimization: &str) {
+    let code = r#"
+int reference32(unsigned int);
+int reference64(unsigned long);
+int reference_ll(unsigned long long);
+_Static_assert(__builtin_popcount(0) == 0, "zero");
+_Static_assert(__builtin_popcount(-1) == 32, "int width");
+_Static_assert(__builtin_popcount(0x100000001UL) == 1, "narrow input");
+_Static_assert(__builtin_popcountl(-1L) == 64, "long width");
+_Static_assert(__builtin_popcountll(-1LL) == 64, "long long width");
+int global = __builtin_popcountll(0x8100000000000001ULL);
+int main() {
+    unsigned long x = 0x8123456789abcdefUL;
+    int i;
+    for(i = 0; i < 300; ++i) {
+        if(__builtin_popcount(x) != reference32(x)) return 1;
+        if(__builtin_popcountl(x) != reference64(x)) return 2;
+        if(__builtin_popcountll(x) != reference_ll(x)) return 3;
+        x = x * 6364136223846793005UL + 1442695040888963407UL;
+    }
+    volatile unsigned long observed = 0x8000000000000001UL;
+    if(__builtin_popcountll(observed++) != 2 || observed != 0x8000000000000002UL) return 4;
+    i = 0;
+    if((0 && __builtin_popcount(i++)) || (1 ? 0 : __builtin_popcount(i++)) || i) return 5;
+    if(sizeof(__builtin_popcount(i++)) != sizeof(int) || i) return 6;
+    if(_Generic(__builtin_popcountl(x), int:0, default:1)) return 7;
+    if(global != 3 || __builtin_popcount((unsigned char)255) != 8) return 8;
+    return 0;
+}
+"#;
+    let companion = "int reference32(unsigned int x){return __builtin_popcount(x);} int reference64(unsigned long x){return __builtin_popcountl(x);} int reference_ll(unsigned long long x){return __builtin_popcountll(x);}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){return __builtin_popcount();}",
+    "int main(){return __builtin_popcount(1,2);}",
+    "int main(){int x;return __builtin_popcount(&x);}",
+    "struct S{int n;};int main(){struct S x={1};return __builtin_popcountll(x);}"
+], ["asm", "llvm"])]
+fn invalid_population_count_builtins(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,

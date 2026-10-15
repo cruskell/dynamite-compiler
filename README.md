@@ -682,3 +682,9 @@ braces and a trailing comma, such as `char name[] = { "value", };`. The array
 bound includes the terminating zero when inferred; a fixed bound may omit that
 zero when it exactly fits the string. This applies to static and automatic
 storage, aggregate members, compound literals, and supported wide strings.
+
+`__builtin_popcount`, `__builtin_popcountl` and `__builtin_popcountll` count the
+set bits after conversion to unsigned int, unsigned long and unsigned long long,
+respectively, and return an int. Constant operands are folded; other operands
+are evaluated once and lowered to shared unsigned integer operations on all
+backends. The preprocessing capability queries report these builtins as supported.
