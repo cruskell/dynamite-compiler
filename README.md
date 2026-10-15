@@ -385,3 +385,12 @@ non-variably-modified type. Type qualifiers, array bounds, and the identifier
 kind must agree. Function parameter top-level qualifiers do not change function
 type compatibility. Inner scopes may still introduce a different typedef with
 the same name.
+
+## Natural-alignment typedef annotations
+
+Postfix `aligned(N)` attributes on complete object typedef declarations are
+accepted when every requested alignment equals the underlying type's natural
+alignment. This includes scalar, pointer, array, and record aliases. Each
+attribute is checked; typedef attributes that would increase or decrease
+alignment remain diagnosed as unsupported. Type identity, size, and layout are
+unchanged for accepted annotations.
