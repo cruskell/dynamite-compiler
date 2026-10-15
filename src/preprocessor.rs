@@ -540,7 +540,7 @@ mod option_tests {
 #if __has_builtin(__builtin_rotateleft32) || __has_builtin(__is_target_os)
 #error Unsupported builtin
 #endif
-#if __has_attribute(vector_size) || __has_attribute(weak_import)
+#if __has_attribute(vector_size) || __has_attribute(weak)
 #error Unsupported attribute
 #endif
 int values[]={__has_builtin(unknown),__has_builtin(__builtin_expect),__has_attribute(unused)};
