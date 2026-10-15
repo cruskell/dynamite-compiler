@@ -1121,8 +1121,11 @@ Each enumeration tag and anonymous enumeration has a distinct type identity.
 Typedefs and fixed-underlying forward declarations retain that identity, while
 inner-scope definitions introduce new types. Distinct enums remain incompatible
 with each other even when they share an integer representation; each enum is
-compatible with its selected underlying integer type. Existing underlying-type
-selection, enumerator range rules, sizes, and ABI remain unchanged. Enum identities
+compatible with its selected underlying integer type. On the supported LP64
+ABIs, non-fixed enums whose values fit in unsigned int and are all nonnegative
+use unsigned int; negative-valued enums use a signed representation when it fits.
+Ordinary enumerator constants whose full enum range fits in int retain int type,
+independently of the enum representation. Enum identities
 and source qualifiers are lowered to runtime types after semantic validation.
 
 ## Type compatibility queries
