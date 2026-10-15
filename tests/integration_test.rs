@@ -2967,3 +2967,111 @@ fn invalid_checked_formatted_output_is_diagnosed(code: &str, output_option: &str
             .is_err()
     );
 }
+
+// Older Linux libcs lack these BSD APIs; macOS exercises the system runtime.
+const CHECKED_BSD_STRING_RUNTIME: &str = r#"
+#include <stddef.h>
+#include <stdlib.h>
+#include <signal.h>
+#ifndef __APPLE__
+size_t strlcpy(char *dst,const char *src,size_t n){
+    size_t len=0;while(src[len])len++;
+    if(n){size_t copied=len<n-1?len:n-1;for(size_t i=0;i<copied;i++)dst[i]=src[i];dst[copied]=0;}
+    return len;
+}
+size_t strlcat(char *dst,const char *src,size_t n){
+    size_t used=0;while(used<n && dst[used])used++;
+    size_t len=0;while(src[len])len++;
+    if(used<n)strlcpy(dst+used,src,n-used);
+    return used+len;
+}
+size_t __strlcpy_chk(char *dst,const char *src,size_t n,size_t capacity){
+    if(n>capacity)abort();return strlcpy(dst,src,n);
+}
+size_t __strlcat_chk(char *dst,const char *src,size_t n,size_t capacity){
+    if(n>capacity)abort();return strlcat(dst,src,n);
+}
+#endif
+static volatile unsigned char *watched;
+static void on_failure(int number){
+    (void)number;for(int i=0;i<8;i++)if(watched[i]!=55)_Exit(74);_Exit(73);
+}
+void install_failure_handler(char *p){watched=(unsigned char*)p;signal(SIGABRT,on_failure);signal(SIGTRAP,on_failure);signal(SIGILL,on_failure);}
+unsigned long excessive_size(void){return 5;}
+"#;
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn checked_bsd_string_output_preserves_results_and_effects(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+#include <string.h>
+char buffer[8];int destinations,sources,sizes,capacities;
+char *destination(){destinations++;return buffer;}
+const char *source(){sources++;return "abcdefghi";}
+unsigned long size(){sizes++;return 8;}
+unsigned long capacity(){capacities++;return 8;}
+int main(){
+    unsigned long n=__builtin___strlcpy_chk(destination(),source(),size(),capacity());
+    if(n!=9 || strcmp(buffer,"abcdefg"))return 1;
+    if(destinations!=1 || sources!=1 || sizes!=1 || capacities!=1)return 2;
+    if(__builtin___strlcpy_chk(buffer,"ab",8,__builtin_object_size(buffer,1))!=2)return 3;
+    if(__builtin___strlcat_chk(buffer,"cdefghij",8,8)!=10 || strcmp(buffer,"abcdefg"))return 4;
+    if(__builtin___strlcpy_chk((char*)0,"hello",0,0)!=5)return 5;
+    if(__builtin___strlcat_chk((char*)0,"hello",0,0)!=5)return 6;
+    char raw[4]={'a','b','c','d'};
+    if(__builtin___strlcat_chk(raw,"xy",4,4)!=6 || memcmp(raw,"abcd",4))return 7;
+    if(__builtin___strlcpy_chk(buffer,"hi",8,(unsigned long)-1)!=2 || strcmp(buffer,"hi"))return 8;
+    buffer[0]=0;destinations=0;sources=0;sizes=0;capacities=0;
+    if(__builtin___strlcat_chk(destination(),source(),size(),capacity())!=9 || strcmp(buffer,"abcdefg"))return 9;
+    if(destinations!=1 || sources!=1 || sizes!=1 || capacities!=1)return 10;
+    return _Generic(__builtin___strlcat_chk(buffer,"",8,8),unsigned long:0,default:1);
+}
+"#;
+    let result = compile_and_run_with_c_flags(
+        code,
+        output_option,
+        Some(CHECKED_BSD_STRING_RUNTIME),
+        &[optimization],
+    );
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["strlcpy", "strlcat"], ["asm", "llvm"], ["-O0", "-O2"])]
+fn checked_bsd_string_output_rejects_capacity_violations(
+    operation: &str,
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = format!(
+        r#"
+void install_failure_handler(char *);unsigned long excessive_size(void);
+int main(){{char storage[8]={{55,55,55,55,55,55,55,55}};
+install_failure_handler(storage);__builtin___{operation}_chk(storage,"",excessive_size(),4);return 99;}}
+"#
+    );
+    let result = compile_and_run_with_c_flags(
+        &code,
+        output_option,
+        Some(CHECKED_BSD_STRING_RUNTIME),
+        &[optimization],
+    );
+    assert_eq!(result.status.code(), Some(73), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){char a[4];return __builtin___strlcpy_chk(a,\"x\",4);}",
+    "int main(){char a[4];return __builtin___strlcat_chk(a,\"x\",4,4,4);}",
+    "int main(){const char a[4]={0};return __builtin___strlcpy_chk(a,\"x\",4,4);}",
+    "int main(){char a[4];return __builtin___strlcat_chk(a,1,4,4);}",
+    "int main(){char a[4];return __builtin___strlcpy_chk(a,\"x\",a,4);}",
+    "int main(){char a[4];return __builtin___strlcat_chk(a,\"x\",4,a);}",
+    "int main(){void *p=__builtin___strlcpy_chk;}",
+], ["asm", "llvm"])]
+fn invalid_checked_bsd_string_output_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

@@ -4747,6 +4747,31 @@ impl<'a> AstBuilderImpl<'a> {
         )
     }
 
+    fn checked_bsd_string_builtin(&mut self, token: Token) -> Node {
+        let pointer = Type::Ptr(Box::new(Type::I8));
+        let source = Type::Ptr(Box::new(Type::Qualified(
+            Box::new(Type::I8),
+            Qualifiers {
+                constant: true,
+                ..Qualifiers::default()
+            },
+        )));
+        let size = Type::integer(64, false);
+        let name = match token.s_value.as_str() {
+            "__builtin___strlcpy_chk" => "__strlcpy_chk",
+            "__builtin___strlcat_chk" => "__strlcat_chk",
+            _ => unreachable!(),
+        };
+        self.checked_runtime_builtin(
+            token,
+            name,
+            Type::Func(
+                vec![pointer, source, size.clone(), size.clone()],
+                Box::new(size),
+            ),
+        )
+    }
+
     fn checked_runtime_builtin(&mut self, token: Token, name: &str, ty: Type) -> Node {
         if self.tokens[self.cur].s_value != "(" {
             self.error_logger
@@ -4917,6 +4942,12 @@ impl<'a> AstBuilderImpl<'a> {
                 "__builtin___sprintf_chk" | "__builtin___snprintf_chk"
             ) {
                 return self.checked_format_builtin(t);
+            }
+            if matches!(
+                t.s_value.as_str(),
+                "__builtin___strlcpy_chk" | "__builtin___strlcat_chk"
+            ) {
+                return self.checked_bsd_string_builtin(t);
             }
             if t.s_value == "__builtin_add_overflow" {
                 return self.add_overflow_builtin(t);

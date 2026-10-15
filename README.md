@@ -467,6 +467,17 @@ arguments preserved. They return `int` character counts and retain standard
 supplied capacity retain the runtime's failure behavior. These builtins require
 the corresponding checked libc functions.
 
+## Checked BSD string output
+
+`__builtin___strlcpy_chk` and `__builtin___strlcat_chk` call their matching
+checked libc functions, preserving the destination, source, requested size and
+object capacity. They return `size_t` and retain BSD truncation and length
+semantics, including zero-sized destinations and unterminated bounded inputs.
+The runtime rejects requested sizes larger than the supplied object capacity.
+These builtins require `__strlcpy_chk` and `__strlcat_chk` from the target libc;
+older Linux libcs may not provide these BSD APIs. Tests on those platforms use
+a C runtime implementation, while macOS tests use the system libc.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their
