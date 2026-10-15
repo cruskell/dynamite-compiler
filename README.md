@@ -569,3 +569,18 @@ targets. Byte escape sequences are supported; raw non-ASCII characters and
 universal escapes requiring multiple UTF-8 bytes remain unsupported in ordinary
 character constants. These constants work in expressions and integer constant
 contexts, including enumerators, static initializers and case labels.
+
+## GNU packed records
+
+Struct and union definitions accept `__attribute__((packed))` before the tag or
+after the closing brace, including the `__packed__` spelling. Ordinary members
+use byte alignment unless an explicit member alignment raises it. An active
+`#pragma pack` still caps member alignment. Record-level `aligned` may raise the
+aggregate alignment without changing packed member offsets. Nested record types
+retain their internal layout, and flexible array offsets follow the packed layout.
+
+Packed storage, unaligned accesses, global initialization and calling conventions
+reuse the shared packed-record paths across all three backends. GNU packed
+records with bit-fields, packing attributes on individual members or typedefs,
+and packing attributes on incomplete tag references remain unsupported and are
+diagnosed rather than ignored.

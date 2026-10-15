@@ -441,10 +441,14 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn declaration_annotations(&mut self) {
-        self.declaration_attributes(false);
+        self.declaration_attributes(false, None);
     }
 
-    fn declaration_attributes(&mut self, allow_alignment: bool) -> Vec<usize> {
+    fn declaration_attributes(
+        &mut self,
+        allow_alignment: bool,
+        mut packed: Option<&mut bool>,
+    ) -> Vec<usize> {
         let mut alignments = vec![];
         while matches!(self.tokens[self.cur].tt, TokenType::Ident)
             && matches!(
@@ -495,6 +499,22 @@ impl<'a> AstBuilderImpl<'a> {
                         | "sentinel"
                         | "diagnose_if"
                 );
+                if name.s_value.trim_matches('_') == "packed" {
+                    if let Some(packed) = packed.as_deref_mut() {
+                        self.cur += 1;
+                        if self.tokens[self.cur].s_value == "(" {
+                            self.error_logger.print_error_position(
+                                name.pos,
+                                "packed attribute does not take arguments",
+                            );
+                        }
+                        *packed = true;
+                        if self.tokens[self.cur].s_value != ")" {
+                            self.expect_reserved(",");
+                        }
+                        continue;
+                    }
+                }
                 if allow_alignment && name.s_value.trim_matches('_') == "aligned" {
                     self.cur += 1;
                     let value = if self.attempt_reserved("(").is_some() {
@@ -555,11 +575,14 @@ impl<'a> AstBuilderImpl<'a> {
         alignments
     }
 
-    fn record_alignment_attributes(&mut self) -> usize {
-        self.declaration_attributes(true)
+    fn record_attributes(&mut self) -> (usize, bool) {
+        let mut packed = false;
+        let alignment = self
+            .declaration_attributes(true, Some(&mut packed))
             .into_iter()
             .max()
-            .unwrap_or(0)
+            .unwrap_or(0);
+        (alignment, packed)
     }
 
     fn declarator(&mut self) -> Declarator {
@@ -581,7 +604,7 @@ impl<'a> AstBuilderImpl<'a> {
         };
         loop {
             if let Some(alignments) = alignments.as_deref_mut() {
-                alignments.extend(self.declaration_attributes(true));
+                alignments.extend(self.declaration_attributes(true, None));
             } else {
                 self.declaration_annotations();
             }
@@ -1397,7 +1420,7 @@ impl<'a> AstBuilderImpl<'a> {
     fn struct_type(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
         let packing = token.packing;
-        let mut requested_record_alignment = self.record_alignment_attributes();
+        let (mut requested_record_alignment, mut packed) = self.record_attributes();
         let name = self.attempt_ident();
         self.declaration_annotations();
         let key = format!(
@@ -1441,6 +1464,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.error_logger
                 .print_error_position(token.pos, "aggregate tag has a different kind");
         }
+        let inherited_record_alignment = ty.definition().borrow().align;
         if self.attempt_reserved("{").is_some() {
             if ty.definition().borrow().complete {
                 self.error_logger
@@ -1621,6 +1645,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 |name| name.s_value,
                             ),
                             anonymous,
+                            requested_alignment,
                             ty: member_type,
                             offset,
                             bit_field: (field.width != 0).then_some(field),
@@ -1655,10 +1680,47 @@ impl<'a> AstBuilderImpl<'a> {
             };
         }
         if defining {
-            requested_record_alignment =
-                requested_record_alignment.max(self.record_alignment_attributes());
+            let (alignment, trailing_packed) = self.record_attributes();
+            requested_record_alignment = requested_record_alignment.max(alignment);
+            packed |= trailing_packed;
         } else {
             self.declaration_annotations();
+        }
+        if packed {
+            if !defining {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "packed attribute requires a record definition",
+                );
+            }
+            let definition = ty.definition();
+            let mut definition = definition.borrow_mut();
+            if definition.has_bit_fields {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "GNU packed records with bit-fields are not supported",
+                );
+            }
+            let mut size = 0usize;
+            let mut align = 1;
+            for member in &mut definition.members {
+                // GNU packing lowers natural alignment; explicit member alignment may raise it.
+                let alignment = member
+                    .requested_alignment
+                    .max(1)
+                    .min(packing.unwrap_or(usize::MAX));
+                align = align.max(alignment);
+                member.offset = if is_union {
+                    0
+                } else {
+                    size.div_ceil(alignment) * alignment
+                };
+                size = size.max(member.offset + member.ty.size_of());
+            }
+            definition.natural_align = align;
+            definition.align = align.max(inherited_record_alignment);
+            definition.size = size.div_ceil(definition.align) * definition.align;
+            definition.packing = Some(1);
         }
         if requested_record_alignment != 0 {
             let definition = ty.definition();
