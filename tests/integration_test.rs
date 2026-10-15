@@ -1446,6 +1446,41 @@ fn declaration_metadata_attributes_preserve_execution(output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn c_bridge_metadata_preserves_types_and_calls(output_option: &str, optimization: &str) {
+    let code = r#"
+typedef const __attribute__((objc_bridge(id))) void *Object;
+typedef const struct __attribute__((__objc_bridge__(Example))) Opaque *Handle;
+typedef struct __attribute__((objc_bridge_mutable(MutableExample))) Opaque *MutableHandle;
+typedef __attribute__((objc_bridge(id))) Object Property __attribute__((swift_wrapper(struct)));
+struct __attribute__((objc_boxable)) Pair{long x;long y;};
+Object create(void) __attribute__((cf_returns_retained,swift_name("makeObject()")));
+Object borrow(Object object) __attribute__((__cf_returns_not_retained__,__swift_private__));
+void consume(Object __attribute__((cf_consumed)) object);
+int calls;
+Object create(void){calls++;return (Object)&calls;}
+Object borrow(Object object){calls++;return object;}
+struct Pair echo(struct Pair);
+int main(){
+    Property object=create();
+    if(borrow(object)!=object)return 1;
+    consume(object);
+    struct Pair p={7,9};p=echo(p);
+    return calls-3+(sizeof(Handle)!=8)+(sizeof(MutableHandle)!=8)
+        +(sizeof(struct Pair)!=16)+(p.x!=9)+(p.y!=7)
+        +_Generic(object,Object:0,default:1);
+}"#;
+    let companion = r"
+extern int calls;
+void consume(const void *object){if(object==&calls)calls++;}
+struct Pair{long x;long y;};
+struct Pair echo(struct Pair p){struct Pair result={p.y,p.x};return result;}
+";
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0));
+}
+
 #[test_matrix([
     "struct __attribute__((packed(1))) S{int x;};",
     "int value __attribute__((aligned(32)));",
