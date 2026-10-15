@@ -1508,6 +1508,44 @@ impl<'a> IrGenerator<'a> {
         }
     }
 
+    fn gen_atomic(
+        &self,
+        node: &Node,
+        operation: AtomicOperation,
+        options: &mut Options,
+    ) -> Vec<String> {
+        let mut lines = vec![];
+        let mut values = vec![];
+        for argument in &node.args {
+            lines.extend(self.gen_node(argument, options));
+            values.push(options.register_queue.pop().unwrap());
+        }
+        let ty = node.args[0].dest_type().unwrap();
+        let scalar = Self::gen_type(ty.clone());
+        let volatile = if node.volatile_access {
+            "volatile "
+        } else {
+            ""
+        };
+        if operation == AtomicOperation::Load {
+            lines.push(format!(
+                "  %{} = load atomic {volatile}{scalar}, ptr {} seq_cst, align {}",
+                options.new_register(),
+                values[0],
+                ty.align_of()
+            ));
+        } else {
+            lines.push(format!(
+                "  store atomic {volatile}{scalar} {}, ptr {} seq_cst, align {}",
+                values[1],
+                values[0],
+                ty.align_of()
+            ));
+            options.register_queue.push("0".into());
+        }
+        lines
+    }
+
     fn gen_node(&self, node: &Node, options: &mut Options) -> Vec<String> {
         if options.terminated
             && !matches!(node.nt, NodeType::Block | NodeType::Case | NodeType::Label)
@@ -1524,36 +1562,7 @@ impl<'a> IrGenerator<'a> {
         }
         match node.nt {
             NodeType::Atomic(operation) => {
-                let mut lines = vec![];
-                let mut values = vec![];
-                for argument in &node.args {
-                    lines.extend(self.gen_node(argument, options));
-                    values.push(options.register_queue.pop().unwrap());
-                }
-                let ty = node.args[0].dest_type().unwrap();
-                let scalar = Self::gen_type(ty.clone());
-                let volatile = if node.volatile_access {
-                    "volatile "
-                } else {
-                    ""
-                };
-                if operation == AtomicOperation::Load {
-                    lines.push(format!(
-                        "  %{} = load atomic {volatile}{scalar}, ptr {} seq_cst, align {}",
-                        options.new_register(),
-                        values[0],
-                        ty.align_of()
-                    ));
-                } else {
-                    lines.push(format!(
-                        "  store atomic {volatile}{scalar} {}, ptr {} seq_cst, align {}",
-                        values[1],
-                        values[0],
-                        ty.align_of()
-                    ));
-                    options.register_queue.push("0".into());
-                }
-                return lines;
+                return self.gen_atomic(node, operation, options);
             }
             NodeType::VaStart | NodeType::VaEnd => {
                 let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
