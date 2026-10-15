@@ -156,9 +156,12 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
         }
         for function in self.functions.values() {
+            if let Some(token) = &function.token {
+                self.validate_type_layout(&function.cty, token);
+            }
             if let Some(body) = &function.body {
                 self.validate_void_expressions(body);
-                self.validate_wide_integer_expressions(body, false);
+                self.validate_storage_only_expressions(body, false);
                 if function.inline_only() {
                     if let Some(token) = &function.mutable_static {
                         self.error_logger.print_error_position(
@@ -386,6 +389,12 @@ impl<'a> AstBuilderImpl<'a> {
                         self.error_logger.print_error_position(
                             token.pos,
                             "128-bit integer parameters and results are not supported",
+                        );
+                    }
+                    if matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_float16() {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "records containing _Float16 cannot be passed or returned by value",
                         );
                     }
                     self.validate_type_layout(ty, token);
@@ -1209,6 +1218,9 @@ impl<'a> AstBuilderImpl<'a> {
             .or_else(|| self.attempt_reserved("union"))
         {
             return Some(self.struct_type(token));
+        }
+        if self.attempt_reserved("_Float16").is_some() {
+            return Some(Type::Float16);
         }
         for (name, bits) in [("float", 32), ("double", 64)] {
             if self.attempt_reserved(name).is_some() {
@@ -2053,6 +2065,17 @@ impl<'a> AstBuilderImpl<'a> {
                 Self::resolve_parameter_bounds(&mut bounds, &args);
                 self.mutable_static = None;
                 let mut body = self.consume_block();
+                if body.is_some() {
+                    let (parameters, result, _) = ty.function_signature().unwrap();
+                    if parameters
+                        .iter()
+                        .chain(std::iter::once(&result))
+                        .any(|ty| matches!(ty.unqualified(), Type::Float16))
+                    {
+                        self.error_logger.print_error_position(token.pos,
+                            "_Float16 parameters and results in function definitions are not supported");
+                    }
+                }
                 if let Some(body) = &mut body {
                     bounds.append(&mut body.children);
                     body.children = bounds;
@@ -2207,6 +2230,12 @@ impl<'a> AstBuilderImpl<'a> {
         let ty = ty.unqualified();
         match (ty, data) {
             (_, GlobalVariableData::Zero) => {}
+            (Type::Float16, _) => {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "_Float16 value initialization is not supported",
+                );
+            }
             (Type::Integer128 { .. }, _) => {
                 self.error_logger.print_error_position(
                     token.pos,
@@ -2456,6 +2485,7 @@ impl<'a> AstBuilderImpl<'a> {
             return GlobalVariableData::Arr(vec![value]);
         }
         let expression = self.ternary();
+        self.validate_storage_only_expressions(&expression, false);
         if let Some((symbol, offset)) = self.constant_address(&expression) {
             return GlobalVariableData::Address { symbol, offset };
         }
@@ -2932,19 +2962,37 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn validate_wide_integer_expressions(&self, node: &Node, address_only: bool) {
-        if !address_only
+    fn validate_storage_only_expressions(&self, node: &Node, address_only: bool) {
+        if node.nt == NodeType::CallFunc
             && node
-                .resolve_type()
-                .is_some_and(|ty| matches!(ty.unqualified(), Type::Integer128 { .. }))
+                .args
+                .iter()
+                .filter_map(Node::resolve_type)
+                .chain(node.resolve_type())
+                .any(|ty| matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_float16())
         {
             self.error_logger.print_error_position(
                 node.token.as_ref().map_or(0, |token| token.pos),
-                "128-bit integer value operations are not supported",
+                "records containing _Float16 cannot be passed or returned by value",
             );
         }
+        if !address_only {
+            let message = match node.resolve_type().as_ref().map(Type::unqualified) {
+                Some(Type::Integer128 { .. }) => {
+                    Some("128-bit integer value operations are not supported")
+                }
+                Some(Type::Float16) => Some("_Float16 value operations are not supported"),
+                _ => None,
+            };
+            if let Some(message) = message {
+                self.error_logger.print_error_position(
+                    node.token.as_ref().map_or(0, |token| token.pos),
+                    message,
+                );
+            }
+        }
         if let Some(lhs) = &node.lhs {
-            self.validate_wide_integer_expressions(lhs, node.nt == NodeType::Addr);
+            self.validate_storage_only_expressions(lhs, node.nt == NodeType::Addr);
         }
         for child in [
             &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
@@ -2955,7 +3003,7 @@ impl<'a> AstBuilderImpl<'a> {
         .chain(node.children.iter())
         .chain(node.args.iter())
         {
-            self.validate_wide_integer_expressions(child, false);
+            self.validate_storage_only_expressions(child, false);
         }
     }
 

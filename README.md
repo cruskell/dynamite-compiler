@@ -355,6 +355,18 @@ Nullability annotations may also precede a pointer typedef, as in
 conflicting annotations before and after the same typedef are diagnosed.
 A leading annotation on a non-pointer base type remains invalid.
 
+## Binary16 object layouts
+
+`_Float16` is a distinct type with 2-byte size and alignment. Object declarations,
+arrays, record members, pointers, `sizeof`, `_Alignof`, and unevaluated type queries
+are supported. Static objects with omitted or empty initializers are zeroed.
+Record values can be copied and object representations accessed through character
+pointers. Foreign scalar function prototypes retain the binary16 type (`half` in
+LLVM IR). Scalar value operations and explicit value initializers, function
+definitions with scalar binary16 parameters/results, and passing or returning
+records containing binary16 by value, and `va_arg` extraction of binary16 or
+records containing it are diagnosed as unsupported.
+
 ## Extended integer object layouts
 
 `__int128`, `signed __int128`, `unsigned __int128`, `__int128_t`, and
