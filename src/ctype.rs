@@ -286,6 +286,15 @@ impl Type {
             _ => Qualifiers::default(),
         }
     }
+    /// Const qualification of an object, including recursively qualified arrays.
+    pub fn is_const_object(&self) -> bool {
+        self.qualifiers().constant
+            || match self.unqualified() {
+                Self::Arr(child, _) | Self::Vla(child, _) => child.is_const_object(),
+                _ => false,
+            }
+    }
+
     pub fn without_qualifiers(&self) -> Self {
         match self {
             Self::Qualified(child, _) => child.without_qualifiers(),

@@ -428,6 +428,16 @@ their effects and execute once. The prediction is currently ignored by code
 generation; no branch-weight metadata is emitted. Constant-valued uses remain
 available in constant expressions.
 
+## Predefined function names
+
+Within a function, `__func__` denotes a function-specific static `const char`
+array containing the source function name and a terminating zero. Repeated uses
+share storage, `sizeof` includes the terminator, and assembler labels do not
+change the name. The array can initialize static pointers and is available in
+inline definitions. Uses outside a function and writes through its const element
+type are diagnosed. Block-static arrays of const elements are treated as const
+objects for C11 inline constraints; arrays of mutable pointers remain mutable.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their
