@@ -688,3 +688,7 @@ set bits after conversion to unsigned int, unsigned long and unsigned long long,
 respectively, and return an int. Constant operands are folded; other operands
 are evaluated once and lowered to shared unsigned integer operations on all
 backends. The preprocessing capability queries report these builtins as supported.
+
+Value conversions ignore top-level type qualifiers, including const-qualified
+structure and union parameters. Qualifiers on pointed-to objects still constrain
+pointer conversions, and const-qualified objects remain nonassignable.
