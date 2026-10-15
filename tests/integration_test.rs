@@ -1654,7 +1654,7 @@ int check(struct Wide value,void *array){
 
 #[test_matrix(["asm", "llvm"])]
 fn extended_integer_static_storage_is_zeroed(output_option: &str) {
-    let code = "__uint128_t words[2];union U{__int128 wide;char bytes[16];};union U data;int target=17;union P{__uint128_t wide;int *p;};union P pointer={.p=&target};struct Wrapper{char tag;union P payload;char end;};struct Wrapper wrapper;int main(){unsigned char *bytes=(unsigned char*)words;int i=0;while(i<32){if(bytes[i])return 1;i++;}i=0;while(i<16){if(data.bytes[i])return 2;i++;}return sizeof(words)+_Alignof(__int128_t)+sizeof(wrapper)-96+(*pointer.p-17);}";
+    let code = "__uint128_t words[2];union U{__int128 wide;char bytes[16];};union U data;int target=17;union P{__uint128_t wide;int *p;};union P pointer={.p=&target};struct Wrapper{char tag;union P payload;char end;};struct Wrapper wrapper={3,{.p=&target},5};int main(){unsigned char *bytes=(unsigned char*)words;int i=0;while(i<32){if(bytes[i])return 1;i++;}i=0;while(i<16){if(data.bytes[i])return 2;i++;}return sizeof(words)+_Alignof(__int128_t)+sizeof(wrapper)-96+(*pointer.p-17)+(wrapper.tag-3)+(wrapper.end-5)+(*wrapper.payload.p-17);}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
@@ -1669,6 +1669,63 @@ fn extended_integer_static_storage_is_zeroed(output_option: &str) {
     "int main(){__int128 x;x=x;return 0;}",
 ], ["asm", "llvm"])]
 fn unsupported_extended_integer_values_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn aligned_records_preserve_layout_and_clang_calls(output_option: &str) {
+    let code = r#"
+struct __attribute__((aligned(16),unused)) Small{char x;};
+struct Large{char bytes[17];} __attribute__((__aligned__(8)));
+union __attribute__((aligned(16))) Choice{int x;char bytes[3];};
+struct __attribute__((aligned(4))) Natural{double x;};
+struct __attribute__((aligned)) Forward;
+struct Forward{char x;};
+struct Outer{char tag;struct Small inner;union Choice choice;char tail;};
+struct Outer global={7,{9},{.x=11},13};
+struct Small foreign(int n,struct Small x,double value);
+int check(struct Outer x,struct Outer *p);
+struct Small local(int n,struct Small x,double value){x.x+=n+(int)value;return x;}
+int main(){
+    struct Outer copy=global;
+    struct Small array[2]={{1},{3}};
+    struct Small result=foreign(2,array[1],4.0);
+    copy.inner=result;
+    return check(copy,&global)+(sizeof(struct Small)!=16)+(_Alignof(struct Small)!=16)
+        +(sizeof(struct Large)!=24)+(sizeof(union Choice)!=16)
+        +(_Alignof(struct Natural)!=8)+(sizeof(struct Forward)!=16)
+        +(sizeof(array)!=32);
+}"#;
+    let companion = r#"
+struct __attribute__((aligned(16))) Small{char x;};
+union __attribute__((aligned(16))) Choice{int x;char bytes[3];};
+struct Outer{char tag;struct Small inner;union Choice choice;char tail;};
+struct Small local(int,struct Small,double);
+struct Small foreign(int n,struct Small x,double value){return local(n,x,value);}
+int check(struct Outer x,struct Outer *p){
+    return x.tag!=7 || x.inner.x!=9 || x.choice.x!=11 || x.tail!=13
+        || p->inner.x!=9 || p->choice.x!=11 || sizeof(*p)!=64;
+}"#;
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "struct __attribute__((aligned(3))) S{int x;};",
+    "struct S{char x;};struct S __attribute__((aligned(16))) value;",
+    "struct S{char x;};struct __attribute__((aligned(16))) S value;",
+    "struct S{int x;} __attribute__((aligned(0)));",
+    "struct __attribute__((aligned(32))) S{int x;};",
+    "int n;struct __attribute__((aligned(n))) S{int x;};",
+], ["asm", "llvm"])]
+fn invalid_record_alignment_is_diagnosed(code: &str, output_option: &str) {
     assert!(
         std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
             .is_err()

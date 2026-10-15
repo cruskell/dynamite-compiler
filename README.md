@@ -356,3 +356,13 @@ Object representations can be accessed through character pointers, and records
 containing these members can be copied. Scalar value operations, explicit value
 initializers, and scalar function parameters/results are diagnosed as unsupported;
 they are never lowered to truncated 64-bit operations.
+
+## Record alignment attributes
+
+Struct and union tags or definitions accept GNU `__attribute__((aligned(N)))`
+before the tag or after the definition. Alignment is at least the
+natural alignment; size includes the required tail padding. Explicit supported
+alignments are powers of two through 16 bytes; bare `aligned` requests 16 bytes.
+Both assembly and LLVM preserve alignment in nested records and arrays. Larger
+record alignments, member/declarator alignment attributes, and packed attributes
+remain diagnosed as unsupported.

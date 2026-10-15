@@ -181,11 +181,31 @@ impl<'a> IrGenerator<'a> {
     fn float_literal(ty: &Type, bits: usize) -> String {
         format!("0x{:016X}", ty.float_value(bits).to_bits())
     }
+    fn alignment_type(alignment: usize) -> String {
+        if alignment >= 16 {
+            format!("<{alignment} x i8>")
+        } else {
+            format!("i{}", alignment * 8)
+        }
+    }
+
+    fn record_alignment_member(ty: &crate::ctype::StructType) -> Option<String> {
+        let natural = ty
+            .members()
+            .iter()
+            .map(|member| member.ty.align_of())
+            .max()
+            .unwrap_or(1);
+        let alignment = ty.definition().borrow().align;
+        (alignment > natural).then(|| format!("[0 x {}]", Self::alignment_type(alignment)))
+    }
+
     fn gen_type(ty: Type) -> String {
         match ty {
             Type::Qualified(child, _) => Self::gen_type(*child),
             Type::Void => "void".to_string(),
-            Type::Integer128 { .. } => "i128".to_string(),
+            // LLVM 15 gives i128 only 8-byte alignment on some targets.
+            Type::Integer128 { .. } => "<2 x i64>".to_string(),
             Type::Float(bits) | Type::LongDouble(bits) => {
                 if bits == 32 { "float" } else { "double" }.to_string()
             }
@@ -194,7 +214,10 @@ impl<'a> IrGenerator<'a> {
                 let width = ty.align_of().min(8);
                 let storage = format!("[{} x i{}]", ty.size_of() / width, width * 8);
                 if ty.align_of() > width {
-                    format!("{{ {storage}, [0 x i{}] }}", ty.align_of() * 8)
+                    format!(
+                        "{{ {storage}, [0 x {}] }}",
+                        Self::alignment_type(ty.align_of())
+                    )
                 } else {
                     storage
                 }
@@ -214,6 +237,9 @@ impl<'a> IrGenerator<'a> {
                 }
                 if aggregate.size_of() > offset {
                     fields.push(format!("[{} x i8]", aggregate.size_of() - offset));
+                }
+                if let Some(anchor) = Self::record_alignment_member(&ty) {
+                    fields.push(anchor);
                 }
                 format!("{{ {} }}", fields.join(", "))
             }
@@ -259,7 +285,7 @@ impl<'a> IrGenerator<'a> {
         };
         match ty {
             Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
-            Type::Integer128 { .. } => "i128 0".into(),
+            Type::Integer128 { .. } => "<2 x i64> zeroinitializer".into(),
             Type::Float(_) | Type::LongDouble(_) => {
                 let bits = if let Some(GlobalVariableData::Elem(value)) = data {
                     value.parse::<i64>().unwrap() as usize
@@ -304,12 +330,12 @@ impl<'a> IrGenerator<'a> {
                     .join(", ");
                 if ty.align_of() > width {
                     format!(
-                        "{} {{ [{} x i{}] [{}], [0 x i{}] zeroinitializer }}",
+                        "{} {{ [{} x i{}] [{}], [0 x {}] zeroinitializer }}",
                         Self::gen_type(ty.clone()),
                         ty.size_of() / width,
                         width * 8,
                         elements,
-                        ty.align_of() * 8,
+                        Self::alignment_type(ty.align_of()),
                     )
                 } else {
                     format!("{} [{}]", Self::gen_type(ty.clone()), elements)
@@ -333,6 +359,9 @@ impl<'a> IrGenerator<'a> {
                     if ty.size_of() > offset {
                         let padding = format!("[{} x i8]", ty.size_of() - offset);
                         fields.push(format!("{padding} zeroinitializer"));
+                    }
+                    if let Some(anchor) = Self::record_alignment_member(struct_type) {
+                        fields.push(format!("{anchor} zeroinitializer"));
                     }
                     format!("{} {{ {} }}", Self::gen_type(ty.clone()), fields.join(", "))
                 } else {
