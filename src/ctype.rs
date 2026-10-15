@@ -27,7 +27,7 @@ pub struct StructDefinition {
     pub align: usize,
     /// Member-derived alignment before record-level alignment attributes.
     pub natural_align: usize,
-    /// Pragma pack limit captured at the start of the definition.
+    /// Packed storage marker: a pragma limit, or 1 for GNU packed records.
     pub packing: Option<usize>,
     pub complete: bool,
 }
@@ -42,6 +42,8 @@ pub struct BitField {
 pub struct StructMember {
     pub name: String,
     pub anonymous: bool,
+    /// Explicit member alignment before record packing is applied.
+    pub requested_alignment: usize,
     pub ty: Type,
     pub offset: usize,
     pub bit_field: Option<BitField>,

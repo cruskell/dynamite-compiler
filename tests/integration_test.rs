@@ -1447,7 +1447,7 @@ fn declaration_metadata_attributes_preserve_execution(output_option: &str) {
 }
 
 #[test_matrix([
-    "struct __attribute__((packed)) S{int x;};",
+    "struct __attribute__((packed(1))) S{int x;};",
     "int value __attribute__((aligned(32)));",
     "int value __attribute__((vector_size(16)));",
     "int value __attribute__((unknown_attribute));",
@@ -3221,4 +3221,74 @@ int reference(int index){static int values[9]={'ab','abc','drag','A\0B','\377\37
         &[optimization, "-Wno-multichar", "-Wno-four-char-constants"],
     );
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_packed_records_preserve_layout_and_clang_calls(output_option: &str, optimization: &str) {
+    let declarations = r#"
+struct __attribute__((packed)) P{char a;long b;char c;};
+struct M{char a;long b __attribute__((aligned(8)));char c;} __attribute__((__packed__));
+#pragma pack(push,2)
+struct __attribute__((packed)) Q{char a;long b __attribute__((aligned(8)));char c;};
+#pragma pack(pop)
+struct Inner{char a;long b;};
+struct Outer{char lead;struct Inner inner;short tail;} __attribute__((packed));
+union __attribute__((packed)) U{char byte;long number;};
+struct __attribute__((packed,aligned(16))) A{char byte;long number;};
+struct F{char tag;int length;char data[];} __attribute__((packed));
+"#;
+    let code = format!(
+        r#"{declarations}
+struct P global={{1,23,4}};long *saved=&global.b;
+struct P array[2]={{{{2,61,3}},{{4,67,5}}}};
+union U global_union={{.number=71}};
+struct P echo(struct P);struct Outer echo_outer(struct Outer);union U echo_union(union U);struct A echo_aligned(struct A);int inspect(struct P*,struct M*,struct Q*);
+struct P from_generated(struct P p){{p.b+=5;return p;}}
+int main(){{
+if(sizeof(struct P)!=10 || _Alignof(struct P)!=1 || (char*)&global.b-(char*)&global!=1 || *saved!=23)return 1;
+struct M m={{2,31,5}};struct Q q={{3,37,6}};
+if(sizeof(m)!=24 || _Alignof(struct M)!=8 || (char*)&m.b-(char*)&m!=8)return 2;
+if(sizeof(q)!=12 || _Alignof(struct Q)!=2 || (char*)&q.b-(char*)&q!=2)return 3;
+if(inspect(&global,&m,&q))return 4;
+struct P p=echo(global);if(p.a!=1 || p.b!=33 || p.c!=4)return 5;
+struct Outer o={{7,{{8,41}},9}};o=echo_outer(o);
+if(sizeof(o)!=19 || _Alignof(struct Outer)!=1 || (char*)&o.inner-(char*)&o!=1 || o.inner.b!=43 || o.tail!=9)return 6;
+union U u={{47}};u.number=47;u=echo_union(u);if(sizeof(u)!=8 || _Alignof(union U)!=1 || u.number!=50)return 7;
+struct A a={{3,53}};a=echo_aligned(a);if(sizeof(a)!=16 || _Alignof(struct A)!=16 || a.number!=57)return 8;
+if(sizeof(struct F)!=5 || _Alignof(struct F)!=1)return 9;
+if(array[0].b!=61 || array[1].b!=67 || (char*)&array[1]-(char*)&array[0]!=10 || global_union.number!=71)return 10;
+char storage[8]={{0}};struct F *f=(struct F*)(storage+1);f->tag=2;f->length=3;f->data[0]=7;
+if(storage[1]!=2 || storage[6]!=7 || f->length!=3)return 11;
+return 0;
+}}
+"#
+    );
+    let companion = format!(
+        r#"{declarations}
+struct P from_generated(struct P);
+struct P echo(struct P p){{p=from_generated(p);p.b+=5;return p;}}
+struct Outer echo_outer(struct Outer p){{p.inner.b+=2;return p;}}
+union U echo_union(union U p){{p.number+=3;return p;}}
+struct A echo_aligned(struct A p){{p.number+=4;return p;}}
+int inspect(struct P*p,struct M*m,struct Q*q){{return p->b!=23 || m->b!=31 || q->b!=37;}}
+"#
+    );
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "struct __attribute__((packed)) S;",
+    "struct S{int x;} __attribute__((packed(1)));",
+    "struct S{unsigned int field:3;} __attribute__((packed));",
+    "int object __attribute__((packed));",
+    "typedef int Scalar __attribute__((packed));",
+    "struct S{int member __attribute__((packed));};",
+], ["asm", "llvm"])]
+fn unsupported_gnu_packing_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
 }

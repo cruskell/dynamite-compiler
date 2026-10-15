@@ -97,6 +97,7 @@ impl AstBuilderImpl<'_> {
             members.push(StructMember {
                 name: name.into(),
                 anonymous: false,
+                requested_alignment: 0,
                 ty,
                 offset,
                 bit_field: None,
