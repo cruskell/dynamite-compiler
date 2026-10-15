@@ -64,6 +64,7 @@ pub(crate) fn render_inline_assembly(
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
     InlineAsm(bool),
+    Prefetch(bool, u8),
     Atomic(AtomicOperation),
     VaStart,
     VaEnd,
@@ -171,6 +172,7 @@ impl Node {
         if matches!(
             node.nt,
             NodeType::InlineAsm(_)
+                | NodeType::Prefetch(..)
                 | NodeType::Atomic(_)
                 | NodeType::Assign
                 | NodeType::CallFunc
@@ -395,7 +397,8 @@ impl Node {
                     .unwrap()
                     .promoted(),
             ),
-            NodeType::Atomic(_)
+            NodeType::Prefetch(..)
+            | NodeType::Atomic(_)
             | NodeType::LocalVar
             | NodeType::CallFunc
             | NodeType::AddOverflow

@@ -2,6 +2,7 @@ use crate::generator::Os;
 
 #[derive(Default)]
 pub enum InstOperator {
+    PRFM,
     InlineAsm,
     FMOV,
     FADD,
@@ -74,6 +75,7 @@ impl InstOperator {
             return "movzb";
         }
         match self {
+            PRFM => "prfm",
             InlineAsm => "",
             FMOV => "fmov",
             FADD => "fadd",

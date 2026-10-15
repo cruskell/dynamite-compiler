@@ -1827,6 +1827,74 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn builtin_prefetch_preserves_address_side_effects(output_option: &str, optimization: &str) {
+    let mut code = String::from(
+        r#"
+#if !__has_builtin(__builtin_prefetch)
+#error missing prefetch builtin
+#endif
+char buffer[64];int calls;const void *destination(void){calls++;return buffer;}
+_Static_assert(_Generic(__builtin_prefetch((void*)0),int:0,default:1),"void hint result");
+int main(){for(int i=0;i<64;i++)buffer[i]=37;__builtin_prefetch(destination());__builtin_prefetch(destination(),1);
+"#,
+    );
+    for write in 0..=1 {
+        for locality in 0..=3 {
+            code.push_str(&format!(
+                "__builtin_prefetch(destination(),{write},{locality});"
+            ));
+        }
+    }
+    code.push_str("__builtin_prefetch((void*)1);if(calls!=10)return 1;for(int i=0;i<64;i++)if(buffer[i]!=37)return 2;return 0;}");
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn builtin_prefetch_emits_a_target_hint(output_option: &str) {
+    let generated = dynamite_compiler::generate(
+        "int value;int main(){__builtin_prefetch(&value,1,2);return 0;}",
+        output_option,
+        false,
+    );
+    let expected = if output_option == "llvm" {
+        "call void @llvm.prefetch.p0"
+    } else if cfg!(target_arch = "aarch64") {
+        "prfm pstl2keep"
+    } else {
+        "prefetcht1"
+    };
+    assert!(generated.contains(expected), "{generated}");
+}
+
+#[test_matrix([
+    "int main(){__builtin_prefetch();}",
+    "int main(){__builtin_prefetch(1);}",
+    "int main(){__builtin_prefetch((void*)0,2);}",
+    "int main(){__builtin_prefetch((void*)0,-1);}",
+    "int main(){__builtin_prefetch((void*)0,0,4);}",
+    "int main(){__builtin_prefetch((void*)0,0,-1);}",
+    "int main(){int hint=0;__builtin_prefetch((void*)0,hint);}",
+    "int main(){__builtin_prefetch((void*)0,0.0);}",
+    "int main(){__builtin_prefetch((void*)0,0,0,0);}",
+], ["asm", "llvm"])]
+fn invalid_builtin_prefetch_calls_have_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn register_input_inline_assembly_preserves_operands(output_option: &str, optimization: &str) {
     let (wide, narrow, pointer, update) = if cfg!(target_arch = "aarch64") {
         (

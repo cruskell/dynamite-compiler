@@ -67,6 +67,7 @@ impl<'a> IrGenerator<'a> {
             vec![
                 "declare void @llvm.va_start(ptr)".into(),
                 "declare void @llvm.va_end(ptr)".into(),
+                "declare void @llvm.prefetch.p0(ptr, i32, i32, i32)".into(),
             ],
             generator.gen_string_literals(ast.string_literals),
             ast.global_variables
@@ -1682,6 +1683,23 @@ impl<'a> IrGenerator<'a> {
         lines
     }
 
+    fn gen_prefetch(
+        &self,
+        node: &Node,
+        write: bool,
+        locality: u8,
+        options: &mut Options,
+    ) -> Vec<String> {
+        let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+        let pointer = options.register_queue.pop().unwrap();
+        lines.push(format!(
+            "  call void @llvm.prefetch.p0(ptr {pointer}, i32 {}, i32 {locality}, i32 1)",
+            u8::from(write)
+        ));
+        options.register_queue.push("0".into());
+        lines
+    }
+
     fn gen_inline_assembly(
         &self,
         node: &Node,
@@ -1767,6 +1785,9 @@ impl<'a> IrGenerator<'a> {
             return lines;
         }
         match node.nt {
+            NodeType::Prefetch(write, locality) => {
+                return self.gen_prefetch(node, write, locality, options);
+            }
             NodeType::InlineAsm(volatile) => {
                 return self.gen_inline_assembly(node, volatile, options);
             }

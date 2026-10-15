@@ -15,6 +15,8 @@ mod inline_asm;
 mod object_size;
 #[path = "overflow.rs"]
 mod overflow;
+#[path = "prefetch.rs"]
+mod prefetch;
 #[path = "varargs.rs"]
 mod varargs;
 #[path = "vla.rs"]
@@ -6028,6 +6030,9 @@ impl<'a> AstBuilderImpl<'a> {
             }
             if let Some(operation) = Self::atomic_operation(&t.s_value) {
                 return self.atomic_builtin(t, operation);
+            }
+            if t.s_value == "__builtin_prefetch" {
+                return self.prefetch_builtin(t);
             }
             if t.s_value == "__builtin_bzero" {
                 return self.runtime_builtin(

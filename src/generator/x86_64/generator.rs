@@ -1188,6 +1188,30 @@ impl<'a> AsmGenerator<'a> {
         lines.into()
     }
 
+    fn gen_prefetch(
+        &self,
+        node: &Node,
+        locality: u8,
+        offset: usize,
+        breakable_branch_num: usize,
+    ) -> Assembly {
+        // Baseline x86_64 can use read-prefetch hints for either access intent.
+        let instruction = match locality {
+            0 => PREFETCHNTA,
+            1 => PREFETCHT2,
+            2 => PREFETCHT1,
+            3 => PREFETCHT0,
+            _ => unreachable!(),
+        };
+        vec![
+            self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+            Assembly::inst1(POP, RAX),
+            Assembly::inst1(instruction, Ptr(RAX, 1)),
+            Assembly::inst1(PUSH, 0),
+        ]
+        .into()
+    }
+
     fn gen_inline_assembly(
         &self,
         node: &Node,
@@ -1255,6 +1279,9 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::Prefetch(_, locality) => {
+                return self.gen_prefetch(node, locality, offset, breakable_branch_num);
+            }
             NodeType::InlineAsm(_) => {
                 return self.gen_inline_assembly(node, offset, breakable_branch_num);
             }
