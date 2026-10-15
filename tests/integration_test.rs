@@ -1827,6 +1827,27 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn simd_capability_profile_selects_portable_scalar_code(output_option: &str, optimization: &str) {
+    let code = r#"
+#if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__ARM_FEATURE_SVE) || defined(__SSE2__) || defined(__AVX2__) || defined(__AVX512F__)
+#error unimplemented vector intrinsic path selected
+#else
+int dot(int *a,int *b,int n){int result=0;for(int i=0;i<n;i++)result+=a[i]*b[i];return result;}
+#endif
+#if !defined(__aarch64__) && !defined(__x86_64__)
+#error target architecture must remain available
+#endif
+int main(){int a[4]={1,2,3,4},b[4]={5,6,7,8};return dot(a,b,4)!=70 || sizeof(void*)!=8;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn readwrite_inline_assembly_evaluates_destinations_once(output_option: &str, optimization: &str) {
     let template = if cfg!(target_arch = "aarch64") {
         "add %0, %0, #5"
