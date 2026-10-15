@@ -304,6 +304,37 @@ impl Tokenizer {
             ..Token::default()
         }
     }
+    fn version_token(code: &str, start: usize) -> Option<(Token, usize)> {
+        let bytes = code.as_bytes();
+        if !bytes[start].is_ascii_digit() {
+            return None;
+        }
+        let mut end = start;
+        while bytes
+            .get(end)
+            .is_some_and(|byte| byte.is_ascii_digit() || *byte == b'_')
+        {
+            end += 1;
+        }
+        let spelling = &code[start..end];
+        if !spelling.contains('_')
+            || spelling.split('_').any(str::is_empty)
+            || bytes.get(end).is_some_and(u8::is_ascii_alphabetic)
+        {
+            return None;
+        }
+        // Attribute versions are opaque metadata, never C integer constants.
+        Some((
+            Token {
+                tt: TokenType::Version,
+                pos: start,
+                s_value: spelling.into(),
+                ..Token::default()
+            },
+            end,
+        ))
+    }
+
     fn float_token(code: &str, start: usize) -> Result<Option<(Token, usize)>, error::SyntaxError> {
         let bytes = code.as_bytes();
         let hexadecimal = code[start..].starts_with("0x") || code[start..].starts_with("0X");
@@ -441,6 +472,11 @@ impl Tokenizer {
         let mut pos = 0;
         while pos < bytes.len() {
             let start = pos;
+            if let Some((token, end)) = Self::version_token(code, pos) {
+                tokens.push(token);
+                pos = end;
+                continue;
+            }
             if bytes[pos].is_ascii_digit()
                 || (bytes[pos] == b'.' && bytes.get(pos + 1).is_some_and(u8::is_ascii_digit))
             {
@@ -678,6 +714,22 @@ impl Tokenizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attribute_versions_preserve_spelling_without_becoming_numbers() {
+        let tokens = Tokenizer::tokenize("10_0 12_3_4 123 1.25 0x10", false).unwrap();
+        for (token, spelling) in tokens.iter().zip(["10_0", "12_3_4"]) {
+            assert_eq!(token.tt, TokenType::Version);
+            assert_eq!(token.s_value, spelling);
+        }
+        assert_eq!(tokens[2].tt, TokenType::Num);
+        assert_eq!(tokens[2].i_value, 123);
+        assert_eq!(tokens[3].tt, TokenType::Float);
+        assert_eq!(tokens[4].i_value, 16);
+        for code in ["10__0", "10_", "10_0u", "10_0abc"] {
+            assert!(Tokenizer::tokenize(code, false).is_err(), "{code}");
+        }
+    }
 
     #[test]
     fn hexadecimal_literals_and_diagnostics() {

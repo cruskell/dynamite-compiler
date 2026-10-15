@@ -3170,3 +3170,30 @@ fn invalid_leading_nullability_is_diagnosed(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn availability_attributes_accept_underscore_versions(output_option: &str) {
+    let code = r#"
+int available(void) __attribute__((availability(macosx,introduced=10_0,deprecated=12_3_4,message="use newer API")));
+int available(void){return 7;}
+typedef int Word __attribute__((availability(ios,introduced=3_0)));
+struct Record{Word value;} __attribute__((availability(macos,introduced=11_2)));
+int main(){struct Record r={available()};return r.value!=7 || sizeof(Word)!=4;}
+"#;
+    let result = compile_and_run(code, output_option);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){return 10_0;}",
+    "int value=10_0;",
+    "int values[10_0];",
+    "enum E{VALUE=10_0};",
+    "struct S{int value __attribute__((aligned(1_0)));};",
+], ["asm", "llvm"])]
+fn attribute_versions_are_not_c_numeric_constants(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
