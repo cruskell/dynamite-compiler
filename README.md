@@ -66,7 +66,7 @@ Its expression operand is not evaluated. String literals retain their array type
 for `sizeof` and address-taking, including the terminating code unit; ordinary
 value uses decay to pointers.
 
-Fixed array dimensions accept positive integer constant expressions.
+Fixed array dimensions accept non-negative integer constant expressions; zero lengths are a GNU extension.
 
 Local and global arrays may omit the outer dimension when a nonempty brace
 initializer supplies its size. Array parameters also accept an omitted outer dimension.
@@ -603,3 +603,20 @@ produce positive infinity with type `float`, `double` or `long double`.
 same values on the supported IEEE targets. These are typed constants usable in
 floating static initializers and type queries; no runtime function is required.
 Long-double forms retain the existing binary64-only target restriction.
+
+## Explicit zero-length arrays
+
+`T[0]` is a complete GNU array type with size zero and the element type's
+alignment. It is distinct from `T[]`, whose omitted bound still requires
+inference or an external declaration. Zero-length arrays can occur in globals,
+locals, nested arrays and record members, including before another member.
+Empty initializers do not infer an element into an explicitly zero-length array;
+excess elements and conflicting nonzero redeclarations are diagnosed.
+
+Zero-length record members contribute alignment but no element storage. Their
+layout and by-value calls agree with Clang, including GNU records that contain
+no data bytes. Empty records consume no argument or result payload, while their
+argument expressions still evaluate normally; `va_arg` for an empty record does
+not advance the cursor. Incomplete and flexible arrays retain their existing
+completion and placement rules. A constant `static` array-parameter minimum
+must still be positive.

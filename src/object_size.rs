@@ -24,7 +24,7 @@ impl AstBuilderImpl<'_> {
         let ty = node.object_type()?;
         match node.nt {
             NodeType::LocalVar | NodeType::GlobalVar
-                if ty.size_of() != 0
+                if ty.is_complete_object()
                     && !ty.is_variably_modified()
                     && !matches!(ty.unqualified(), Type::Func(..) | Type::VariadicFunc(..)) =>
             {
@@ -38,7 +38,7 @@ impl AstBuilderImpl<'_> {
             NodeType::Deref => {
                 let mut region = self.object_region_pointer(node.lhs.as_deref()?)?;
                 if node.member_access {
-                    if ty.size_of() == 0
+                    if !ty.is_complete_object()
                         || ty.is_variably_modified()
                         || region.remaining(false)? < ty.size_of()
                     {

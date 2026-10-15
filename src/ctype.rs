@@ -118,13 +118,19 @@ pub enum Type {
     Struct(StructType),
     I8,
     I32,
-    Integer128 { signed: bool },
-    Integer { bits: u8, signed: bool },
+    Integer128 {
+        signed: bool,
+    },
+    Integer {
+        bits: u8,
+        signed: bool,
+    },
     Bool,
     Float(u8),
     LongDouble(u8),
     Ptr(Box<Type>),
-    Arr(Box<Type>, usize),
+    /// None denotes an omitted bound; Some(0) is a complete GNU zero-length array.
+    Arr(Box<Type>, Option<usize>),
     // The offset names the captured bound; runtime_size computes the language size.
     Vla(Box<Type>, usize),
     Func(Vec<Type>, Box<Type>),
@@ -322,9 +328,20 @@ impl Type {
         }
     }
 
+    /// Whether the type describes an object with a known layout, including zero-sized GNU objects.
+    pub fn is_complete_object(&self) -> bool {
+        match self.unqualified() {
+            Self::Void | Self::Func(..) | Self::VariadicFunc(..) => false,
+            Self::Arr(child, count) => count.is_some() && child.is_complete_object(),
+            Self::Vla(child, _) => child.is_complete_object(),
+            Self::Struct(record) => record.definition().borrow().complete,
+            _ => true,
+        }
+    }
+
     pub fn checked_size_of(&self) -> Option<usize> {
         match self {
-            Self::Arr(child, size) => child.checked_size_of()?.checked_mul(*size),
+            Self::Arr(child, size) => child.checked_size_of()?.checked_mul(size.unwrap_or(0)),
             _ => Some(self.size_of()),
         }
     }
@@ -341,7 +358,7 @@ impl Type {
             Type::Bool => 1,
             Type::Float(bits) | Type::LongDouble(bits) => usize::from(*bits) / 8,
             Type::Ptr(_) => 8,
-            Type::Arr(t, s) => t.size_of() * s,
+            Type::Arr(t, s) => t.size_of() * s.unwrap_or(0),
             Type::Vla(..) => 8,
             Type::Func(..) | Type::VariadicFunc(..) => 1,
         }

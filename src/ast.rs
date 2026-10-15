@@ -38,7 +38,7 @@ type ResolvedDeclarator = (Option<Token>, Type, Parameters, ParameterScope, Vec<
 enum Declarator {
     Name(Option<Token>),
     Pointer(Box<Declarator>, Qualifiers),
-    Array(Box<Declarator>, usize),
+    Array(Box<Declarator>, Option<usize>),
     VariableArray(Box<Declarator>, usize),
     ArrayQualifiers(Box<Declarator>, Qualifiers),
     UnspecifiedArray(Box<Declarator>, Token),
@@ -365,7 +365,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "invalid array element type");
                 }
-                if child.checked_size_of() == Some(0) {
+                if !child.is_complete_object() {
                     self.error_logger.print_error_position(
                         token.pos,
                         "array element requires a complete object type",
@@ -653,18 +653,18 @@ impl<'a> AstBuilderImpl<'a> {
                             "only the outer array dimension may be omitted",
                         );
                     }
-                    direct = Declarator::Array(Box::new(direct), 0);
+                    direct = Declarator::Array(Box::new(direct), None);
                 } else {
                     let token = self.tokens[self.cur].clone();
                     let expression = self.assign();
                     self.expect_reserved("]");
                     if Self::integer_constant(&expression) {
                         let size = self.eval(&expression);
-                        if size <= 0 {
+                        if size < 0 || (size == 0 && minimum.is_some()) {
                             self.error_logger
                                 .print_error_position(token.pos, "array size must be positive");
                         }
-                        direct = Declarator::Array(Box::new(direct), size as usize);
+                        direct = Declarator::Array(Box::new(direct), Some(size as usize));
                     } else {
                         if expression
                             .resolve_type()
@@ -799,7 +799,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn new_local_variable(&mut self, ty: Type, alignment: usize) -> Node {
         let (t, ty) = self.expect_ident_with_type(ty);
-        let ty = if matches!(ty, Type::Arr(_, 0)) {
+        let ty = if matches!(ty, Type::Arr(_, None)) {
             let saved = self.cur;
             self.expect_reserved("=");
             let count = self.initializer_count();
@@ -812,7 +812,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn infer_array_size(&self, ty: Type, count: usize, token: &Token) -> Type {
-        if let Type::Arr(child, 0) = ty {
+        if let Type::Arr(child, None) = ty {
             if count == 0 {
                 self.error_logger.print_error_position(
                     token.pos,
@@ -823,7 +823,7 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(token.pos, "array size is too large");
             }
-            Type::Arr(child, count)
+            Type::Arr(child, Some(count))
         } else {
             ty
         }
@@ -914,7 +914,8 @@ impl<'a> AstBuilderImpl<'a> {
             return Self::dynamic_node(ty, self.offset_size, t);
         }
         self.expect_object_type(&ty, &t);
-        self.offset_size += ty.size_of();
+        // Distinct internal slots preserve each zero-sized object's type and alignment.
+        self.offset_size += ty.size_of().max(1);
         self.offset_size = self.offset_size.div_ceil(alignment) * alignment;
         if self.scope_stack.last().unwrap().contains_key(&t.s_value) {
             self.error_logger
@@ -1090,7 +1091,7 @@ impl<'a> AstBuilderImpl<'a> {
             if matches!(
                 ty.unqualified(),
                 Type::Void | Type::Func(..) | Type::VariadicFunc(..)
-            ) || ty.size_of() == 0
+            ) || !ty.is_complete_object()
             {
                 self.error_logger
                     .print_error_position(token.pos, "_Alignas requires a complete object type");
@@ -1510,7 +1511,7 @@ impl<'a> AstBuilderImpl<'a> {
                             "struct member cannot have a variably modified type",
                         );
                     }
-                    let flexible = matches!(member_type.unqualified(), Type::Arr(_, 0));
+                    let flexible = matches!(member_type.unqualified(), Type::Arr(_, None));
                     let member_alignment = member_type
                         .align_of()
                         .max(requested_alignment)
@@ -1732,7 +1733,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn expect_object_type(&self, ty: &Type, token: &Token) {
-        if ty.size_of() == 0
+        if !ty.is_complete_object()
             || matches!(ty, Type::Void)
             || matches!(ty, Type::Arr(child, _) if **child == Type::Void)
         {
@@ -1763,7 +1764,7 @@ impl<'a> AstBuilderImpl<'a> {
             });
             self.validate_type_layout(&ty, &token);
             if !alignments.is_empty()
-                && (ty.size_of() == 0
+                && (!ty.is_complete_object()
                     || matches!(ty.unqualified(), Type::Func(..) | Type::VariadicFunc(..))
                     || alignments
                         .iter()
@@ -2171,7 +2172,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn incomplete_external_object(ty: &Type) -> bool {
         match ty.unqualified() {
-            Type::Arr(child, 0) => child.size_of() != 0,
+            Type::Arr(child, None) => child.is_complete_object(),
             Type::Struct(record) => !record.definition().borrow().complete,
             _ => false,
         }
@@ -2185,8 +2186,8 @@ impl<'a> AstBuilderImpl<'a> {
             if let (Type::Arr(left, left_count), Type::Arr(right, right_count)) =
                 (previous.unqualified(), declared.unqualified())
             {
-                if left == right && (*left_count == 0 || *right_count == 0) {
-                    return if *right_count == 0 {
+                if left == right && (left_count.is_none() || right_count.is_none()) {
+                    return if right_count.is_none() {
                         previous.clone()
                     } else {
                         declared
@@ -2222,7 +2223,7 @@ impl<'a> AstBuilderImpl<'a> {
                 } else {
                     members
                         .iter()
-                        .take_while(|member| !matches!(member.ty.unqualified(), Type::Arr(_, 0)))
+                        .take_while(|member| !matches!(member.ty.unqualified(), Type::Arr(_, None)))
                         .count()
                 };
                 if elements.len() > capacity {
@@ -2238,7 +2239,7 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(token.pos, "global struct initializer requires braces");
             }
             (Type::Arr(child, size), GlobalVariableData::Arr(elements)) => {
-                if elements.len() > *size {
+                if size.is_some_and(|size| elements.len() > size) {
                     self.error_logger
                         .print_error_position(token.pos, "too many array initializer elements");
                 }
@@ -2274,11 +2275,11 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn aggregate_type(ty: &Type, index: usize) -> Option<Type> {
         match ty.unqualified() {
-            Type::Arr(child, size) if *size == 0 || index < *size => Some(*child.clone()),
+            Type::Arr(child, size) if size.is_none_or(|size| index < size) => Some(*child.clone()),
             Type::Struct(st) => st
                 .members()
                 .get(index)
-                .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, 0)))
+                .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, None)))
                 .map(|member| member.ty.clone()),
             _ => None,
         }
@@ -2379,11 +2380,11 @@ impl<'a> AstBuilderImpl<'a> {
             let Type::Arr(_, size) = ty.unqualified() else {
                 unreachable!()
             };
-            if *size != 0 && bytes.len() / unit_size > *size {
+            if size.is_some_and(|size| bytes.len() / unit_size > size) {
                 self.error_logger
                     .print_error_position(token.pos, "string initializer is too long");
             }
-            if *size == 0 || bytes.len() / unit_size < *size {
+            if size.is_none_or(|size| bytes.len() / unit_size < size) {
                 bytes.extend(vec![0; unit_size]);
             }
             return GlobalVariableData::Arr(
@@ -3517,11 +3518,11 @@ impl<'a> AstBuilderImpl<'a> {
                         unreachable!()
                     };
                     let unit_size = string.string_encoding.unit_size();
-                    if *size != 0 && bytes.len() / unit_size > *size {
+                    if size.is_some_and(|size| bytes.len() / unit_size > size) {
                         self.error_logger
                             .print_error_position(string.pos, "string initializer is too long");
                     }
-                    if *size == 0 || bytes.len() / unit_size < *size {
+                    if size.is_none_or(|size| bytes.len() / unit_size < size) {
                         bytes.extend(vec![0; unit_size]);
                     }
                     Some(GlobalVariableData::Arr(
@@ -3695,14 +3696,14 @@ impl<'a> AstBuilderImpl<'a> {
     fn aggregate_elements(node: &Node, token: &Token) -> Option<Vec<Node>> {
         match node.resolve_type()? {
             Type::Arr(_, size) => Some(
-                (0..size)
+                (0..size.unwrap_or(0))
                     .map(|index| Self::array_element(node, index, token))
                     .collect(),
             ),
             Type::Struct(ty) => Some(
                 ty.members()
                     .iter()
-                    .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, 0)))
+                    .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, None)))
                     .map(|member| Self::member_node(node.clone(), member, token))
                     .collect(),
             ),
@@ -3781,14 +3782,14 @@ impl<'a> AstBuilderImpl<'a> {
             let Type::Arr(_, size) = node.resolve_type().unwrap() else {
                 unreachable!()
             };
-            if bytes.len() / unit_size > size {
+            if bytes.len() / unit_size > size.unwrap_or(0) {
                 self.error_logger
                     .print_error_position(token.pos, "string initializer is too long");
             }
             return Node {
                 nt: NodeType::Block,
                 token: Some(token.clone()),
-                children: (0..size)
+                children: (0..size.unwrap_or(0))
                     .map(|index| {
                         Node::new_with_op(
                             Some(token.clone()),
@@ -4316,7 +4317,7 @@ impl<'a> AstBuilderImpl<'a> {
                 .print_error_position(token.pos, "sizeof cannot be applied to a bit-field");
         }
         let ty = expression.resolve_type().unwrap();
-        if ty.size_of() == 0
+        if !ty.is_complete_object()
             || matches!(
                 ty.unqualified(),
                 Type::Void | Type::Func(..) | Type::VariadicFunc(..)
@@ -4357,7 +4358,7 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 self.expect_reserved(")");
                 if self.tokens[self.cur].s_value == "{" {
-                    if matches!(ty, Type::Arr(_, 0)) {
+                    if matches!(ty, Type::Arr(_, None)) {
                         let saved = self.cur;
                         let count = self.initializer_count();
                         self.cur = saved;
@@ -4469,7 +4470,7 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                     self.expect_reserved(")");
                     if matches!(ty, Type::Void | Type::Func(..) | Type::VariadicFunc(..))
-                        || ty.size_of() == 0
+                        || !ty.is_complete_object()
                     {
                         self.error_logger
                             .print_error_position(t.pos, "sizeof requires a complete object type");
@@ -4503,7 +4504,7 @@ impl<'a> AstBuilderImpl<'a> {
                     ty.unqualified(),
                     Type::Void | Type::Func(..) | Type::VariadicFunc(..)
                 )
-                || ty.size_of() == 0
+                || !ty.is_complete_object()
             {
                 self.error_logger
                     .print_error_position(token.pos, "_Alignof requires a complete object type");
@@ -4639,7 +4640,7 @@ impl<'a> AstBuilderImpl<'a> {
                 self.validate_type_layout(&ty, &association);
                 if name.is_some()
                     || ty.is_variably_modified()
-                    || ty.size_of() == 0
+                    || !ty.is_complete_object()
                     || matches!(
                         ty.unqualified(),
                         Type::Void | Type::Func(..) | Type::VariadicFunc(..)
@@ -4703,7 +4704,7 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Qualifiers::default()
             },
         );
-        let ty = Type::Arr(Box::new(element), function.s_value.len() + 1);
+        let ty = Type::Arr(Box::new(element), Some(function.s_value.len() + 1));
         self.global_variables
             .entry(name.clone())
             .or_insert_with(|| GlobalVariable {
@@ -5015,7 +5016,7 @@ impl<'a> AstBuilderImpl<'a> {
             Node {
                 token: Some(t.clone()),
                 nt: NodeType::GlobalVar,
-                cty: Some(Type::Arr(Box::new(element_type), count)),
+                cty: Some(Type::Arr(Box::new(element_type), Some(count))),
                 dest: self.new_string_literal(&t),
                 ..Node::default()
             }
@@ -5293,8 +5294,9 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 let result_offset = if matches!(return_type, Type::Struct(_)) {
                     self.expect_object_type(&return_type, &t);
-                    self.offset_size =
-                        self.offset_size.div_ceil(8) * 8 + return_type.size_of().div_ceil(8) * 8;
+                    let alignment = return_type.align_of().max(8);
+                    self.offset_size = self.offset_size.div_ceil(alignment) * alignment
+                        + return_type.size_of().max(1).div_ceil(alignment) * alignment;
                     Some(self.offset_size)
                 } else {
                     None

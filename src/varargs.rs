@@ -114,7 +114,7 @@ impl AstBuilderImpl<'_> {
         };
         self.struct_definitions.push(owner);
         if cfg!(target_arch = "x86_64") {
-            Type::Arr(Box::new(Type::Struct(structure)), 1)
+            Type::Arr(Box::new(Type::Struct(structure)), Some(1))
         } else {
             Type::Struct(structure)
         }
@@ -247,8 +247,13 @@ impl AstBuilderImpl<'_> {
         use crate::generator::{Arch, Os, abi};
         let state = self.va_temporary(token, pointer());
         let result = self.va_temporary(token, ty.clone());
-        let destination = address(result.clone());
         let mut children = vec![binary(NodeType::Assign, state.clone(), ap)];
+        if ty.size_of() == 0 {
+            // Empty GNU records have no payload and do not advance the argument cursor.
+            children.push(result);
+            return sequence(children);
+        }
+        let destination = address(result.clone());
         let arm = cfg!(target_arch = "aarch64");
         let mac_arm = arm && cfg!(target_os = "macos");
         let arch = if arm { Arch::Aarch64 } else { Arch::X86_64 };

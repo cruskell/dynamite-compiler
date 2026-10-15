@@ -175,9 +175,11 @@ impl AstBuilderImpl<'_> {
                 },
                 Self::runtime_size(child),
             ),
-            Type::Arr(child, size) if child.is_variable_array() => {
-                binary(NodeType::Mul, number(*size), Self::runtime_size(child))
-            }
+            Type::Arr(child, size) if child.is_variable_array() => binary(
+                NodeType::Mul,
+                number(size.unwrap_or(0)),
+                Self::runtime_size(child),
+            ),
             _ => number(ty.size_of()),
         }
     }

@@ -38,7 +38,7 @@ fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {
             });
             true
         }
-        Type::Arr(child, count) => (0..*count)
+        Type::Arr(child, count) => (0..count.unwrap_or(0))
             .all(|index| floating_members(child, offset + index * child.size_of(), members)),
         Type::Struct(st) if !st.has_bit_fields() && st.definition().borrow().is_union => {
             let mut largest: Vec<Part> = vec![];
@@ -86,7 +86,7 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
             }
         }
         Type::Arr(child, count) => {
-            for index in 0..*count {
+            for index in 0..count.unwrap_or(0) {
                 integer_slots(child, offset + index * child.size_of(), slots);
             }
         }
@@ -107,9 +107,8 @@ fn has_unaligned_member(ty: &Type, offset: usize) -> bool {
             let offset = offset + member.offset;
             offset % member.ty.align_of() != 0 || has_unaligned_member(&member.ty, offset)
         }),
-        Type::Arr(child, count) => {
-            (0..*count).any(|index| has_unaligned_member(child, offset + index * child.size_of()))
-        }
+        Type::Arr(child, count) => (0..count.unwrap_or(0))
+            .any(|index| has_unaligned_member(child, offset + index * child.size_of())),
         _ => false,
     }
 }
@@ -220,8 +219,9 @@ pub fn signature(
     variadic: bool,
 ) -> Signature {
     let result_parts = aggregate_parts(result, &arch);
-    let indirect_result =
-        matches!(result.unqualified(), Type::Struct(_)) && result_parts.is_empty();
+    let indirect_result = matches!(result.unqualified(), Type::Struct(_))
+        && result.size_of() != 0
+        && result_parts.is_empty();
     let mut general = usize::from(indirect_result && matches!(arch, Arch::X86_64));
     let mut floating = 0;
     let mut stack = 0usize;
@@ -235,6 +235,16 @@ pub fn signature(
         };
         let ty = &effective;
         let aggregate = matches!(ty.unqualified(), Type::Struct(_));
+        if aggregate && ty.size_of() == 0 {
+            // Empty GNU records have no argument payload or register/stack allocation.
+            arguments.push(Argument {
+                parts: vec![],
+                indirect: false,
+                memory: None,
+                stack_alignment: ty.align_of(),
+            });
+            continue;
+        }
         let mut parts = aggregate_parts(ty, &arch);
         let indirect = aggregate && parts.is_empty() && matches!(arch, Arch::Aarch64);
         if indirect {

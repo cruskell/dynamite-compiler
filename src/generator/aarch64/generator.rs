@@ -217,11 +217,12 @@ impl<'a> AsmGenerator<'a> {
                 lines.into()
             }
             Type::Arr(children_ty, size) => {
+                let size = size.unwrap_or(0);
                 if let Some(GlobalVariableData::Arr(v)) = data {
                     vec![
                         v.iter()
                             .enumerate()
-                            .filter(|(i, _)| i < size)
+                            .filter(|(i, _)| *i < size)
                             .map(|(_, d)| {
                                 self.gen_initializer_element(children_ty.as_ref(), Some(d))
                             })
@@ -232,14 +233,14 @@ impl<'a> AsmGenerator<'a> {
                             children_ty.size_of()
                                 * v.iter()
                                     .enumerate()
-                                    .filter(|(i, _)| i < size)
-                                    .fold(*size, |_, _| { size.saturating_sub(v.len()) })
+                                    .filter(|(i, _)| *i < size)
+                                    .fold(size, |_, _| { size.saturating_sub(v.len()) })
                         )
                         .into(),
                     ]
                     .into()
                 } else {
-                    format!("  .zero {}", children_ty.size_of() * *size).into()
+                    format!("  .zero {}", children_ty.size_of() * size).into()
                 }
             }
             Type::I8 => format!(

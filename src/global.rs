@@ -81,7 +81,7 @@ pub fn initializer_bytes(
             } else {
                 None
             };
-            for index in 0..*size {
+            for index in 0..size.unwrap_or(0) {
                 initializer_bytes(
                     child,
                     elements.and_then(|v| v.get(index)),
