@@ -147,7 +147,7 @@ pub enum Identifier {
         defined: bool,
     },
     StaticObject(Type, String),
-    Local(Type, usize, bool),
+    Local(Type, usize, bool, usize),
     Dynamic(Type, usize, bool),
     Static(Type),
 }
@@ -509,13 +509,14 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn declaration_annotations(&mut self) {
-        self.declaration_attributes(false, None);
+        self.declaration_attributes(false, None, false);
     }
 
     fn declaration_attributes(
         &mut self,
         allow_alignment: bool,
         mut packed: Option<&mut bool>,
+        stop_before_alignment: bool,
     ) -> Vec<usize> {
         let mut alignments = vec![];
         while matches!(self.tokens[self.cur].tt, TokenType::Ident)
@@ -524,6 +525,29 @@ impl<'a> AstBuilderImpl<'a> {
                 "__attribute__" | "__attribute"
             )
         {
+            // Qualifier parsing leaves semantic alignment attributes to the declaration owner.
+            if stop_before_alignment {
+                let mut depth = 0usize;
+                let mut aligned = false;
+                for token in &self.tokens[self.cur + 1..] {
+                    match token.s_value.as_str() {
+                        "(" => depth += 1,
+                        ")" if depth > 0 => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ if depth == 2 && token.s_value.trim_matches('_') == "aligned" => {
+                            aligned = true
+                        }
+                        _ => {}
+                    }
+                }
+                if aligned {
+                    break;
+                }
+            }
             let token = self.tokens[self.cur].clone();
             self.cur += 1;
             self.expect_reserved("(");
@@ -632,10 +656,27 @@ impl<'a> AstBuilderImpl<'a> {
         alignments
     }
 
+    fn object_alignment_annotations(&mut self) -> usize {
+        let mut alignment = 0;
+        loop {
+            alignment = alignment.max(
+                self.declaration_attributes(true, None, false)
+                    .into_iter()
+                    .max()
+                    .unwrap_or(0),
+            );
+            let Some(value) = self.attempt_alignment_specifier() else {
+                break;
+            };
+            alignment = alignment.max(value);
+        }
+        alignment
+    }
+
     fn record_attributes(&mut self) -> (usize, bool) {
         let mut packed = false;
         let alignment = self
-            .declaration_attributes(true, Some(&mut packed))
+            .declaration_attributes(true, Some(&mut packed), false)
             .into_iter()
             .max()
             .unwrap_or(0);
@@ -647,7 +688,11 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn declarator_with_alignment(&mut self, mut alignments: Option<&mut Vec<usize>>) -> Declarator {
-        self.declaration_annotations();
+        if let Some(alignments) = alignments.as_deref_mut() {
+            alignments.extend(self.declaration_attributes(true, None, false));
+        } else {
+            self.declaration_annotations();
+        }
         let mut pointers = vec![];
         while self.attempt_reserved("*").is_some() {
             pointers.push(self.pointer_qualifiers());
@@ -661,7 +706,7 @@ impl<'a> AstBuilderImpl<'a> {
         };
         loop {
             if let Some(alignments) = alignments.as_deref_mut() {
-                alignments.extend(self.declaration_attributes(true, None));
+                alignments.extend(self.declaration_attributes(true, None, false));
             } else {
                 self.declaration_annotations();
             }
@@ -809,6 +854,7 @@ impl<'a> AstBuilderImpl<'a> {
                                     ty.clone(),
                                     usize::MAX - parameters.len(),
                                     registered,
+                                    ty.align_of(),
                                 ),
                             );
                         }
@@ -844,8 +890,12 @@ impl<'a> AstBuilderImpl<'a> {
         direct
     }
 
-    fn expect_ident_with_type(&mut self, ty: Type) -> (Token, Type) {
-        let (name, ty, _, _, _) = self.declarator().resolve(ty);
+    fn expect_ident_with_type(
+        &mut self,
+        ty: Type,
+        alignments: Option<&mut Vec<usize>>,
+    ) -> (Token, Type) {
+        let (name, ty, _, _, _) = self.declarator_with_alignment(alignments).resolve(ty);
         let token = name.unwrap_or_else(|| {
             self.error_logger
                 .print_error_position(self.tokens[self.cur].pos, "ident expected");
@@ -855,7 +905,9 @@ impl<'a> AstBuilderImpl<'a> {
         (token, ty)
     }
     fn new_local_variable(&mut self, ty: Type, alignment: usize) -> Node {
-        let (t, ty) = self.expect_ident_with_type(ty);
+        let mut alignments = vec![alignment];
+        let (t, ty) = self.expect_ident_with_type(ty, Some(&mut alignments));
+        let alignment = alignments.into_iter().max().unwrap_or(0);
         let ty = if matches!(ty, Type::Arr(_, None)) {
             let saved = self.cur;
             self.expect_reserved("=");
@@ -1007,11 +1059,12 @@ impl<'a> AstBuilderImpl<'a> {
         }
         self.scope_stack.last_mut().unwrap().insert(
             t.s_value.clone(),
-            Identifier::Local(ty.clone(), self.offset_size, false),
+            Identifier::Local(ty.clone(), self.offset_size, false, alignment),
         );
         Node {
             token: Some(t),
             nt: NodeType::LocalVar,
+            alignment,
             cty: Some(ty),
             offset: Some(self.offset_size),
             ..Node::default()
@@ -1020,7 +1073,7 @@ impl<'a> AstBuilderImpl<'a> {
     fn mark_registered(&mut self, node: &mut Node) {
         let name = &node.token.as_ref().unwrap().s_value;
         match self.scope_stack.last_mut().unwrap().get_mut(name).unwrap() {
-            Identifier::Local(_, _, registered) | Identifier::Dynamic(_, _, registered) => {
+            Identifier::Local(_, _, registered, _) | Identifier::Dynamic(_, _, registered) => {
                 *registered = true
             }
             _ => unreachable!(),
@@ -1037,6 +1090,9 @@ impl<'a> AstBuilderImpl<'a> {
         let mut qualifiers = Qualifiers::default();
         let mut alignment = 0;
         loop {
+            if !parameter {
+                alignment = alignment.max(self.object_alignment_annotations());
+            }
             if let Some(value) = self.attempt_alignment_specifier() {
                 alignment = alignment.max(value);
             } else if let Some(token) = self
@@ -1068,6 +1124,9 @@ impl<'a> AstBuilderImpl<'a> {
             self.cur = saved;
             return None;
         };
+        if !parameter {
+            alignment = alignment.max(self.object_alignment_annotations());
+        }
         while let Some(value) = self.attempt_alignment_specifier() {
             alignment = alignment.max(value);
         }
@@ -1149,7 +1208,7 @@ impl<'a> AstBuilderImpl<'a> {
     fn attempt_qualifiers(&mut self) -> Qualifiers {
         let mut q = Qualifiers::default();
         loop {
-            self.declaration_annotations();
+            self.declaration_attributes(false, None, true);
             if self.attempt_reserved("const").is_some() {
                 q.constant = true;
             } else if self.attempt_reserved("volatile").is_some() {
@@ -1887,7 +1946,7 @@ impl<'a> AstBuilderImpl<'a> {
             requested_record_alignment = requested_record_alignment.max(alignment);
             packed |= trailing_packed;
         } else {
-            self.declaration_annotations();
+            self.declaration_attributes(false, None, true);
         }
         if packed {
             if !defining {
@@ -2067,7 +2126,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut alignment = 0;
         let mut thread_local = false;
         loop {
-            self.declaration_annotations();
+            alignment = alignment.max(self.object_alignment_annotations());
             if self.attempt_reserved("_Thread_local").is_some() {
                 thread_local = true;
             } else if self.attempt_inline().is_some() {
@@ -2138,14 +2197,18 @@ impl<'a> AstBuilderImpl<'a> {
                 .print_error_position(self.tokens[self.cur - 1].pos, "conflicting storage classes");
         }
         let mut base = self.expect_type();
-        while let Some(value) = self.attempt_alignment_specifier() {
-            alignment = alignment.max(value);
-        }
+        alignment = alignment.max(self.object_alignment_annotations());
         if qualifiers != Qualifiers::default() {
             base = Type::Qualified(Box::new(base), qualifiers);
         }
         inline |= self.attempt_inline().is_some();
         if self.attempt_reserved(";").is_some() {
+            if alignment != 0 {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur - 1].pos,
+                    "alignment requires an object declaration",
+                );
+            }
             if self
                 .function_attributes
                 .take()
@@ -2171,8 +2234,11 @@ impl<'a> AstBuilderImpl<'a> {
             return;
         }
         loop {
-            let (name, mut ty, parameters, parameter_scope, stars) =
-                self.declarator().resolve(base.clone());
+            let mut alignments = vec![alignment];
+            let (name, mut ty, parameters, parameter_scope, stars) = self
+                .declarator_with_alignment(Some(&mut alignments))
+                .resolve(base.clone());
+            let alignment = alignments.into_iter().max().unwrap_or(0);
             let token = name.unwrap_or_else(|| {
                 self.error_logger
                     .print_error_position(self.tokens[self.cur].pos, "ident expected");
@@ -3381,7 +3447,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn stmt(&mut self) -> Node {
-        self.declaration_annotations();
+        self.declaration_attributes(false, None, true);
         if self.attempt_static_assert() {
             return Node {
                 nt: NodeType::Block,
@@ -3604,7 +3670,7 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(node) = self.consume_block() {
             return node;
         }
-        let mut requested_alignment = 0;
+        let mut requested_alignment = self.object_alignment_annotations();
         let mut thread_local = false;
         while let Some(value) = self.attempt_alignment_specifier() {
             requested_alignment = requested_alignment.max(value);
@@ -3616,6 +3682,7 @@ impl<'a> AstBuilderImpl<'a> {
         let inline = inline.or_else(|| self.attempt_inline());
         let mut storage = storage;
         loop {
+            requested_alignment = requested_alignment.max(self.object_alignment_annotations());
             if self.attempt_reserved("_Thread_local").is_some() {
                 thread_local = true;
             } else if let Some(token) = self
@@ -3645,13 +3712,9 @@ impl<'a> AstBuilderImpl<'a> {
             ) {
                 storage.s_value = "extern".to_owned();
             }
-            while let Some(value) = self.attempt_alignment_specifier() {
-                requested_alignment = requested_alignment.max(value);
-            }
+            requested_alignment = requested_alignment.max(self.object_alignment_annotations());
             let ty = self.expect_type();
-            while let Some(value) = self.attempt_alignment_specifier() {
-                requested_alignment = requested_alignment.max(value);
-            }
+            requested_alignment = requested_alignment.max(self.object_alignment_annotations());
             let declaration = self.local_static_definition(
                 ty,
                 &storage,
@@ -3663,14 +3726,36 @@ impl<'a> AstBuilderImpl<'a> {
             return declaration;
         }
         let node = if let Some((ty, storage, alignment)) = self.attempt_automatic_type(false) {
+            if storage == AutomaticStorage::Register && requested_alignment != 0 {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur].pos,
+                    "alignment cannot be applied to a register object",
+                );
+            }
             if self.tokens[self.cur].s_value == ";" {
+                if alignment.max(requested_alignment) != 0 {
+                    self.error_logger.print_error_position(
+                        self.tokens[self.cur].pos,
+                        "alignment requires an object declaration",
+                    );
+                }
                 Node {
                     nt: NodeType::Block,
                     ..Node::default()
                 }
             } else {
-                self.local_variable_definition_with_storage(ty, storage, alignment)
+                self.local_variable_definition_with_storage(
+                    ty,
+                    storage,
+                    alignment.max(requested_alignment),
+                )
             }
+        } else if requested_alignment != 0 {
+            self.error_logger.print_error_position(
+                self.tokens[self.cur].pos,
+                "alignment requires an object declaration",
+            );
+            unreachable!()
         } else if let Some(t) = self.attempt_reserved("continue") {
             let target = self.loop_stack.last().copied().unwrap_or_else(|| {
                 self.error_logger
@@ -3739,7 +3824,9 @@ impl<'a> AstBuilderImpl<'a> {
     ) -> Node {
         let mut bounds = vec![];
         loop {
-            let (token, mut ty) = self.expect_ident_with_type(base.clone());
+            let mut alignments = vec![requested_alignment];
+            let (token, mut ty) = self.expect_ident_with_type(base.clone(), Some(&mut alignments));
+            let requested_alignment = alignments.into_iter().max().unwrap_or(0);
             if ty.is_variable_array() || (storage.s_value == "extern" && ty.is_variably_modified())
             {
                 self.error_logger.print_error_position(
@@ -3844,6 +3931,7 @@ impl<'a> AstBuilderImpl<'a> {
                 Identifier::StaticObject(ty.clone(), name.clone()),
             );
             if let Some(existing) = self.global_variables.get_mut(&name) {
+                existing.alignment = existing.alignment.max(requested_alignment);
                 if existing.ty != ty {
                     if external {
                         existing.ty = ty.clone();
@@ -5655,8 +5743,9 @@ impl<'a> AstBuilderImpl<'a> {
                         node.registered = *registered;
                         node
                     }
-                    Identifier::Local(ty, offset, registered) => Node {
+                    Identifier::Local(ty, offset, registered, alignment) => Node {
                         registered: *registered,
+                        alignment: *alignment,
                         token: Some(t.clone()),
                         nt: NodeType::LocalVar,
                         cty: Some(ty.clone()),

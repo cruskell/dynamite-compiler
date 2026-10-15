@@ -417,9 +417,20 @@ Postfix `aligned(N)` attributes on ordinary struct and union members raise the
 member's alignment and contribute to the record's size, alignment, and ABI
 classification. They apply only to the annotated member in a comma-separated
 declaration; weaker requests do not lower natural alignment. Bit-field alignment
-attributes, alignments above 4096 bytes and general object declarator alignment
-attributes remain diagnosed as unsupported. GNU packed record support is
+attributes and alignments above 4096 bytes remain diagnosed as unsupported. GNU packed record support is
 described separately below.
+
+## Object alignment attributes
+
+GNU `aligned(N)` attributes on object declarations raise storage alignment without
+changing the object's type or size. Prefix attributes and attributes after the
+base type apply to every declarator; postfix attributes apply only to that object.
+Static and external objects support powers of two through 4096 bytes, including
+block-scope static and extern declarations. Redeclarations preserve the greatest
+requested alignment. Bare `aligned` requests 16 bytes, and weaker requests do not
+lower natural alignment. Automatic objects support alignments through 16 bytes;
+larger stack alignment, function alignment and parameter alignment are diagnosed.
+These rules apply to both assembly and LLVM output.
 
 ## Record packing pragmas
 

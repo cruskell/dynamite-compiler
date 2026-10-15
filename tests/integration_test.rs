@@ -1789,9 +1789,85 @@ struct Pair echo(struct Pair p){struct Pair result={p.y,p.x};return result;}
     assert_eq!(result.status.code(), Some(0));
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_object_alignment_preserves_storage_and_type(output_option: &str, optimization: &str) {
+    let code = r#"
+__attribute__((aligned(64))) int prefix = 3, prefix_second = 4;
+static __attribute__((__aligned__(128))) long cache[3] = {5, 6, 7};
+int __attribute__((aligned(256))) after_type = 8, after_second = 9;
+char suffix __attribute__((aligned(4096))) = 10, ordinary = 11;
+extern int redeclared __attribute__((aligned(64)));
+int redeclared = 12;
+long weaker __attribute__((aligned(1))) = 13;
+char bare __attribute__((aligned)) = 14;
+struct Tagged { int n; };
+struct Tagged __attribute__((aligned(64))) tagged = {21};
+int block_redeclared = 15;
+int check(void *, unsigned long);
+int main(void) {
+    static __attribute__((aligned(128))) int block_prefix = 16;
+    static int block_suffix __attribute__((aligned(256))) = 17;
+    static char inferred[] __attribute__((aligned(64))) = {"abc"};
+    extern int block_redeclared __attribute__((aligned(128)));
+    __attribute__((aligned(16))) char local_prefix = 18;
+    int local_suffix __attribute__((aligned(16))) = 19;
+    _Alignas(16) char c11_local = 20;
+    if(check(&prefix,64) || check(&prefix_second,64) || check(cache,128)
+       || check(&after_type,256) || check(&after_second,256)
+       || check(&suffix,4096) || check(&redeclared,64) || check(&weaker,8)
+       || check(&bare,16) || check(&tagged,64) || check(&block_redeclared,128)
+       || check(&block_prefix,128) || check(&block_suffix,256) || check(inferred,64)
+       || check(&local_prefix,16) || check(&local_suffix,16) || check(&c11_local,16)) return 1;
+    if(sizeof(prefix)!=4 || sizeof(cache)!=24 || sizeof(suffix)!=1 || sizeof(inferred)!=4 || sizeof(struct Tagged)!=4) return 2;
+    return prefix!=3 || prefix_second!=4 || cache[2]!=7 || after_type!=8 || after_second!=9
+        || suffix!=10 || ordinary!=11 || redeclared!=12 || weaker!=13 || bare!=14
+        || block_redeclared!=15 || block_prefix!=16 || block_suffix!=17 || inferred[2]!='c'
+        || local_prefix!=18 || local_suffix!=19 || c11_local!=20 || tagged.n!=21;
+}"#;
+    let companion = "int check(void *p, unsigned long n) { return (unsigned long)p % n != 0; }";
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn gnu_object_alignment_does_not_leak_between_declarators() {
+    let ir = dynamite_compiler::generate(
+        "int first __attribute__((aligned(64))), second; int main(){return 0;}",
+        "llvm",
+        false,
+    );
+    let first = ir
+        .lines()
+        .find(|line| line.starts_with("@first ="))
+        .unwrap();
+    let second = ir
+        .lines()
+        .find(|line| line.starts_with("@second ="))
+        .unwrap();
+    assert!(first.contains("align 64"), "{first}");
+    assert!(second.contains("align 4"), "{second}");
+}
+
+#[test_matrix([
+    "int main(){int x __attribute__((aligned(32)));return 0;}",
+    "int f(void) __attribute__((aligned(64)));",
+    "int f(int x __attribute__((aligned(16))));",
+    "int x __attribute__((aligned(3)));",
+    "struct S; struct S __attribute__((aligned(64)));",
+    "int main(){_Alignas(16) register int x;return 0;}",
+    "int main(){__attribute__((aligned(16))) return 0;}",
+], ["asm", "llvm"])]
+fn gnu_object_alignment_rejects_unsupported_contexts(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix([
     "struct __attribute__((packed(1))) S{int x;};",
-    "int value __attribute__((aligned(32)));",
+    "int value __attribute__((aligned(8192)));",
     "int value __attribute__((vector_size(16)));",
     "int value __attribute__((unknown_attribute));",
     "int value __attribute__((deprecated(\"unterminated\");",
