@@ -5174,6 +5174,117 @@ impl<'a> AstBuilderImpl<'a> {
         })
     }
 
+    fn bit_scan_builtin(&mut self, token: Token, bits: u8, leading: bool) -> Node {
+        self.expect_reserved("(");
+        let mut argument = self.assign();
+        self.expect_reserved(")");
+        let ty = Type::integer(bits, false);
+        self.expect_conversion(&ty, &argument);
+        Self::cast_integer(&mut argument, &ty);
+        if Self::integer_constant(&argument) {
+            let value = self.eval(&argument) as u64 & (u64::MAX >> (64 - bits));
+            let count = if value == 0 {
+                u32::from(bits)
+            } else if leading {
+                value.leading_zeros() - u32::from(64 - bits)
+            } else {
+                value.trailing_zeros()
+            };
+            return Node::new_with_num(Some(token), count as usize);
+        }
+        if self.return_type.is_none() {
+            self.error_logger
+                .print_error_position(token.pos, "bit-scan operand is not a constant expression");
+        }
+        let value = self.register_local_variable(
+            Token {
+                s_value: format!(".bit_scan.value.{}.{}", token.pos, self.offset_size),
+                ..token.clone()
+            },
+            ty.clone(),
+        );
+        let count = self.register_local_variable(
+            Token {
+                s_value: format!(".bit_scan.count.{}.{}", token.pos, self.offset_size),
+                ..token.clone()
+            },
+            Type::I32,
+        );
+        let empty = self.register_local_variable(
+            Token {
+                s_value: format!(".bit_scan.empty.{}.{}", token.pos, self.offset_size),
+                ..token.clone()
+            },
+            Type::I32,
+        );
+        let binary = |nt, lhs, rhs| Node::new_with_op(Some(token.clone()), nt, lhs, rhs);
+        let number = |value| Node {
+            cty: Some(ty.clone()),
+            ..Node::new_with_num(Some(token.clone()), value)
+        };
+        let zero = || Node::new_with_num(Some(token.clone()), 0);
+        let mut children = vec![
+            binary(NodeType::Assign, value.clone(), argument),
+            binary(NodeType::Assign, count.clone(), zero()),
+        ];
+        let mut step = bits / 2;
+        while step != 0 {
+            let tested = if leading {
+                binary(
+                    NodeType::BitRight,
+                    value.clone(),
+                    number(usize::from(bits - step)),
+                )
+            } else {
+                binary(
+                    NodeType::BitAnd,
+                    value.clone(),
+                    number((1usize << step) - 1),
+                )
+            };
+            children.push(binary(
+                NodeType::Assign,
+                empty.clone(),
+                binary(NodeType::Eq, tested, zero()),
+            ));
+            let amount = binary(
+                NodeType::Mul,
+                empty.clone(),
+                Node::new_with_num(Some(token.clone()), usize::from(step)),
+            );
+            children.push(binary(
+                NodeType::Assign,
+                count.clone(),
+                binary(NodeType::Add, count.clone(), amount.clone()),
+            ));
+            children.push(binary(
+                NodeType::Assign,
+                value.clone(),
+                binary(
+                    if leading {
+                        NodeType::BitLeft
+                    } else {
+                        NodeType::BitRight
+                    },
+                    value.clone(),
+                    amount,
+                ),
+            ));
+            step /= 2;
+        }
+        children.push(binary(
+            NodeType::Add,
+            count,
+            binary(NodeType::Eq, value, zero()),
+        ));
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children,
+            ..Node::default()
+        }
+    }
+
     fn population_count_builtin(&mut self, token: Token, bits: u8) -> Node {
         self.expect_reserved("(");
         let mut argument = self.assign();
@@ -5382,6 +5493,15 @@ impl<'a> AstBuilderImpl<'a> {
                 "__builtin_fabsf" | "__builtin_fabs" | "__builtin_fabsl"
             ) {
                 return self.floating_abs_builtin(t);
+            }
+            if let Some((bits, leading)) = match t.s_value.as_str() {
+                "__builtin_clz" => Some((32, true)),
+                "__builtin_clzl" | "__builtin_clzll" => Some((64, true)),
+                "__builtin_ctz" => Some((32, false)),
+                "__builtin_ctzl" | "__builtin_ctzll" => Some((64, false)),
+                _ => None,
+            } {
+                return self.bit_scan_builtin(t, bits, leading);
             }
             if let Some(bits) = match t.s_value.as_str() {
                 "__builtin_popcount" => Some(32),
