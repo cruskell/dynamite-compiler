@@ -1,4 +1,4 @@
-//! Defer checked-add temporaries until unevaluated expressions have been removed.
+//! Defer checked-arithmetic temporaries until unevaluated expressions have been removed.
 
 use super::*;
 
@@ -45,7 +45,7 @@ fn sign_high(value: Node, signed: bool, token: &Token) -> Node {
 }
 
 impl AstBuilderImpl<'_> {
-    pub(super) fn add_overflow_builtin(&mut self, token: Token) -> Node {
+    pub(super) fn overflow_builtin(&mut self, token: Token, operation: NodeType) -> Node {
         self.expect_reserved("(");
         let lhs = self.assign();
         self.expect_reserved(",");
@@ -80,7 +80,7 @@ impl AstBuilderImpl<'_> {
                 .print_error_position(token.pos, "overflow result must be writable");
         }
         Node {
-            nt: NodeType::AddOverflow,
+            nt: operation,
             cty: Some(Type::Bool),
             token: Some(token),
             volatile_access: target.qualifiers().volatile,
@@ -108,9 +108,15 @@ pub(super) fn lower(node: &mut Node, offset: &mut usize) {
     for child in node.children.iter_mut().chain(&mut node.args) {
         lower(child, offset);
     }
-    if node.nt != NodeType::AddOverflow {
+    if !matches!(node.nt, NodeType::AddOverflow | NodeType::SubOverflow) {
         return;
     }
+    let subtract = node.nt == NodeType::SubOverflow;
+    let operation = if subtract {
+        NodeType::Sub
+    } else {
+        NodeType::Add
+    };
     let token = node.token.as_ref().unwrap().clone();
     let mut args = std::mem::take(&mut node.args).into_iter();
     let lhs = args.next().unwrap();
@@ -135,25 +141,29 @@ pub(super) fn lower(node: &mut Node, offset: &mut usize) {
         assign(result_pointer.clone(), pointer),
         assign(
             low.clone(),
-            binary(NodeType::Add, left.clone(), right.clone(), &token),
+            binary(operation.clone(), left.clone(), right.clone(), &token),
         ),
     ];
-    // A signed high word plus an unsigned low word represents the exact sum.
-    // The low addition wraps; its carry corrects the sign extensions above it.
+    // A signed high word and unsigned low word represent the exact mathematical result.
+    // Correct the sign extensions for the carry from addition or borrow from subtraction.
     let carry = cast(
-        binary(NodeType::Lt, low.clone(), left.clone(), &token),
+        if subtract {
+            binary(NodeType::Lt, left.clone(), right.clone(), &token)
+        } else {
+            binary(NodeType::Lt, low.clone(), left.clone(), &token)
+        },
         signed,
         &token,
     );
     let signs = binary(
-        NodeType::Add,
+        operation.clone(),
         sign_high(left, lhs_signed, &token),
         sign_high(right, rhs_signed, &token),
         &token,
     );
     children.push(assign(
         high.clone(),
-        binary(NodeType::Add, signs, carry, &token),
+        binary(operation, signs, carry, &token),
     ));
     children.push(assign(stored.clone(), cast(low.clone(), target, &token)));
     let mut destination =

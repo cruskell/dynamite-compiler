@@ -75,6 +75,7 @@ fn compiler_macros(command: &mut Command) {
         "__builtin_object_size",
         "__builtin_offsetof",
         "__builtin_add_overflow",
+        "__builtin_sub_overflow",
         "__builtin_nanf",
         "__builtin_nan",
         "__builtin_fabsf",
@@ -518,6 +519,9 @@ mod option_tests {
 #endif
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing
+#endif
+#if !__has_builtin(__builtin_sub_overflow)
+#error missing subtraction overflow builtin
 #endif
 #if !__has_attribute(weak_import) || !__has_attribute(__weak_import__)
 #error missing weak import attribute

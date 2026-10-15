@@ -33,6 +33,7 @@ pub enum NodeType {
     GlobalVar,
     Add,
     AddOverflow,
+    SubOverflow,
     Sub,
     Mul,
     Div,
@@ -132,6 +133,7 @@ impl Node {
                 | NodeType::Assign
                 | NodeType::CallFunc
                 | NodeType::AddOverflow
+                | NodeType::SubOverflow
                 | NodeType::SuffixIncr
                 | NodeType::SuffixDecr
                 | NodeType::VaStart
@@ -355,6 +357,7 @@ impl Node {
             | NodeType::LocalVar
             | NodeType::CallFunc
             | NodeType::AddOverflow
+            | NodeType::SubOverflow
             | NodeType::GlobalVar
             | NodeType::VaStart
             | NodeType::VaEnd => self.cty.clone(),

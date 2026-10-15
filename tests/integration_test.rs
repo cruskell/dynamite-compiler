@@ -4287,8 +4287,29 @@ fn invalid_predefined_function_names_are_diagnosed(code: &str, output_option: &s
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn checked_integer_addition_matches_clang(output_option: &str, optimization: &str) {
-    let mut code = String::from(
-        "int global;\n_Static_assert(sizeof(__builtin_add_overflow(1,2,&global))==sizeof(_Bool),\"result size\");\n_Static_assert(_Generic(__builtin_add_overflow(1,2,&global),_Bool:1,default:0),\"result type\");\n",
+    assert_checked_integer_overflow_matches_clang(
+        "__builtin_add_overflow",
+        output_option,
+        optimization,
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn checked_integer_subtraction_matches_clang(output_option: &str, optimization: &str) {
+    assert_checked_integer_overflow_matches_clang(
+        "__builtin_sub_overflow",
+        output_option,
+        optimization,
+    );
+}
+
+fn assert_checked_integer_overflow_matches_clang(
+    builtin: &str,
+    output_option: &str,
+    optimization: &str,
+) {
+    let mut code = format!(
+        "int global;\n_Static_assert(sizeof({builtin}(1,2,&global))==sizeof(_Bool),\"result size\");\n_Static_assert(_Generic({builtin}(1,2,&global),_Bool:1,default:0),\"result type\");\n",
     );
     let mut companion = String::new();
     let mut calls = String::new();
@@ -4330,7 +4351,7 @@ fn checked_integer_addition_matches_clang(output_option: &str, optimization: &st
 int reference_{tag}(unsigned long,unsigned long,{target} *);
 int check_{tag}(unsigned long a,unsigned long b){{
     {target} actual=3,expected=4;
-    int got=__builtin_add_overflow(({left})a,({right})b,&actual);
+    int got={builtin}(({left})a,({right})b,&actual);
     int want=reference_{tag}(a,b,&expected);
     if(got!=want || actual!=expected){{
         printf("{tag}: %lu %lu flags %d %d values %lu %lu\n",a,b,got,want,(unsigned long)actual,(unsigned long)expected);return 1;
@@ -4338,7 +4359,7 @@ int check_{tag}(unsigned long a,unsigned long b){{
     return 0;
 }}
 "#));
-        companion.push_str(&format!("int reference_{tag}(unsigned long a,unsigned long b,{target} *out){{return __builtin_add_overflow(({left})a,({right})b,out);}}\n"));
+        companion.push_str(&format!("int reference_{tag}(unsigned long a,unsigned long b,{target} *out){{return {builtin}(({left})a,({right})b,out);}}\n"));
         calls.push_str(&format!("if(check_{tag}(a,b))return {};\n", index + 1));
     }
     code.push_str(&format!(r#"
@@ -4359,6 +4380,61 @@ int main(){{
     let result =
         compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn checked_integer_subtraction_preserves_effects_and_aliases(output_option: &str) {
+    let code = r#"
+int left_calls,right_calls,pointer_calls;volatile unsigned char output;
+long left(void){left_calls++;return -1;}unsigned long right(void){right_calls++;return 0xffffffffffffffffUL;}
+volatile unsigned char *destination(void){pointer_calls++;return &output;}
+_Bool bounded(unsigned long a,unsigned long b,unsigned char *out){return __builtin_sub_overflow(a,b,out);}
+int main(void){
+    _Bool overflow=__builtin_sub_overflow(left(),right(),destination());
+    if(!overflow || output || left_calls!=1 || right_calls!=1 || pointer_calls!=1)return 1;
+    long value=7;if(__builtin_sub_overflow(value,9,&value) || value!=-2)return 2;
+    unsigned long wide=0;if(!__builtin_sub_overflow(0,1,&wide) || wide!=0xffffffffffffffffUL)return 3;
+    unsigned char array[1]={0};if(!__builtin_sub_overflow(3,9,array) || array[0]!=250)return 4;
+    int inner=0,outer=0;if(__builtin_sub_overflow(__builtin_sub_overflow(1,2,&inner),4,&outer) || inner!=-1 || outer!=-4)return 5;
+    if(!bounded(1,2,array) || array[0]!=255)return 6;
+    if(sizeof(__builtin_sub_overflow(left(),right(),destination()))!=sizeof(_Bool) || left_calls!=1 || right_calls!=1 || pointer_calls!=1)return 7;
+    int untouched=19;if(0 && __builtin_sub_overflow(1,2,&untouched))return 8;
+    return untouched!=19;
+}"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn checked_integer_subtraction_preserves_volatile_result_store() {
+    let ir = dynamite_compiler::generate(
+        "_Bool difference(long a,unsigned long b,volatile int *out){return __builtin_sub_overflow(a,b,out);}",
+        "llvm",
+        false,
+    );
+    assert_eq!(ir.matches("store volatile i32").count(), 1);
+    assert_eq!(ir.matches("load volatile").count(), 0);
+}
+
+#[test_matrix([
+    "int main(){int r;return __builtin_sub_overflow(1,2);}",
+    "int main(){int r;return __builtin_sub_overflow(1,2,&r,3);}",
+    "int main(){int r;return __builtin_sub_overflow(1.0,2,&r);}",
+    "int main(){int r;return __builtin_sub_overflow(&r,2,&r);}",
+    "int main(){_Bool r;return __builtin_sub_overflow(1,2,&r);}",
+    "int main(){const int r=0;return __builtin_sub_overflow(1,2,&r);}",
+    "int main(){return __builtin_sub_overflow(1,2,0);}",
+    "int main(){double r;return __builtin_sub_overflow(1,2,&r);}",
+], ["asm", "llvm"])]
+fn checked_integer_subtraction_rejects_invalid_arguments(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
 }
 
 #[test_matrix(["asm", "llvm"])]
