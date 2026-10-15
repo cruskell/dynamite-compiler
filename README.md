@@ -115,6 +115,11 @@ lowering. LLVM output preserves the prohibition on inlining; native assembly
 already emits function calls. Block-scope uses and attributes on objects,
 typedefs, or parameters are diagnosed.
 
+LLVM function definitions request unwind tables and retain frame pointers so
+runtime stack walkers can traverse generated scalar and aggregate call frames.
+This does not add source-level debug information or prevent ordinary inlining;
+use `noinline` where individual function frames must remain observable.
+
 ## Preprocessing
 
 Sources with directives or predefined macro names are preprocessed using `clang`

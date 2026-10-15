@@ -765,7 +765,7 @@ impl<'a> IrGenerator<'a> {
             argument_slots: HashMap::new(),
         };
         let mut lines = vec![format!(
-            "define {}{return_abi} {}({}){} {{",
+            "define {}{return_abi} {}({}){} uwtable \"frame-pointer\"=\"all\" {{",
             if func.internal { "internal " } else { "" },
             self.symbol_name(name),
             parameters.join(", "),
@@ -1148,7 +1148,7 @@ impl<'a> IrGenerator<'a> {
         };
         [
             vec![format!(
-                "define {}{} {}({}){} {{",
+                "define {}{} {}({}){} uwtable \"frame-pointer\"=\"all\" {{",
                 if func.internal { "internal " } else { "" },
                 Self::abi_result_type(*return_ty.clone()),
                 self.symbol_name(name),

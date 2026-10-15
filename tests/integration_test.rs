@@ -1286,6 +1286,43 @@ fn invalid_gnu_inline_spellings_are_diagnosed(
 }
 
 #[test_matrix([false, true], ["-O0", "-O2"])]
+fn llvm_functions_keep_unwindable_frames(aggregate: bool, optimization: &str) {
+    let code = if aggregate {
+        "struct Pair{long a,b;};int capture(void);struct Pair compiler_frame(struct Pair) __attribute__((__noinline__));struct Pair compiler_frame(struct Pair p){p.a+=capture();return p;}int main(){struct Pair p={2,9};p=compiler_frame(p);return p.a-2;}"
+    } else {
+        "int capture(void);__attribute__((noinline)) int compiler_frame(void);int compiler_frame(void){return capture()+1;}int main(){return compiler_frame()-1;}"
+    };
+    let companion = String::from(
+        r#"
+#include <execinfo.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+int capture(void){void *frames[32];int count=backtrace(frames,32);char **names=backtrace_symbols(frames,count);int found=0,main_found=0;
+if(names){for(int i=0;i<count;i++){fprintf(stderr,"%s\n",names[i]);if(strstr(names[i],"compiler_frame"))found=1;if(strstr(names[i]," main + ")||strstr(names[i],"(main+"))main_found=1;}free(names);}return found&&main_found?0:100;}
+"#,
+    );
+    let generated = dynamite_compiler::generate(code, "llvm", false);
+    for line in generated.lines().filter(|line| line.starts_with("define ")) {
+        assert!(
+            line.contains("uwtable") && line.contains("\"frame-pointer\"=\"all\""),
+            "{generated}"
+        );
+    }
+    let mut flags = vec![optimization, "-fno-omit-frame-pointer"];
+    if cfg!(target_os = "linux") {
+        flags.push("-rdynamic");
+    }
+    let result = compile_and_run_with_c_flags(code, "llvm", Some(&companion), &flags);
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test_matrix([false, true], ["-O0", "-O2"])]
 fn noinline_functions_remain_in_runtime_backtraces(aggregate: bool, optimization: &str) {
     let code = if aggregate {
         "struct Pair{long a,b;};int capture(void);struct Pair compiler_frame(struct Pair) __attribute__((__noinline__));struct Pair compiler_frame(struct Pair p){p.a+=capture();return p;}int main(){struct Pair p={2,9};p=compiler_frame(p);return p.a-2;}"
