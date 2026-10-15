@@ -139,6 +139,7 @@ pub struct AstBuilderImpl<'a> {
     continue_depths: HashMap<usize, usize>,
     switch_vla_depths: Vec<usize>,
     next_enum_id: usize,
+    next_deferred_local: usize,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
@@ -354,6 +355,7 @@ impl<'a> AstBuilderImpl<'a> {
             continue_depths: HashMap::new(),
             switch_vla_depths: vec![],
             next_enum_id: 0,
+            next_deferred_local: usize::MAX / 2,
             struct_definitions: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
@@ -1084,22 +1086,117 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn new_local_variable(&mut self, ty: Type, alignment: usize) -> (Node, bool) {
         let mut alignments = vec![alignment];
-        let (t, ty) = self.expect_ident_with_type(ty, Some(&mut alignments));
+        let (token, ty) = self.expect_ident_with_type(ty, Some(&mut alignments));
         let alignment = alignments.into_iter().max().unwrap_or(0);
-        let inferred = matches!(ty, Type::Arr(_, None));
-        let ty = if inferred {
-            let saved = self.cur;
-            self.expect_reserved("=");
-            let count = self.initializer_count(&ty);
-            self.cur = saved;
-            self.infer_array_size(ty, count, &t)
+        if matches!(ty, Type::Arr(_, None)) {
+            if self.tokens[self.cur].s_value != "=" {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "incomplete automatic array requires an initializer",
+                );
+            }
+            (
+                self.register_incomplete_local_array(token, ty, alignment),
+                true,
+            )
         } else {
-            ty
-        };
-        (
-            self.register_local_variable_aligned(t, ty, alignment),
-            inferred,
-        )
+            (
+                self.register_local_variable_aligned(token, ty, alignment),
+                false,
+            )
+        }
+    }
+
+    fn register_incomplete_local_array(
+        &mut self,
+        token: Token,
+        ty: Type,
+        requested_alignment: usize,
+    ) -> Node {
+        let alignment = ty.align_of().max(requested_alignment);
+        if alignment > 16 {
+            self.error_logger.print_error_position(
+                token.pos,
+                "requested local alignment exceeds the supported stack alignment",
+            );
+        }
+        if self
+            .scope_stack
+            .last()
+            .unwrap()
+            .contains_key(&token.s_value)
+        {
+            self.error_logger
+                .print_error_position(token.pos, "invalid redeclaration");
+        }
+        // Reserve an identity while expressions are parsed; allocate the completed object later.
+        let offset = self.next_deferred_local;
+        self.next_deferred_local -= 1;
+        self.scope_stack.last_mut().unwrap().insert(
+            token.s_value.clone(),
+            Identifier::Local(ty.clone(), offset, false, alignment),
+        );
+        Node {
+            nt: NodeType::LocalVar,
+            token: Some(token),
+            cty: Some(ty),
+            offset: Some(offset),
+            alignment,
+            ..Node::default()
+        }
+    }
+
+    fn resolve_deferred_local(node: &mut Node, offset: usize, object: &Node) {
+        if node.nt == NodeType::LocalVar && node.offset == Some(offset) {
+            node.offset = object.offset;
+            node.cty = object.cty.clone();
+        }
+        for child in [
+            &mut node.lhs,
+            &mut node.rhs,
+            &mut node.cond,
+            &mut node.then,
+            &mut node.els,
+            &mut node.ini,
+            &mut node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            Self::resolve_deferred_local(child, offset, object);
+        }
+        for child in node.children.iter_mut().chain(&mut node.args) {
+            Self::resolve_deferred_local(child, offset, object);
+        }
+    }
+
+    fn inferred_local_array_initializer(&mut self, object: &Node, token: &Token) -> (Node, Node) {
+        if self.tokens[self.cur].s_value != "{"
+            && self
+                .string_initializer_index(&object.resolve_type().unwrap())
+                .is_none()
+        {
+            self.error_logger.print_error_position(
+                token.pos,
+                "array initializer requires braces or a string literal",
+            );
+        }
+        let mut count = 0;
+        let mut initializer =
+            self.local_variable_initialization_with_count(object, token, Some(&mut count));
+        let ty = self.infer_array_size(object.cty.clone().unwrap(), count, token);
+        let name = object.token.clone().unwrap();
+        self.scope_stack.last_mut().unwrap().remove(&name.s_value);
+        let mut completed = self.register_local_variable_aligned(name, ty, object.alignment);
+        if object.registered {
+            self.mark_registered(&mut completed);
+        }
+        Self::resolve_deferred_local(&mut initializer, object.offset.unwrap(), &completed);
+        // Zero omitted elements after the final bound is known, before evaluating any initializer.
+        initializer
+            .children
+            .insert(0, Self::zero_initializer(&completed, token));
+        (completed, initializer)
     }
 
     fn infer_array_size(&self, ty: Type, count: usize, token: &Token) -> Type {
@@ -1144,61 +1241,6 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved("}");
         }
         Some(token)
-    }
-
-    fn initializer_count(&mut self, ty: &Type) -> usize {
-        if let Some(index) = self.string_initializer_index(ty) {
-            let token = &self.tokens[index];
-            return token.string_bytes.len() / token.string_encoding.unit_size() + 1;
-        }
-        self.expect_reserved("{");
-        let mut depth = 0;
-        let mut count = 0;
-        let mut maximum = 0;
-        let mut element = false;
-        loop {
-            if depth == 0 && !element && self.tokens[self.cur].s_value == "[" {
-                self.cur += 1;
-                let expression = self.ternary();
-                let index = self.eval(&expression);
-                if index < 0 {
-                    self.error_logger.print_error_position(
-                        self.tokens[self.cur].pos,
-                        "negative array designator",
-                    );
-                }
-                count = index as usize;
-                self.expect_reserved("]");
-                element = true;
-                continue;
-            }
-            let token = &self.tokens[self.cur];
-            if token.tt == TokenType::EOF {
-                self.error_logger
-                    .print_error_position(token.pos, "unterminated initializer");
-            }
-            match token.s_value.as_str() {
-                "}" if depth == 0 => {
-                    return maximum.max(count + usize::from(element));
-                }
-                "," if depth == 0 => {
-                    count += usize::from(element);
-                    maximum = maximum.max(count);
-                    element = false;
-                }
-                "{" | "(" | "[" => {
-                    depth += 1;
-                    element = true;
-                }
-                "}" | ")" | "]" => {
-                    depth -= 1;
-                }
-                _ => {
-                    element = true;
-                }
-            }
-            self.cur += 1;
-        }
     }
 
     fn register_local_variable(&mut self, t: Token, ty: Type) -> Node {
@@ -4415,7 +4457,11 @@ impl<'a> AstBuilderImpl<'a> {
             }
             if let Some(token) = self.attempt_reserved("=") {
                 // if initializer element exists, push into AST
-                vec.push(self.local_variable_initialization_with_elision(&node, &token, !inferred));
+                vec.push(if inferred {
+                    self.inferred_local_array_initializer(&node, &token).1
+                } else {
+                    self.local_variable_initialization(&node, &token)
+                });
             }
             if self.attempt_reserved(",").is_none() {
                 break;
@@ -4545,7 +4591,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
-        self.local_variable_initialization_with_elision(node, assign_token, true)
+        self.local_variable_initialization_with_count(node, assign_token, None)
     }
 
     fn local_expression_initializer(&mut self, node: &Node, rhs: Node, token: &Token) -> Node {
@@ -4556,11 +4602,11 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn local_variable_initialization_with_elision(
+    fn local_variable_initialization_with_count(
         &mut self,
         node: &Node,
         assign_token: &Token,
-        allow_elision: bool,
+        mut outer_count: Option<&mut usize>,
     ) -> Node {
         if node.resolve_type().is_some_and(|ty| ty.contains_vector()) {
             self.error_logger.print_error_position(
@@ -4574,14 +4620,18 @@ impl<'a> AstBuilderImpl<'a> {
             let Type::Arr(_, size) = node.resolve_type().unwrap() else {
                 unreachable!()
             };
-            if bytes.len() / unit_size > size.unwrap_or(0) {
+            let size = size.unwrap_or(bytes.len() / unit_size + 1);
+            if let Some(count) = outer_count.as_deref_mut() {
+                *count = size;
+            }
+            if bytes.len() / unit_size > size {
                 self.error_logger
                     .print_error_position(token.pos, "string initializer is too long");
             }
             return Node {
                 nt: NodeType::Block,
                 token: Some(token.clone()),
-                children: (0..size.unwrap_or(0))
+                children: (0..size)
                     .map(|index| {
                         Node::new_with_op(
                             Some(token.clone()),
@@ -4622,9 +4672,6 @@ impl<'a> AstBuilderImpl<'a> {
                 loop {
                     let mut path = self.designation(&node.resolve_type().unwrap());
                     if path.is_empty() {
-                        if !allow_elision && cursor.as_ref().is_some_and(|path| path.len() > 1) {
-                            self.error_logger.print_error_position(token.pos, "brace elision for inferred-bound automatic arrays is not supported");
-                        }
                         path = cursor.clone().unwrap_or_else(|| {
                             self.error_logger.print_error_position(
                                 token.pos,
@@ -4654,21 +4701,27 @@ impl<'a> AstBuilderImpl<'a> {
                             let Some(first) = Self::aggregate_type(&child, 0) else {
                                 break;
                             };
-                            if !allow_elision {
-                                self.error_logger.print_error_position(token.pos, "brace elision for inferred-bound automatic arrays is not supported");
-                            }
                             path.push(0);
                             child = first;
                         }
                         Some(rhs)
                     };
+                    if let Some(count) = outer_count.as_deref_mut() {
+                        *count = (*count).max(path[0] + 1);
+                    }
                     cursor = Self::next_initializer_path(&ty, path.clone());
                     let mut target = node.clone();
                     let mut prefix = vec![];
                     for index in path {
                         let union = matches!(target.resolve_type(), Some(Type::Struct(st)) if st.definition().borrow().is_union);
-                        let targets = Self::aggregate_elements(&target, &token).unwrap();
-                        target = targets.get(index).cloned().unwrap_or_else(|| {
+                        let selected = match target.resolve_type().unwrap() {
+                            Type::Arr(_, size) if size.is_none_or(|size| index < size) => {
+                                Some(Self::array_element(&target, index, &token))
+                            }
+                            _ => Self::aggregate_elements(&target, &token)
+                                .and_then(|targets| targets.get(index).cloned()),
+                        };
+                        target = selected.unwrap_or_else(|| {
                             self.error_logger.print_error_position(
                                 token.pos,
                                 "too many aggregate initializer elements",
@@ -5177,20 +5230,19 @@ impl<'a> AstBuilderImpl<'a> {
                 self.expect_reserved(")");
                 if self.tokens[self.cur].s_value == "{" {
                     let inferred = matches!(ty, Type::Arr(_, None));
-                    if inferred && self.return_type.is_some() {
-                        let saved = self.cur;
-                        let count = self.initializer_count(&ty);
-                        self.cur = saved;
-                        ty = self.infer_array_size(ty, count, &token);
-                    }
                     let name = Token {
                         s_value: format!(".compound.{}", token.pos),
                         ..token.clone()
                     };
                     let literal = if self.return_type.is_some() {
-                        let object = self.register_local_variable(name, ty);
-                        let initializer = self
-                            .local_variable_initialization_with_elision(&object, &token, !inferred);
+                        let (object, initializer) = if inferred {
+                            let object = self.register_incomplete_local_array(name, ty, 0);
+                            self.inferred_local_array_initializer(&object, &token)
+                        } else {
+                            let object = self.register_local_variable(name, ty);
+                            let initializer = self.local_variable_initialization(&object, &token);
+                            (object, initializer)
+                        };
                         let mut children = vec![];
                         Self::initializer_expressions(initializer, &mut children);
                         children.push(object);
