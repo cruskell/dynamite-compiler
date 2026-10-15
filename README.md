@@ -572,9 +572,13 @@ Enums accept an explicit underlying type from the existing 8-, 16-, 32-, and
 forward-declared and later defined with the same underlying type. Enumerators
 retain that integer type, including width and signedness, and values must fit
 its range. Conflicting declarations, noninteger underlying types, and implicit
-increments beyond the range are diagnosed. Unspecified underlying types retain
-the existing signed-int model; enum representation and compatibility use the
-underlying integer type in this compiler.
+increments beyond the range are diagnosed. Without an explicit base, ranges
+fitting signed int retain the existing model. Extended ranges select unsigned
+int or signed/unsigned 64-bit integers, including implicit increments beyond
+32-bit limits. After the definition, enumerators use the selected integer type.
+Ranges combining negative values with values exceeding signed 64-bit limits are
+diagnosed. Enum representation and compatibility use the underlying integer
+type in this compiler.
 
 ## Empty external declarations
 

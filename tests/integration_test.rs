@@ -2583,6 +2583,59 @@ fn unsupported_typedef_alignment_changes_are_diagnosed(code: &str, output_option
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn extended_enumerator_ranges(output_option: &str, optimization: &str) {
+    let definitions = r#"
+enum Mask { NONE=0, ALL=~0U };
+enum Grow { FIRST=2147483647, SECOND };
+enum Large { LOW=0xffffffffU, HIGH };
+enum MixedRange { NEGATIVE=-1, POSITIVE=0xffffffffU };
+enum HugeRange { MAXIMUM=~0UL, RESET=0 };
+enum SignedRange { MINIMUM=(-9223372036854775807L-1), MAX_SIGNED=9223372036854775807L };
+enum Wrap { BEFORE=0xffffffffU, AFTER=BEFORE+1U };
+struct Record { enum Mask flags; enum Large count; enum MixedRange delta; };
+"#;
+    let code=[definitions,r#"
+int foreign(struct Record,enum HugeRange,enum SignedRange);
+enum Mask mask=ALL;
+enum Large large=HIGH;
+int main(){
+    if(sizeof(enum Mask)!=4 || sizeof(enum Large)!=8 || sizeof(enum MixedRange)!=8) return 1;
+    if(mask!=4294967295U || SECOND!=2147483648U || large!=4294967296UL) return 2;
+    if(_Generic(ALL,unsigned int:0,default:1) || _Generic(NONE,unsigned int:0,default:1)) return 3;
+    if(_Generic(POSITIVE,long:0,default:1) || _Generic(NEGATIVE,long:0,default:1)) return 4;
+    if(_Generic(HIGH,unsigned long:0,default:1) || _Generic(MAXIMUM,unsigned long:0,default:1)) return 5;
+    if(MAXIMUM!=18446744073709551615UL || MINIMUM!=-9223372036854775807L-1 || MAX_SIGNED!=9223372036854775807L) return 6;
+    if(AFTER!=0 || _Generic(AFTER,unsigned int:0,default:1)) return 7;
+    enum Mask same=ALL;
+    {enum Mask{LOCAL=-1};if(sizeof(enum Mask)!=4 || LOCAL!=-1)return 8;}
+    struct Record r={same,HIGH,NEGATIVE};
+    if(foreign(r,MAXIMUM,MINIMUM))return 9;
+    return 0;
+}
+"#].concat();
+    let companion=[definitions,r#"
+int foreign(struct Record r,enum HugeRange max,enum SignedRange min){return r.flags!=ALL || r.count!=HIGH || r.delta!=-1 || max!=MAXIMUM || min!=MINIMUM;}
+"#].concat();
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "enum E { LAST=18446744073709551615UL, OVERFLOW };",
+    "enum E { NEGATIVE=-1, TOO_LARGE=18446744073709551615UL };"
+], ["asm", "llvm"])]
+fn invalid_extended_enumerator_ranges(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn fixed_underlying_enums_preserve_types_ranges_and_scopes(output_option: &str) {
     let code = r#"
