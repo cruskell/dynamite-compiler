@@ -368,7 +368,8 @@ impl<'a> IrGenerator<'a> {
                 }
                 format!("{{ {} }}", fields.join(", "))
             }
-            Type::I8 => "i8".to_string(),
+            Type::I8 | Type::SignedChar => "i8".to_string(),
+            Type::LongLong { .. } => "i64".to_string(),
             Type::I32 => "i32".to_string(),
             Type::Integer { bits, .. } => format!("i{bits}"),
             Type::Bool => "i8".to_string(),
@@ -532,7 +533,12 @@ impl<'a> IrGenerator<'a> {
                     _ => "null".to_string(),
                 }
             ),
-            Type::I8 | Type::I32 | Type::Integer { .. } | Type::Bool => format!(
+            Type::I8
+            | Type::SignedChar
+            | Type::I32
+            | Type::LongLong { .. }
+            | Type::Integer { .. }
+            | Type::Bool => format!(
                 "{} {}",
                 Self::gen_type(ty.clone()),
                 if let Some(GlobalVariableData::Elem(s)) = data {

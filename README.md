@@ -1083,3 +1083,14 @@ AArch64 output selects PRFM load/store and locality hints. Baseline x86_64 uses
 read-prefetch hints for either access intent; LLVM output uses llvm.prefetch.
 Hints do not read or modify C object values, and invalid target addresses do not
 fault, although computing the address must itself be a valid C expression.
+
+## Integer type identity
+
+Plain `char` and `signed char` have distinct type identities. On the supported
+LP64 targets, `long` and `long long` remain distinct 8-byte integer types;
+`long long` has the higher conversion rank. Unsigned counterparts follow the
+same distinction. `LL`/`ULL` literal suffixes retain that rank, and oversized
+unsuffixed decimal constants use unsigned long long as an extension. Type-based
+selection and declaration compatibility preserve these identities without
+changing their sizes, alignment or ABI. The 64-bit byte-swap builtin returns
+unsigned long long, matching Clang's builtin signature.

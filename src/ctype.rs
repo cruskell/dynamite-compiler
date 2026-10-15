@@ -121,7 +121,11 @@ pub enum Type {
     Aligned(Box<Type>, usize),
     Struct(StructType),
     I8,
+    SignedChar,
     I32,
+    LongLong {
+        signed: bool,
+    },
     Integer128 {
         signed: bool,
     },
@@ -248,7 +252,8 @@ impl Type {
     }
     pub fn integer_info(&self) -> Option<(u8, bool)> {
         match self {
-            Self::I8 => Some((8, true)),
+            Self::I8 | Self::SignedChar => Some((8, true)),
+            Self::LongLong { signed } => Some((64, *signed)),
             Self::I32 => Some((32, true)),
             Self::Integer { bits, signed } => Some((*bits, *signed)),
             Self::Bool => Some((8, false)),
@@ -282,12 +287,21 @@ impl Type {
         let (Some((lb, ls)), Some((rb, rs))) = (lhs.integer_info(), rhs.integer_info()) else {
             return lhs;
         };
-        match lb.cmp(&rb) {
-            std::cmp::Ordering::Equal => Self::integer(lb, ls && rs),
-            std::cmp::Ordering::Greater => Self::integer(lb, ls),
-            std::cmp::Ordering::Less => Self::integer(rb, rs),
+        let bits = lb.max(rb);
+        let signed = match lb.cmp(&rb) {
+            std::cmp::Ordering::Equal => ls && rs,
+            std::cmp::Ordering::Greater => ls,
+            std::cmp::Ordering::Less => rs,
+        };
+        if matches!(lhs.unqualified(), Self::LongLong { .. })
+            || matches!(rhs.unqualified(), Self::LongLong { .. })
+        {
+            Self::LongLong { signed }
+        } else {
+            Self::integer(bits, signed)
         }
     }
+
     pub fn convert_constant(&self, value: i64) -> i64 {
         if *self == Self::Bool {
             return i64::from(value != 0);
@@ -384,7 +398,8 @@ impl Type {
             Type::Qualified(child, _) | Type::Aligned(child, _) => child.size_of(),
             Type::Void => 0,
             Type::Struct(ty) => ty.definition().borrow().size,
-            Type::I8 => 1,
+            Type::I8 | Type::SignedChar => 1,
+            Type::LongLong { .. } => 8,
             Type::I32 => 4,
             Type::Float16 => 2,
             Type::Vector(element, lanes) => element.size_of() * lanes,

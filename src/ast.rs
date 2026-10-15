@@ -1625,7 +1625,13 @@ impl<'a> AstBuilderImpl<'a> {
             self.cur += 1;
         }
         if found {
-            return Some(Type::integer(bits, signed));
+            return Some(if longs == 2 {
+                Type::LongLong { signed }
+            } else if bits == 8 && signed && sign {
+                Type::SignedChar
+            } else {
+                Type::integer(bits, signed)
+            });
         }
         if let TokenType::Ident = self.tokens[self.cur].tt {
             let name = self.tokens[self.cur].s_value.clone();
@@ -5087,6 +5093,8 @@ impl<'a> AstBuilderImpl<'a> {
                     || (!matches!(
                         source.unqualified(),
                         Type::I8
+                            | Type::SignedChar
+                            | Type::LongLong { .. }
                             | Type::I32
                             | Type::Integer { .. }
                             | Type::Bool
@@ -5913,7 +5921,11 @@ impl<'a> AstBuilderImpl<'a> {
         self.expect_reserved("(");
         let mut argument = self.assign();
         self.expect_reserved(")");
-        let ty = Type::integer(bits, false);
+        let ty = if bits == 64 {
+            Type::LongLong { signed: false }
+        } else {
+            Type::integer(bits, false)
+        };
         self.expect_conversion(&ty, &argument);
         Self::cast_integer(&mut argument, &ty);
         if Self::integer_constant(&argument) {
@@ -6019,6 +6031,9 @@ impl<'a> AstBuilderImpl<'a> {
                 crate::token::StringEncoding::Utf16 => Type::integer(16, false),
                 crate::token::StringEncoding::Utf32 => Type::integer(32, false),
                 crate::token::StringEncoding::Wide => Type::wide_character(),
+                _ if t.s_value.contains("ll") => Type::LongLong {
+                    signed: !t.s_value.contains('u'),
+                },
                 _ => Type::integer(
                     if t.s_value.contains('l') { 64 } else { 32 },
                     !t.s_value.contains('u'),

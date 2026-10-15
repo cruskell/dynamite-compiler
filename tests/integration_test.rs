@@ -4225,6 +4225,78 @@ int callbacks(int (*check)(signed char,unsigned char,short,unsigned short,_Bool)
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn integer_type_identity_and_long_long_rank_match_clang(output_option: &str, optimization: &str) {
+    let code = r"
+signed char narrow=-7;
+long long large=-9223372036854775807LL;
+unsigned long long maximum=18446744073709551615ULL;
+struct Values{char a;signed char b;long c;long long d;unsigned long long e;};
+struct Values storage={3,-5,7,-11LL,18446744073709551615ULL};
+long long check(signed char,long,long long,unsigned long long,struct Values*);
+int variadic(int,...);
+int main(){
+    char plain=1;signed char signed_byte=-1;
+    long normal=2;long long wide=3;unsigned long unormal=4;unsigned long long uwide=5;
+    int bad=_Generic(plain,char:0,signed char:1,default:2)
+        +_Generic(signed_byte,signed char:0,char:1,default:2)
+        +_Generic(normal,long:0,long long:1,default:2)
+        +_Generic(wide,long long:0,long:1,default:2)
+        +_Generic(unormal,unsigned long:0,unsigned long long:1,default:2)
+        +_Generic(uwide,unsigned long long:0,unsigned long:1,default:2)
+        +_Generic(1LL,long long:0,long:1,default:2)
+        +_Generic(1ULL,unsigned long long:0,unsigned long:1,default:2)
+        +_Generic(1LU,unsigned long:0,unsigned long long:1,default:2)
+        +_Generic(wide+normal,long long:0,default:1)
+        +_Generic(wide+unormal,unsigned long long:0,unsigned long:1,default:2)
+        +_Generic(uwide+normal,unsigned long long:0,default:1)
+        +_Generic(signed_byte+plain,int:0,default:1)
+        +_Generic(18446744073709551615,unsigned long long:0,default:1)
+        +_Generic(0xffffffffffffffff,unsigned long:0,default:1)
+        +_Generic(0xffffffffffffffffLL,unsigned long long:0,default:1)
+        +_Generic(__builtin_bswap64(1),unsigned long long:0,unsigned long:1,default:2);
+    if(bad)return 1;
+    if(sizeof(wide)!=8 || _Alignof(long long)!=8 || sizeof(signed_byte)!=1)return 2;
+    if(check(narrow,normal,large,maximum,&storage)!=17LL)return 3;
+    if(variadic(0,-13LL,18446744073709551615ULL)!=0)return 4;
+    if((signed char)255!=-1 || (double)wide!=3.0)return 5;
+    return 0;
+}
+";
+    let companion = r"
+#include <stdarg.h>
+struct Values{char a;signed char b;long c;long long d;unsigned long long e;};
+long long check(signed char a,long b,long long c,unsigned long long d,struct Values *v){
+    if(a!=-7 || b!=2 || c!=-9223372036854775807LL || d!=18446744073709551615ULL)return 0;
+    if(v->a!=3 || v->b!=-5 || v->c!=7 || v->d!=-11LL || v->e!=d)return 0;
+    return 17LL;
+}
+int variadic(int n,...){va_list ap;va_start(ap,n);long long a=va_arg(ap,long long);unsigned long long b=va_arg(ap,unsigned long long);va_end(ap);return a!=-13LL || b!=18446744073709551615ULL;}
+";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "typedef char T;typedef signed char T;",
+    "typedef long T;typedef long long T;",
+    "typedef unsigned long T;typedef unsigned long long T;",
+    "void f(char);void f(signed char);",
+    "void f(long);void f(long long);",
+    "int main(){char x;signed char *p=&x;return 0;}",
+    "int main(){long x;long long *p=&x;return 0;}",
+], ["asm", "llvm"])]
+fn incompatible_integer_type_identities_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn byte_swap_builtins_preserve_widths_constants_and_single_evaluation(output_option: &str) {
     let code = r#"
@@ -4246,7 +4318,7 @@ int main(){
         +(__builtin_bswap16(-2)!=0xfeff)
         +_Generic(__builtin_bswap16(1),unsigned short:0,default:1)
         +_Generic(__builtin_bswap32(1),unsigned int:0,default:1)
-        +_Generic(__builtin_bswap64(1),unsigned long:0,default:1);
+        +_Generic(__builtin_bswap64(1),unsigned long long:0,default:1);
 }"#;
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
