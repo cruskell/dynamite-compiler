@@ -114,6 +114,8 @@ pub struct Node {
     pub vla_scope: Vec<usize>,
     // for declaration of local variables
     pub offset: Option<usize>,
+    /// Storage alignment requested by the local object declaration.
+    pub alignment: usize,
 }
 
 impl Node {

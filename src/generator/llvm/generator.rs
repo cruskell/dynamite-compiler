@@ -1218,7 +1218,7 @@ impl<'a> IrGenerator<'a> {
                     } else {
                         Self::gen_type_with_opaque_ptr(ty.clone())
                     },
-                    Self::align(&ty)
+                    Self::align(&ty).max(node.alignment)
                 ));
             }
         }
