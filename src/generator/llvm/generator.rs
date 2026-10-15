@@ -717,10 +717,9 @@ impl<'a> IrGenerator<'a> {
                 .into_iter()
                 .enumerate()
             {
-                let ty = if matches!(types[index], Type::Struct(_)) {
-                    ty
-                } else {
-                    Self::abi_parameter_type(types[index].clone())
+                let ty = match Self::abi_extension(&types[index]) {
+                    Some(extension) => format!("{ty} {extension}"),
+                    None => ty,
                 };
                 parameters.push(if func.body.is_some() {
                     format!("{ty} %abi.arg.{index}.{part}")
@@ -934,10 +933,9 @@ impl<'a> IrGenerator<'a> {
                 } else {
                     arguments.extend(parameter_types.into_iter().zip(values).map(
                         |(part_type, value)| {
-                            let parameter_type = if aggregate {
-                                part_type
-                            } else {
-                                Self::abi_parameter_type(ty.clone())
+                            let parameter_type = match Self::abi_extension(ty) {
+                                Some(extension) => format!("{part_type} {extension}"),
+                                None => part_type,
                             };
                             format!("{parameter_type} {value}")
                         },
