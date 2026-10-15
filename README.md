@@ -366,3 +366,11 @@ alignments are powers of two through 16 bytes; bare `aligned` requests 16 bytes.
 Both assembly and LLVM preserve alignment in nested records and arrays. Larger
 record alignments, member/declarator alignment attributes, and packed attributes
 remain diagnosed as unsupported.
+
+## Byte-swap builtins
+
+`__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their
+argument to the corresponding unsigned integer width and reverse its bytes.
+Arguments are evaluated once. Integer constant operands are folded, including in
+static initializers and static assertions. Runtime expressions use shared typed
+AST operations, so native assembly and LLVM IR have the same semantics.

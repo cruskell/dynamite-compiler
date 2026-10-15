@@ -1731,3 +1731,71 @@ fn invalid_record_alignment_is_diagnosed(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn byte_swap_builtins_preserve_widths_constants_and_single_evaluation(output_option: &str) {
+    let code = r#"
+_Static_assert(__builtin_bswap16(0x1234)==0x3412,"constant swap");
+unsigned int constant=__builtin_bswap32(0x12345678);
+unsigned long wide_constant=__builtin_bswap64(0x0123456789abcdefULL);
+int calls;
+unsigned long next(){calls++;return 0x8123456789abcdefULL;}
+unsigned int swap(unsigned int value){return __builtin_bswap32(value);}
+int main(){
+    unsigned short narrow=0x1234;
+    unsigned int word=0x89abcdef;
+    unsigned long wide=__builtin_bswap64(next());
+    unsigned short result=__builtin_bswap16(narrow++);
+    volatile unsigned int source=0x12345678;
+    return (constant!=0x78563412)+(wide_constant!=0xefcdab8967452301ULL)
+        +(wide!=0xefcdab8967452381ULL)+(calls!=1)+(narrow!=0x1235)+(result!=0x3412)
+        +(swap(word)!=0xefcdab89)+(__builtin_bswap32(source)!=constant)
+        +(__builtin_bswap16(-2)!=0xfeff)
+        +_Generic(__builtin_bswap16(1),unsigned short:0,default:1)
+        +_Generic(__builtin_bswap32(1),unsigned int:0,default:1)
+        +_Generic(__builtin_bswap64(1),unsigned long:0,default:1);
+}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){return __builtin_bswap16();}",
+    "int main(){return __builtin_bswap32(1,2);}",
+    "int main(){int x;return __builtin_bswap64(&x);}",
+    "struct S{int x;};int main(){struct S x;return __builtin_bswap32(x);}",
+    "int x;int swapped=__builtin_bswap32(x);",
+], ["asm", "llvm"])]
+fn invalid_byte_swap_operands_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn byte_swap_results_match_clang_for_runtime_values(output_option: &str) {
+    let code = r#"
+unsigned long reference64(unsigned long value);
+unsigned int reference32(unsigned int value);
+unsigned short reference16(unsigned short value);
+int main(){
+    unsigned long value=0x76543210fedcba98ULL;
+    int i=0;
+    while(i<200){
+        if(__builtin_bswap64(value)!=reference64(value))return 1;
+        if(__builtin_bswap32(value)!=reference32(value))return 2;
+        if(__builtin_bswap16(value)!=reference16(value))return 3;
+        value=value*6364136223846793005ULL+1;
+        i++;
+    }
+    float fraction=1.75f;
+    return __builtin_bswap32(fraction)!=0x01000000;
+}"#;
+    let companion = "unsigned long reference64(unsigned long x){return __builtin_bswap64(x);}unsigned int reference32(unsigned int x){return __builtin_bswap32(x);}unsigned short reference16(unsigned short x){return __builtin_bswap16(x);}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}

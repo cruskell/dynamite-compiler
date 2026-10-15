@@ -4447,6 +4447,74 @@ impl<'a> AstBuilderImpl<'a> {
         expression
     }
 
+    fn byte_swap_builtin(&mut self, token: Token, bits: u8) -> Node {
+        self.expect_reserved("(");
+        let mut argument = self.assign();
+        self.expect_reserved(")");
+        let ty = Type::integer(bits, false);
+        self.expect_conversion(&ty, &argument);
+        Self::cast_integer(&mut argument, &ty);
+        if Self::integer_constant(&argument) {
+            let value = self.eval(&argument) as u64;
+            let value = match bits {
+                16 => u64::from((value as u16).swap_bytes()),
+                32 => u64::from((value as u32).swap_bytes()),
+                64 => value.swap_bytes(),
+                _ => unreachable!(),
+            };
+            return Node {
+                cty: Some(ty),
+                ..Node::new_with_num(Some(token), value as usize)
+            };
+        }
+        if self.return_type.is_none() {
+            self.error_logger
+                .print_error_position(token.pos, "byte-swap operand is not a constant expression");
+        }
+        let temporary = self.register_local_variable(
+            Token {
+                s_value: format!(".bswap.{}.{}", token.pos, self.offset_size),
+                ..token.clone()
+            },
+            ty.clone(),
+        );
+        let assignment = Node::new_with_op(
+            Some(token.clone()),
+            NodeType::Assign,
+            temporary.clone(),
+            argument,
+        );
+        let mut result = Node::new_with_num(Some(token.clone()), 0);
+        for index in 0..usize::from(bits / 8) {
+            let shifted = Node::new_with_op(
+                Some(token.clone()),
+                NodeType::BitRight,
+                temporary.clone(),
+                Node::new_with_num(Some(token.clone()), index * 8),
+            );
+            let byte = Node::new_with_op(
+                Some(token.clone()),
+                NodeType::BitAnd,
+                shifted,
+                Node::new_with_num(Some(token.clone()), 255),
+            );
+            let byte = Node::new_with_op(
+                Some(token.clone()),
+                NodeType::BitLeft,
+                byte,
+                Node::new_with_num(Some(token.clone()), usize::from(bits) - 8 - index * 8),
+            );
+            result = Node::new_with_op(Some(token.clone()), NodeType::BitOr, result, byte);
+        }
+        Self::cast_integer(&mut result, &ty);
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children: vec![assignment, result],
+            ..Node::default()
+        }
+    }
+
     fn prim(&mut self) -> Node {
         let node = if let Some(token) = self.attempt_reserved("_Generic") {
             self.generic_selection(token)
@@ -4498,6 +4566,14 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
+            if let Some(bits) = match t.s_value.as_str() {
+                "__builtin_bswap16" => Some(16),
+                "__builtin_bswap32" => Some(32),
+                "__builtin_bswap64" => Some(64),
+                _ => None,
+            } {
+                return self.byte_swap_builtin(t, bits);
+            }
             if t.s_value == "__builtin_offsetof" {
                 return self.offsetof_builtin(t);
             }
