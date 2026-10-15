@@ -1826,6 +1826,62 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O3"])]
+fn may_alias_annotations_preserve_cross_type_memory_access(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+#if !__has_attribute(may_alias) || !__has_attribute(__may_alias__)
+#error missing alias metadata
+#endif
+typedef int Alias __attribute__((may_alias));
+typedef __attribute__((__may_alias__)) unsigned int Prefix;
+union U{float f;int i;};
+int overwrite(float *p,Alias *q){*p=1.0f;*q=0;return *p==0.0f;}
+int exercise(void);int reference(float*,Alias*);
+int main(){
+ union U a,b;
+ if(overwrite(&a.f,(Alias*)&a.i)!=1 || exercise()!=1)return 1;
+ if(reference(&b.f,(Alias*)&b.i)!=1)return 2;
+ return _Generic((Alias*)0,int*:0,default:1) || sizeof(Prefix)!=4;
+}
+"#;
+    let companion = r#"
+typedef int Alias __attribute__((may_alias));union U{float f;int i;};
+int overwrite(float*,Alias*);
+int exercise(void){union U u;return overwrite(&u.f,(Alias*)&u.i);}
+int reference(float *p,Alias *q){*p=1.0f;*q=0;return *p==0.0f;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(
+            code,
+            output_option,
+            Some(companion),
+            &[optimization, "-fstrict-aliasing"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "typedef int T __attribute__((may_alias(1)));",
+    "typedef __attribute__((__may_alias__())) int T;",
+], ["asm", "llvm"])]
+fn may_alias_arguments_have_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
 #[test_matrix([
     ("unsigned int",1,4), ("unsigned int",2,4), ("unsigned long",1,8),
     ("double",1,8), ("double",4,8), ("void *",1,8),

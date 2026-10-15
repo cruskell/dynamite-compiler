@@ -543,6 +543,9 @@ mod option_tests {
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing
 #endif
+#if !__has_attribute(may_alias) || !__has_attribute(__may_alias__)
+#error missing alias annotation
+#endif
 #if !__has_builtin(__builtin_bzero)
 #error missing memory zero builtin
 #endif

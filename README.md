@@ -945,3 +945,13 @@ Scalar calls keep their normal ABI. Increasing alignment beyond the underlying
 natural alignment, reducing record or extended storage-only scalar alignment,
 conflicting typedef redeclarations and passing/returning records containing these
 aliases by value are diagnosed. Pointer-based record interoperation is supported.
+
+## Alias annotations
+
+GNU `may_alias` and `__may_alias__` annotations are accepted and advertised by
+the capability probe. They preserve size, alignment and underlying C type identity.
+Native output performs the ordinary memory accesses, and LLVM output remains
+conservative: no type-based alias-analysis metadata is emitted, including through
+annotated typedefs. Alias-enabled accesses therefore remain valid when the
+resulting IR is optimized with strict-aliasing enabled. Attribute arguments are
+diagnosed rather than silently ignored.

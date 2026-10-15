@@ -163,6 +163,7 @@ pub(crate) const METADATA_ATTRIBUTES: &[&str] = &[
     "deprecated",
     "unavailable",
     "unused",
+    "may_alias",
     "warn_unused_result",
     "format",
     "format_arg",
@@ -714,6 +715,12 @@ impl<'a> AstBuilderImpl<'a> {
                         self.expect_reserved(",");
                     }
                     continue;
+                }
+                if name.s_value.trim_matches('_') == "may_alias"
+                    && self.tokens[self.cur + 1].s_value == "("
+                {
+                    self.error_logger
+                        .print_error_position(name.pos, "may_alias does not take arguments");
                 }
                 let supported = METADATA_ATTRIBUTES.contains(&name.s_value.trim_matches('_'));
                 if name.s_value.trim_matches('_') == "packed" {
