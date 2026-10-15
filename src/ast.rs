@@ -4584,6 +4584,7 @@ impl<'a> AstBuilderImpl<'a> {
                     };
                     return self.postfix(literal);
                 }
+                let ty = ty.unqualified().clone();
                 let operand = self.unary();
                 let source = operand.resolve_type().unwrap();
                 if (ty.float_bits().is_some() && source.dest_type().is_some())
@@ -4594,20 +4595,18 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 if !(ty.is_arithmetic() || matches!(ty, Type::Void | Type::Ptr(_)))
                     || (!matches!(
-                        operand.resolve_type(),
-                        Some(
-                            Type::I8
-                                | Type::I32
-                                | Type::Integer { .. }
-                                | Type::Bool
-                                | Type::Float(_)
-                                | Type::LongDouble(_)
-                                | Type::Ptr(_)
-                                | Type::Arr(..)
-                                | Type::Vla(..)
-                                | Type::Func(..)
-                                | Type::VariadicFunc(..)
-                        )
+                        source.unqualified(),
+                        Type::I8
+                            | Type::I32
+                            | Type::Integer { .. }
+                            | Type::Bool
+                            | Type::Float(_)
+                            | Type::LongDouble(_)
+                            | Type::Ptr(_)
+                            | Type::Arr(..)
+                            | Type::Vla(..)
+                            | Type::Func(..)
+                            | Type::VariadicFunc(..)
                     ) && ty != Type::Void)
                 {
                     self.error_logger

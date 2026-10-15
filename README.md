@@ -692,3 +692,6 @@ backends. The preprocessing capability queries report these builtins as supporte
 Value conversions ignore top-level type qualifiers, including const-qualified
 structure and union parameters. Qualifiers on pointed-to objects still constrain
 pointer conversions, and const-qualified objects remain nonassignable.
+Explicit scalar casts also accept top-level qualifiers on the type name, including
+qualified pointer typedefs and qualified void. The result uses the unqualified
+type; qualifiers within a pointer type remain part of that type.
