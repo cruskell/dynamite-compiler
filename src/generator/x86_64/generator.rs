@@ -308,7 +308,9 @@ impl<'a> AsmGenerator<'a> {
                 } else {
                     format!(".{}byte", ty.size_of())
                 },
-                if let Some(GlobalVariableData::Elem(value)) = data {
+                if let Some(GlobalVariableData::Address { symbol, offset }) = data {
+                    format!("{}{offset:+}", self.address_symbol(symbol))
+                } else if let Some(GlobalVariableData::Elem(value)) = data {
                     ty.convert_constant(value.parse().unwrap()).to_string()
                 } else {
                     "0".into()

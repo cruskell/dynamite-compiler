@@ -412,6 +412,19 @@ impl<'a> IrGenerator<'a> {
         } else {
             data
         };
+        if ty.integer_info().is_some_and(|(bits, _)| bits == 64) {
+            if let Some(GlobalVariableData::Address { symbol, offset }) = data {
+                let pointer = if *offset == 0 {
+                    self.symbol_name(symbol)
+                } else {
+                    format!(
+                        "getelementptr (i8, ptr {}, i64 {offset})",
+                        self.symbol_name(symbol)
+                    )
+                };
+                return format!("i64 ptrtoint (ptr {pointer} to i64)");
+            }
+        }
         match ty {
             Type::Aligned(child, _) => self.gen_initializer_element(child, data),
             Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),

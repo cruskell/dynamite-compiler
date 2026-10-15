@@ -6812,3 +6812,48 @@ fn invalid_interspersed_type_specifiers_are_diagnosed(code: &str, output_option:
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn integer_address_initializers_preserve_relocations(output_option: &str, optimization: &str) {
+    let code = r#"
+int values[3]={3,5,7};
+int function(int x){return x+2;}
+static long base=(long)&values;
+static unsigned long second=(unsigned long)&values[1];
+static long byte_offset=(long)values+sizeof(int);
+static long commuted=sizeof(int)+(long)values;
+static long back=(long)&values[2]-sizeof(int);
+static long function_address=(long)function;
+struct Record{long address;long tag;};
+static struct Record record={(long)&values[2],9};
+union Storage{long integer;void *pointer;};
+static union Storage storage={(long)&values[1]};
+static long strings[2]={(long)"abc",(long)("def"+1)};
+int foreign(long,long);
+int main(void){static long local=(long)&values[2];
+    if(base!=(long)values || second!=(unsigned long)&values[1] || byte_offset!=(long)&values[1]
+        || commuted!=byte_offset || back!=byte_offset || *(int*)local!=7)return 1;
+    if(((int(*)(int))function_address)(3)!=5 || *(int*)record.address!=7 || record.tag!=9)return 2;
+    if(*(int*)storage.pointer!=5 || ((char*)strings[0])[1]!='b' || ((char*)strings[1])[0]!='e')return 3;
+    return foreign(base,second);}
+"#;
+    let companion = "extern int values[3];int foreign(long a,long b){return a!=(long)values||b!=(long)&values[1];}";
+    let output =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    "int object;long address=&object;",
+    "int object;int address=(int)&object;",
+    "int object;long address=(long)(int)&object;",
+    "int object;float address=(long)&object;",
+    "int object;int *address=(long)&object;",
+    "_Thread_local int object;long address=(long)&object;",
+], ["asm", "llvm"])]
+fn invalid_integer_address_initializers_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
