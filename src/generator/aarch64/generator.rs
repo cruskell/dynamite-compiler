@@ -1458,6 +1458,7 @@ impl<'a> AsmGenerator<'a> {
                     self.gen_node(node.lhs.as_ref().unwrap(), options),
                     Self::pop(X8),
                     Assembly::inst2(MVN, X8, X8),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), X8),
                     Self::push(X8),
                 ]
                 .into();

@@ -2850,7 +2850,10 @@ impl<'a> AstBuilderImpl<'a> {
                     self.eval(node.els.as_ref().unwrap())
                 };
             }
-            NodeType::BitNot => return !self.eval(node.lhs.as_ref().unwrap()),
+            NodeType::BitNot => {
+                let value = !self.eval(node.lhs.as_ref().unwrap());
+                return node.resolve_type().unwrap().convert_constant(value);
+            }
             NodeType::Eq
             | NodeType::Ne
             | NodeType::Le

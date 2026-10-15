@@ -2296,6 +2296,46 @@ fn invalid_qualified_scalar_casts(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn typed_integer_complement_constants(output_option: &str, optimization: &str) {
+    let code = r#"
+enum E : unsigned int { LIMIT=~0U, PREVIOUS=~1U };
+enum Wide : unsigned long { WIDE_LIMIT=~0UL };
+_Static_assert(~0U == 4294967295U, "unsigned complement");
+_Static_assert((~0U >> 31) == 1, "logical shift");
+_Static_assert(~(unsigned char)0 == -1, "integer promotion");
+_Static_assert(~(unsigned short)0 == -1, "short promotion");
+_Static_assert(~0UL == 18446744073709551615UL, "long width");
+unsigned long wide = ~0U;
+unsigned int table[2] = { ~0U, ~1U };
+int array[~0U == 4294967295U ? 2 : 0];
+int main(){
+    unsigned int zero=0;
+    unsigned long runtime=~zero;
+    if(wide!=runtime || wide!=4294967295UL) return 1;
+    if(LIMIT!=table[0] || PREVIOUS!=table[1] || PREVIOUS!=4294967294U) return 2;
+    if(WIDE_LIMIT!=~0UL || sizeof(array)!=8) return 3;
+    if((~0U > 0U)!=1 || (~~0U)!=0) return 4;
+    return 0;
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn promoted_complement_does_not_fit_unsigned_short_enum(output_option: &str) {
+    let code = "enum E : unsigned short { A=~(unsigned short)0 };";
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,

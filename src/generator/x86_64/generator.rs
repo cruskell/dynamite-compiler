@@ -1426,6 +1426,7 @@ impl<'a> AsmGenerator<'a> {
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
                     Assembly::inst1(POP, RAX),
                     Assembly::inst1(NOT, RAX),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), RAX),
                     Assembly::inst1(PUSH, RAX),
                 ]
                 .into();
