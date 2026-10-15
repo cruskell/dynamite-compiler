@@ -2336,6 +2336,66 @@ fn promoted_complement_does_not_fit_unsigned_short_enum(output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn integer_bit_scan_builtins_match_clang(output_option: &str, optimization: &str) {
+    let code = r#"
+int reference32(unsigned int,int);
+int reference64(unsigned long,int);
+int reference_ll(unsigned long long,int);
+_Static_assert(__builtin_clz(1)==31,"int leading");
+_Static_assert(__builtin_clzl(1UL)==63,"long leading");
+_Static_assert(__builtin_clzll(1ULL)==63,"long long leading");
+_Static_assert(__builtin_ctz(0x80000000U)==31,"int trailing");
+_Static_assert(__builtin_ctzl(0x8000000000000000UL)==63,"long trailing");
+_Static_assert(__builtin_ctzll(0x8000000000000000ULL)==63,"long long trailing");
+_Static_assert(__builtin_clz(0x100000001UL)==31,"input conversion");
+int global=__builtin_ctzll(0x100000000ULL);
+int main(){
+    int i;
+    for(i=0;i<64;++i){
+        unsigned long bit=1UL<<i;
+        if(__builtin_clzl(bit)!=63-i || __builtin_clzll(bit)!=63-i) return 1;
+        if(__builtin_ctzl(bit)!=i || __builtin_ctzll(bit)!=i) return 2;
+        if(i<32 && (__builtin_clz(bit)!=31-i || __builtin_ctz(bit)!=i)) return 3;
+    }
+    unsigned long x=0x8123456789abcdefUL;
+    for(i=0;i<300;++i){
+        if((unsigned int)x && (__builtin_clz(x)!=reference32(x,1) || __builtin_ctz(x)!=reference32(x,0))) return 4;
+        if(x && (__builtin_clzl(x)!=reference64(x,1) || __builtin_ctzl(x)!=reference64(x,0))) return 5;
+        if(x && (__builtin_clzll(x)!=reference_ll(x,1) || __builtin_ctzll(x)!=reference_ll(x,0))) return 6;
+        x=x*6364136223846793005UL+1442695040888963407UL;
+    }
+    volatile unsigned long observed=1;
+    if(__builtin_clzll(observed++)!=63 || observed!=2) return 7;
+    if(__builtin_ctzll(observed++)!=1 || observed!=3) return 8;
+    i=1;
+    if((0 && __builtin_clz(i++)) || (1?0:__builtin_ctz(i++)) || sizeof(__builtin_clzll(i++))!=4 || i!=1) return 9;
+    if(_Generic(__builtin_clzll(x),int:0,default:1) || global!=32 || __builtin_clz(-1)!=0) return 10;
+    return 0;
+}
+"#;
+    let companion = "int reference32(unsigned int x,int leading){return leading?__builtin_clz(x):__builtin_ctz(x);}int reference64(unsigned long x,int leading){return leading?__builtin_clzl(x):__builtin_ctzl(x);}int reference_ll(unsigned long long x,int leading){return leading?__builtin_clzll(x):__builtin_ctzll(x);}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){return __builtin_clz();}",
+    "int main(){return __builtin_ctzll(1,2);}",
+    "int main(){int x;return __builtin_clzl(&x);}",
+    "struct S{int x;};int main(){struct S s={1};return __builtin_ctz(s);}"
+], ["asm", "llvm"])]
+fn invalid_integer_bit_scan_builtins(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,

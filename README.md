@@ -708,3 +708,9 @@ Integer bitwise complement uses the promoted operand width in both constant
 expressions and native execution. In particular, `~0U` is the unsigned 32-bit
 value `4294967295`, including when widened to unsigned long or used in enum
 initializers with an explicit unsigned underlying type.
+
+`__builtin_clz`, `__builtin_ctz` and their `l`/`ll` variants return an int count
+of leading or trailing zero bits after conversion to the declared unsigned
+argument width. Their GNU contract requires a nonzero operand. Constant inputs
+are folded, and runtime inputs are evaluated once using shared integer operations
+without target-specific instructions or runtime library calls.
