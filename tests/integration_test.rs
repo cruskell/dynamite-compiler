@@ -1847,3 +1847,30 @@ fn incompatible_typedef_redeclarations_are_diagnosed(code: &str, output_option: 
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn enumerator_annotations_preserve_constant_values(output_option: &str) {
+    let code = r#"
+#define AVAILABLE __attribute__((availability(macos,introduced=10.12)))
+enum Values{
+    FIRST __attribute__((deprecated("old value")))=3,
+    SECOND AVAILABLE=FIRST+4,
+    THIRD __attribute__((__deprecated__,unused)),
+};
+_Static_assert(SECOND==7,"annotated constant");
+int main(){enum Values value=THIRD;return FIRST+SECOND+value-18;}
+"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "enum E{VALUE __attribute__((aligned(8)))=1};",
+    "enum E{VALUE __attribute__((unknown))=1};",
+    "enum E{VALUE __attribute__((deprecated(\"unfinished\"))};",
+], ["asm", "llvm"])]
+fn unsupported_or_malformed_enumerator_annotations_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
