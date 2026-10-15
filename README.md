@@ -345,3 +345,14 @@ interface annotations; they do not change C type compatibility, pointer layout,
 or add runtime checks. Non-pointer applications and conflicting annotations on
 the same pointer declarator are diagnosed. Ordinary const/volatile/restrict
 qualification remains effective when mixed with these annotations.
+
+## Extended integer object layouts
+
+`__int128`, `signed __int128`, `unsigned __int128`, `__int128_t`, and
+`__uint128_t` have distinct signed/unsigned types with 16-byte size and alignment.
+They can occur in object declarations, pointers, arrays, records, `sizeof`, and
+`_Alignof`. Static objects without a value initializer are zero-initialized.
+Object representations can be accessed through character pointers, and records
+containing these members can be copied. Scalar value operations, explicit value
+initializers, and scalar function parameters/results are diagnosed as unsupported;
+they are never lowered to truncated 64-bit operations.

@@ -1616,3 +1616,61 @@ fn unsupported_long_double_formats_are_diagnosed(code: &str, output_option: &str
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn extended_integer_object_layout_interoperates_with_clang(output_option: &str) {
+    let code = r#"
+struct Wide{char tag;__uint128_t payload;int tail;};
+struct Wide storage;
+__int128_t values[2];
+int check(struct Wide value,void *array);
+int main(){
+    struct Wide local;
+    local.tag=7;local.tail=9;
+    unsigned char *bytes=(unsigned char*)&local.payload;
+    bytes[0]=3;bytes[15]=5;
+    storage=local;
+    unsigned char *next=(unsigned char*)&values[1];
+    next[15]=11;
+    return check(storage,values)+(sizeof(storage)!=48)+(_Alignof(struct Wide)!=16)
+        +(sizeof(values)!=32)+(sizeof(unsigned __int128)!=16)
+        +_Generic(storage.payload,unsigned __int128:0,__int128:1,default:2)
+        +_Generic(values[0],signed __int128:0,unsigned __int128:1,default:2);
+}"#;
+    let companion = r#"
+struct Wide{char tag;__uint128_t payload;int tail;};
+int check(struct Wide value,void *array){
+    unsigned char *bytes=(unsigned char*)&value.payload;
+    unsigned char *other=array;
+    return value.tag!=7 || value.tail!=9 || bytes[0]!=3 || bytes[15]!=5 || other[31]!=11;
+}"#;
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn extended_integer_static_storage_is_zeroed(output_option: &str) {
+    let code = "__uint128_t words[2];union U{__int128 wide;char bytes[16];};union U data;int target=17;union P{__uint128_t wide;int *p;};union P pointer={.p=&target};struct Wrapper{char tag;union P payload;char end;};struct Wrapper wrapper;int main(){unsigned char *bytes=(unsigned char*)words;int i=0;while(i<32){if(bytes[i])return 1;i++;}i=0;while(i<16){if(data.bytes[i])return 2;i++;}return sizeof(words)+_Alignof(__int128_t)+sizeof(wrapper)-96+(*pointer.p-17);}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "__int128 value=1;",
+    "__int128 f(__int128 x){return x;}",
+    "__int128 f(void);",
+    "int main(){__int128 x;return (int)x;}",
+    "int main(){__int128 x;x=x+1;return 0;}",
+    "int main(){__int128 x;if(x)return 1;return 0;}",
+    "int main(){__int128 x;x;return 0;}",
+    "int main(){__int128 x;x=x;return 0;}",
+], ["asm", "llvm"])]
+fn unsupported_extended_integer_values_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

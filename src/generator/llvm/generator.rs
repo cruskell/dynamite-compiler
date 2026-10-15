@@ -185,16 +185,19 @@ impl<'a> IrGenerator<'a> {
         match ty {
             Type::Qualified(child, _) => Self::gen_type(*child),
             Type::Void => "void".to_string(),
+            Type::Integer128 { .. } => "i128".to_string(),
             Type::Float(bits) | Type::LongDouble(bits) => {
                 if bits == 32 { "float" } else { "double" }.to_string()
             }
             Type::Struct(ty) if ty.definition().borrow().is_union || ty.has_bit_fields() => {
                 let ty = Type::Struct(ty);
-                format!(
-                    "[{} x i{}]",
-                    ty.size_of() / ty.align_of(),
-                    ty.align_of() * 8
-                )
+                let width = ty.align_of().min(8);
+                let storage = format!("[{} x i{}]", ty.size_of() / width, width * 8);
+                if ty.align_of() > width {
+                    format!("{{ {storage}, [0 x i{}] }}", ty.align_of() * 8)
+                } else {
+                    storage
+                }
             }
             Type::Struct(ty) => {
                 let aggregate = Type::Struct(ty.clone());
@@ -256,6 +259,7 @@ impl<'a> IrGenerator<'a> {
         };
         match ty {
             Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
+            Type::Integer128 { .. } => "i128 0".into(),
             Type::Float(_) | Type::LongDouble(_) => {
                 let bits = if let Some(GlobalVariableData::Elem(value)) = data {
                     value.parse::<i64>().unwrap() as usize
@@ -275,7 +279,7 @@ impl<'a> IrGenerator<'a> {
                 let mut bytes = vec![0u8; ty.size_of()];
                 let mut addresses = HashMap::new();
                 crate::global::initializer_bytes(ty, data, 0, &mut bytes, &mut addresses);
-                let width = ty.align_of();
+                let width = ty.align_of().min(8);
                 let elements = bytes
                     .chunks(width)
                     .enumerate()
@@ -298,7 +302,18 @@ impl<'a> IrGenerator<'a> {
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{} [{}]", Self::gen_type(ty.clone()), elements)
+                if ty.align_of() > width {
+                    format!(
+                        "{} {{ [{} x i{}] [{}], [0 x i{}] zeroinitializer }}",
+                        Self::gen_type(ty.clone()),
+                        ty.size_of() / width,
+                        width * 8,
+                        elements,
+                        ty.align_of() * 8,
+                    )
+                } else {
+                    format!("{} [{}]", Self::gen_type(ty.clone()), elements)
+                }
             }
             Type::Qualified(child, _) => self.gen_initializer_element(child, data),
             Type::Struct(struct_type) => {
