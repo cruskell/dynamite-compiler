@@ -6707,3 +6707,21 @@ fn invalid_inferred_local_arrays_are_diagnosed(code: &str, output_option: &str) 
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn nothrow_declarations_preserve_calls_and_effects(output_option: &str, optimization: &str) {
+    let code = r#"
+#if !__has_attribute(nothrow) || !__has_attribute(__nothrow__)
+#error nothrow must be advertised
+#endif
+int foreign(int) __attribute__((__nothrow__));
+static int calls;
+int add(int) __attribute__((nothrow));
+__attribute__((__nothrow__,noinline)) int add(int x){calls++;return foreign(x)+1;}
+int main(void){int (*p)(int)=add;int a=p(3);int b=p(5);return a+b+calls-22;}
+"#;
+    let companion = "int foreign(int x){return 2*x+1;}";
+    let output =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
