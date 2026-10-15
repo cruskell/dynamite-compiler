@@ -166,6 +166,10 @@ to zero, and the highest initialized index determines an omitted array bound.
 
 File-scope `static` objects and functions have internal linkage. `extern` object
 declarations do not allocate storage unless accompanied by an initializer.
+External array declarations may leave the outer bound unspecified. Compatible
+redeclarations retain a known bound, including when a later initializer omits
+the bound. Element access and symbolic offsets work before a bound is known;
+`sizeof` still requires a complete array type.
 Block-scope `static` objects use constant initializers and retain their values
 across calls; `extern` declarations refer to externally linked objects or functions.
 ## Unions

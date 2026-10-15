@@ -1516,3 +1516,36 @@ fn invalid_nullability_and_const_pointer_writes_are_diagnosed(code: &str, output
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn incomplete_extern_arrays_link_without_allocating_storage(output_option: &str) {
+    let code = "extern int values[];int *offset=values+2;int read_values(){extern int values[];return values[0]+*offset;}int main(){return read_values()-9;}";
+    let companion = "int values[3]={2,3,7};";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn incomplete_array_redeclarations_preserve_the_composite_bound(output_option: &str) {
+    let code = "extern int first[];int first[3]={1,2,3};extern int first[];extern int second[4];int second[]={7};int main(){extern int first[];return sizeof(first)+sizeof(second)+first[2]+second[0]+second[3]-38;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "extern int a[];char a[3];",
+    "extern int a[3];extern int a[4];",
+    "extern int a[2];int a[]={1,2,3};",
+    "extern const int a[];extern int a[3];",
+    "extern int a[];int main(){return sizeof(a);}",
+    "static int a[];",
+], ["asm", "llvm"])]
+fn invalid_incomplete_array_declarations_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

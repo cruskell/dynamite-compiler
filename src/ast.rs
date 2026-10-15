@@ -1617,7 +1617,7 @@ impl<'a> AstBuilderImpl<'a> {
             return;
         }
         loop {
-            let (name, ty, parameters, parameter_scope, stars) =
+            let (name, mut ty, parameters, parameter_scope, stars) =
                 self.declarator().resolve(base.clone());
             let token = name.unwrap_or_else(|| {
                 self.error_logger
@@ -1765,6 +1765,9 @@ impl<'a> AstBuilderImpl<'a> {
                 );
                 return;
             }
+            if let Some(previous) = self.global_variables.get(&token.s_value) {
+                ty = self.composite_object_declaration(&previous.ty, ty, &token);
+            }
             let data = if self.attempt_reserved("=").is_some() {
                 Some(self.global_initializer(&ty))
             } else {
@@ -1775,8 +1778,13 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 0
             };
-            let ty = self.infer_array_size(ty, count, &token);
-            self.expect_object_type(&ty, &token);
+            let ty = if external && data.is_none() && Self::incomplete_external_array(&ty) {
+                ty
+            } else {
+                let ty = self.infer_array_size(ty, count, &token);
+                self.expect_object_type(&ty, &token);
+                ty
+            };
             if let Some(data) = &data {
                 self.validate_global_initializer(&ty, data, &token);
             }
@@ -1793,8 +1801,7 @@ impl<'a> AstBuilderImpl<'a> {
                     existing.declaration_only = false;
                 }
                 if existing.ty != ty {
-                    self.error_logger
-                        .print_error_position(token.pos, "incompatible object redeclaration");
+                    existing.ty = ty.clone();
                 }
                 existing.alignment = existing.alignment.max(alignment);
                 if existing.thread_local != thread_local {
@@ -1831,6 +1838,32 @@ impl<'a> AstBuilderImpl<'a> {
         }
         self.expect_reserved(";");
     }
+    fn incomplete_external_array(ty: &Type) -> bool {
+        matches!(ty.unqualified(), Type::Arr(child, 0) if child.size_of() != 0)
+    }
+
+    fn composite_object_declaration(&self, previous: &Type, declared: Type, token: &Token) -> Type {
+        if previous == &declared {
+            return declared;
+        }
+        if previous.qualifiers() == declared.qualifiers() {
+            if let (Type::Arr(left, left_count), Type::Arr(right, right_count)) =
+                (previous.unqualified(), declared.unqualified())
+            {
+                if left == right && (*left_count == 0 || *right_count == 0) {
+                    return if *right_count == 0 {
+                        previous.clone()
+                    } else {
+                        declared
+                    };
+                }
+            }
+        }
+        self.error_logger
+            .print_error_position(token.pos, "incompatible object redeclaration");
+        unreachable!()
+    }
+
     fn resolve_name(&mut self, s: &str) -> Option<&Identifier> {
         self.scope_stack.iter().rev().find_map(|map| map.get(s))
     }
@@ -3097,6 +3130,11 @@ impl<'a> AstBuilderImpl<'a> {
             if !external && !ty.qualifiers().constant && self.mutable_static.is_none() {
                 self.mutable_static = Some(token.clone());
             }
+            if external {
+                if let Some(previous) = self.global_variables.get(&name) {
+                    ty = self.composite_object_declaration(&previous.ty, ty, &token);
+                }
+            }
             let data = if self.attempt_reserved("=").is_some() {
                 if external {
                     self.error_logger
@@ -3143,8 +3181,10 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 0
             };
-            ty = self.infer_array_size(ty, count, &token);
-            self.expect_object_type(&ty, &token);
+            if !(external && data.is_none() && Self::incomplete_external_array(&ty)) {
+                ty = self.infer_array_size(ty, count, &token);
+                self.expect_object_type(&ty, &token);
+            }
             if let Some(data) = &data {
                 self.validate_global_initializer(&ty, data, &token);
             }
@@ -3161,10 +3201,14 @@ impl<'a> AstBuilderImpl<'a> {
                 token.s_value,
                 Identifier::StaticObject(ty.clone(), name.clone()),
             );
-            if let Some(existing) = self.global_variables.get(&name) {
+            if let Some(existing) = self.global_variables.get_mut(&name) {
                 if existing.ty != ty {
-                    self.error_logger
-                        .print_error_position(token.pos, "incompatible object redeclaration");
+                    if external {
+                        existing.ty = ty.clone();
+                    } else {
+                        self.error_logger
+                            .print_error_position(token.pos, "incompatible object redeclaration");
+                    }
                 }
                 if existing.thread_local != thread_local {
                     self.error_logger
