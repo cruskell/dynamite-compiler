@@ -11,6 +11,7 @@ use crate::error::{ErrorLogger, ErrorPrinter};
 /// Explicit preprocessing configuration shared by the CLI and library callers.
 #[derive(Default, Debug, Clone)]
 pub struct PreprocessorOptions {
+    pub system_headers: bool,
     pub include_directories: Vec<std::path::PathBuf>,
     pub definitions: Vec<String>,
     pub undefinitions: Vec<String>,
@@ -188,12 +189,16 @@ pub fn preprocess_with_options(
             origins,
         });
     }
-    let includes = IncludeDirectory::new()?;
+    let includes = if options.system_headers {
+        None
+    } else {
+        Some(IncludeDirectory::new()?)
+    };
     let mut command = Command::new("clang");
-    command
-        .args(["-E", "-x", "c", "-nostdinc", "-"])
-        .arg("-I")
-        .arg(&includes.0);
+    command.args(["-E", "-x", "c", "-"]);
+    if let Some(includes) = &includes {
+        command.arg("-nostdinc").arg("-I").arg(&includes.0);
+    }
     if let Some(parent) = absolute_path
         .as_deref()
         .and_then(Path::parent)
@@ -376,5 +381,22 @@ mod option_tests {
         };
         let result = preprocess_with_options("int value=ANSWER;", None, &options).unwrap();
         assert!(result.code.contains("int value=7;"));
+    }
+    #[test]
+    fn system_headers_are_an_explicit_preprocessing_option() {
+        let options = PreprocessorOptions {
+            system_headers: true,
+            ..PreprocessorOptions::default()
+        };
+        let source = preprocess_with_options(
+            "#include <unistd.h>\n#include <stdio.h>\nFILE *stream;\n",
+            None,
+            &options,
+        )
+        .unwrap();
+        assert!(source.code.contains("getpid"));
+        assert!(source.code.contains("FILE *stream"));
+        assert!(source.sources.len() > 2);
+        assert!(!PreprocessorOptions::default().system_headers);
     }
 }
