@@ -11,7 +11,7 @@ use crate::func::Func;
 use crate::generator::Os;
 use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
-use crate::node::{AtomicOperation, Node, NodeType};
+use crate::node::{AtomicOperation, AtomicRmwOperation, Node, NodeType};
 use crate::token::Token;
 use std::{
     collections::{HashMap, HashSet},
@@ -1011,6 +1011,44 @@ impl<'a> AsmGenerator<'a> {
         lines.push(Self::epilogue(options.offset));
         lines.into()
     }
+    fn atomic_update(node: &Node, operation: AtomicRmwOperation, return_new: bool) -> Assembly {
+        let ty = node.args[0].dest_type().unwrap();
+        let label = format!(".Latomic.{}", node.token.as_ref().unwrap().pos);
+        let mut lines = vec![
+            format!("{label}:").into(),
+            Assembly::inst2(LDAXR, X10, Ptr(X8, ty.size_of())),
+        ];
+        lines.push(match operation {
+            AtomicRmwOperation::Exchange => Assembly::inst2(MOV, X11, X9),
+            AtomicRmwOperation::Nand => vec![
+                Assembly::inst3(AND, X11, X10, X9),
+                Assembly::inst2(MVN, X11, X11),
+            ]
+            .into(),
+            _ => Assembly::inst3(
+                match operation {
+                    AtomicRmwOperation::Add => ADD,
+                    AtomicRmwOperation::Sub => SUB,
+                    AtomicRmwOperation::And => AND,
+                    AtomicRmwOperation::Or => OR,
+                    AtomicRmwOperation::Xor => XOR,
+                    _ => unreachable!(),
+                },
+                X11,
+                X10,
+                X9,
+            ),
+        });
+        lines.extend([
+            Assembly::inst3(STLXR, W0, X11, Ptr(X8, ty.size_of())),
+            Assembly::inst2(CMP, X0, 0),
+            Assembly::inst1(JNE, label),
+        ]);
+        let result = if return_new { X11 } else { X10 };
+        lines.extend([Self::normalize_integer(&ty, result), Self::push(result)]);
+        lines.into()
+    }
+
     fn gen_atomic(&self, node: &Node, operation: AtomicOperation, options: Options) -> Assembly {
         let mut lines = vec![];
         for argument in &node.args {
@@ -1026,12 +1064,15 @@ impl<'a> AsmGenerator<'a> {
                 Self::push(X8),
             ]);
         } else {
-            lines.extend([
-                Self::pop(X9),
-                Self::pop(X8),
-                Assembly::inst2(STLR, X9, Ptr(X8, ty.size_of())),
-                Self::push(0),
-            ]);
+            lines.extend([Self::pop(X9), Self::pop(X8)]);
+            if let AtomicOperation::Update(op, return_new) = operation {
+                lines.push(Self::atomic_update(node, op, return_new));
+            } else {
+                lines.extend([
+                    Assembly::inst2(STLR, X9, Ptr(X8, ty.size_of())),
+                    Self::push(0),
+                ]);
+            }
         }
         lines.into()
     }

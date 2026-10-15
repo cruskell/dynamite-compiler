@@ -11,7 +11,7 @@ use crate::func::Func;
 use crate::generator::Os;
 use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
-use crate::node::{AtomicOperation, Node, NodeType};
+use crate::node::{AtomicOperation, AtomicRmwOperation, Node, NodeType};
 use crate::token::Token;
 use std::{
     collections::{HashMap, HashSet},
@@ -996,6 +996,63 @@ impl<'a> AsmGenerator<'a> {
         lines.push(Assembly::epilogue());
         lines.into()
     }
+    fn atomic_update(node: &Node, operation: AtomicRmwOperation, return_new: bool) -> Assembly {
+        let ty = node.args[0].dest_type().unwrap();
+        let size = ty.size_of();
+        let label = format!(".Latomic.{}", node.token.as_ref().unwrap().pos);
+        let mut lines = vec![
+            Assembly::inst2(MOV, RSI, RAX),
+            if size == 8 {
+                Assembly::inst2(MOV, RAX, Ptr(RDI, 8))
+            } else if size == 4 {
+                Assembly::inst2(MOV, EAX, Ptr(RDI, 4))
+            } else {
+                Assembly::inst2(MOVZX, RAX, Ptr(RDI, size))
+            },
+            format!("{label}:").into(),
+            Assembly::inst2(MOV, RCX, RAX),
+        ];
+        lines.push(match operation {
+            AtomicRmwOperation::Exchange => Assembly::inst2(MOV, RCX, RSI),
+            AtomicRmwOperation::Nand => {
+                vec![Assembly::inst2(AND, RCX, RSI), Assembly::inst1(NOT, RCX)].into()
+            }
+            _ => Assembly::inst2(
+                match operation {
+                    AtomicRmwOperation::Add => ADD,
+                    AtomicRmwOperation::Sub => SUB,
+                    AtomicRmwOperation::And => AND,
+                    AtomicRmwOperation::Or => OR,
+                    AtomicRmwOperation::Xor => XOR,
+                    _ => unreachable!(),
+                },
+                RCX,
+                RSI,
+            ),
+        });
+        lines.extend([
+            Assembly::inst2(
+                CMPXCHG,
+                Ptr(RDI, size),
+                match size {
+                    1 => CL,
+                    2 => CX,
+                    4 => ECX,
+                    _ => RCX,
+                },
+            ),
+            Assembly::inst1(JNE, label),
+        ]);
+        if return_new {
+            lines.push(Assembly::inst2(MOV, RAX, RCX));
+        }
+        lines.extend([
+            Self::normalize_integer(&ty, RAX),
+            Assembly::inst1(PUSH, RAX),
+        ]);
+        lines.into()
+    }
+
     fn gen_atomic(
         &self,
         node: &Node,
@@ -1019,21 +1076,24 @@ impl<'a> AsmGenerator<'a> {
             ]);
         } else {
             let size = node.args[0].dest_type().unwrap().size_of();
-            lines.extend([
-                Assembly::inst1(POP, RAX),
-                Assembly::inst1(POP, RDI),
-                Assembly::inst2(
-                    XCHG,
-                    Ptr(RDI, size),
-                    match size {
-                        1 => AL,
-                        2 => AX,
-                        4 => EAX,
-                        _ => RAX,
-                    },
-                ),
-                Assembly::inst1(PUSH, 0),
-            ]);
+            lines.extend([Assembly::inst1(POP, RAX), Assembly::inst1(POP, RDI)]);
+            if let AtomicOperation::Update(op, return_new) = operation {
+                lines.push(Self::atomic_update(node, op, return_new));
+            } else {
+                lines.extend([
+                    Assembly::inst2(
+                        XCHG,
+                        Ptr(RDI, size),
+                        match size {
+                            1 => AL,
+                            2 => AX,
+                            4 => EAX,
+                            _ => RAX,
+                        },
+                    ),
+                    Assembly::inst1(PUSH, 0),
+                ]);
+            }
         }
         lines.into()
     }

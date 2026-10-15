@@ -3,9 +3,21 @@ use crate::token::Token;
 use std::mem::swap;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+pub enum AtomicRmwOperation {
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+    Nand,
+    Exchange,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum AtomicOperation {
     Load,
     Store,
+    Update(AtomicRmwOperation, bool),
 }
 
 #[derive(Debug, PartialEq, Clone)]

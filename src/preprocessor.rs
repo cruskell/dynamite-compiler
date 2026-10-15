@@ -42,6 +42,19 @@ fn compiler_macros(command: &mut Command) {
         "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
     ]);
     for name in [
+        "__atomic_exchange_n",
+        "__atomic_fetch_add",
+        "__atomic_add_fetch",
+        "__atomic_fetch_sub",
+        "__atomic_sub_fetch",
+        "__atomic_fetch_and",
+        "__atomic_and_fetch",
+        "__atomic_fetch_or",
+        "__atomic_or_fetch",
+        "__atomic_fetch_xor",
+        "__atomic_xor_fetch",
+        "__atomic_fetch_nand",
+        "__atomic_nand_fetch",
         "__atomic_load_n",
         "__atomic_store_n",
         "__builtin_constant_p",
@@ -488,6 +501,9 @@ mod option_tests {
 #endif
 #if __has_feature(blocks) || __has_extension(c_atomic) || __has_c_attribute(nodiscard)
 #error Unsupported language feature
+#endif
+#if !__has_builtin(__atomic_fetch_add) || !__has_builtin(__atomic_nand_fetch) || !__has_builtin(__atomic_exchange_n)
+#error Atomic updates missing
 #endif
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing

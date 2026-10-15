@@ -738,5 +738,17 @@ All valid GNU load/store orders currently use the stronger sequentially consiste
 implementation. Native x86_64 uses fenced loads and memory exchanges; AArch64 uses
 acquire loads and release stores; LLVM emits `seq_cst` atomic operations. This
 preserves synchronization while leaving weaker-order optimization for later.
-Invalid constant orders and unsupported object types are diagnosed. Generic
-buffer forms and other GNU atomic operations are not implemented by this support.
+Invalid constant orders and unsupported object types are diagnosed. Generic buffer forms, compare-exchange and fences remain unsupported.
+
+
+Atomic read-modify-write operations include `__atomic_exchange_n`, the
+`__atomic_fetch_add/sub/and/or/xor/nand` family and the corresponding
+`__atomic_add/sub/and/or/xor/nand_fetch` forms. They return the old or new value
+as specified and wrap arithmetic at the object width, including signed objects.
+Pointer arithmetic operates on raw byte addresses, without element scaling;
+boolean objects support exchange but not arithmetic updates.
+
+These operations retain sequentially consistent ordering. Native x86_64 uses
+locked compare-exchange loops, AArch64 uses acquire/release exclusive loops, and
+LLVM uses atomic read-modify-write instructions. Arguments are captured before
+retry loops, so contention does not repeat their side effects.

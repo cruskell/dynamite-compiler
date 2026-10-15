@@ -6,7 +6,7 @@ use crate::{
     error,
     func::Func,
     global::{GlobalVariable, GlobalVariableData},
-    node::{AtomicOperation, Node, NodeType},
+    node::{AtomicOperation, AtomicRmwOperation, Node, NodeType},
     token::Token,
 };
 
@@ -1508,6 +1508,64 @@ impl<'a> IrGenerator<'a> {
         }
     }
 
+    fn atomic_update(
+        node: &Node,
+        operation: AtomicRmwOperation,
+        return_new: bool,
+        values: &[String],
+        options: &mut Options,
+        lines: &mut Vec<String>,
+    ) -> String {
+        let object = node.args[0].dest_type().unwrap();
+        let storage = Type::integer((object.size_of() * 8) as u8, false);
+        let scalar = Self::gen_type(storage.clone());
+        let value = Self::convert_integer(
+            values[1].clone(),
+            &node.args[1].resolve_type().unwrap(),
+            &storage,
+            options,
+            lines,
+        );
+        let mnemonic = match operation {
+            AtomicRmwOperation::Add => "add",
+            AtomicRmwOperation::Sub => "sub",
+            AtomicRmwOperation::And => "and",
+            AtomicRmwOperation::Or => "or",
+            AtomicRmwOperation::Xor => "xor",
+            AtomicRmwOperation::Nand => "nand",
+            AtomicRmwOperation::Exchange => "xchg",
+        };
+        let volatile = if node.volatile_access {
+            "volatile "
+        } else {
+            ""
+        };
+        let old = options.new_register();
+        options.register_queue.pop();
+        lines.push(format!(
+            "  %{old} = atomicrmw {volatile}{mnemonic} ptr {}, {scalar} {value} seq_cst, align {}",
+            values[0],
+            object.align_of()
+        ));
+        let result = if return_new {
+            let result = options.new_register();
+            options.register_queue.pop();
+            if operation == AtomicRmwOperation::Nand {
+                lines.push(format!("  %{result} = and {scalar} %{old}, {value}"));
+                let inverted = options.new_register();
+                options.register_queue.pop();
+                lines.push(format!("  %{inverted} = xor {scalar} %{result}, -1"));
+                format!("%{inverted}")
+            } else {
+                lines.push(format!("  %{result} = {mnemonic} {scalar} %{old}, {value}"));
+                format!("%{result}")
+            }
+        } else {
+            format!("%{old}")
+        };
+        Self::convert_integer(result, &storage, &object, options, lines)
+    }
+
     fn gen_atomic(
         &self,
         node: &Node,
@@ -1521,6 +1579,11 @@ impl<'a> IrGenerator<'a> {
             values.push(options.register_queue.pop().unwrap());
         }
         let ty = node.args[0].dest_type().unwrap();
+        if let AtomicOperation::Update(op, return_new) = operation {
+            let value = Self::atomic_update(node, op, return_new, &values, options, &mut lines);
+            options.register_queue.push(value);
+            return lines;
+        }
         let scalar = Self::gen_type(ty.clone());
         let volatile = if node.volatile_access {
             "volatile "

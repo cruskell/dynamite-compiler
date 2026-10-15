@@ -1,8 +1,30 @@
 //! Parse GNU atomic operations independently of target instruction selection.
 
 use super::*;
+use crate::node::AtomicRmwOperation;
 
 impl AstBuilderImpl<'_> {
+    pub(super) fn atomic_operation(name: &str) -> Option<AtomicOperation> {
+        Some(match name {
+            "__atomic_load_n" => AtomicOperation::Load,
+            "__atomic_store_n" => AtomicOperation::Store,
+            "__atomic_exchange_n" => AtomicOperation::Update(AtomicRmwOperation::Exchange, false),
+            "__atomic_fetch_add" => AtomicOperation::Update(AtomicRmwOperation::Add, false),
+            "__atomic_add_fetch" => AtomicOperation::Update(AtomicRmwOperation::Add, true),
+            "__atomic_fetch_sub" => AtomicOperation::Update(AtomicRmwOperation::Sub, false),
+            "__atomic_sub_fetch" => AtomicOperation::Update(AtomicRmwOperation::Sub, true),
+            "__atomic_fetch_and" => AtomicOperation::Update(AtomicRmwOperation::And, false),
+            "__atomic_and_fetch" => AtomicOperation::Update(AtomicRmwOperation::And, true),
+            "__atomic_fetch_or" => AtomicOperation::Update(AtomicRmwOperation::Or, false),
+            "__atomic_or_fetch" => AtomicOperation::Update(AtomicRmwOperation::Or, true),
+            "__atomic_fetch_xor" => AtomicOperation::Update(AtomicRmwOperation::Xor, false),
+            "__atomic_xor_fetch" => AtomicOperation::Update(AtomicRmwOperation::Xor, true),
+            "__atomic_fetch_nand" => AtomicOperation::Update(AtomicRmwOperation::Nand, false),
+            "__atomic_nand_fetch" => AtomicOperation::Update(AtomicRmwOperation::Nand, true),
+            _ => return None,
+        })
+    }
+
     pub(super) fn atomic_builtin(&mut self, token: Token, operation: AtomicOperation) -> Node {
         self.expect_reserved("(");
         let pointer = self.assign();
@@ -21,15 +43,31 @@ impl AstBuilderImpl<'_> {
             );
         }
         let mut args = vec![pointer];
-        if operation == AtomicOperation::Store {
+        if operation != AtomicOperation::Load {
             if object.qualifiers().constant {
                 self.error_logger
-                    .print_error_position(token.pos, "atomic store requires a writable object");
+                    .print_error_position(token.pos, "atomic update requires a writable object");
             }
             self.expect_reserved(",");
             let mut value = self.assign();
-            self.expect_conversion(&ty, &value);
-            Self::cast_integer(&mut value, &ty);
+            let value_type = if matches!(operation, AtomicOperation::Update(op, _) if op != AtomicRmwOperation::Exchange)
+            {
+                if ty == Type::Bool {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "atomic arithmetic does not support boolean objects",
+                    );
+                }
+                if matches!(ty, Type::Ptr(_)) {
+                    Type::integer(64, false)
+                } else {
+                    ty.clone()
+                }
+            } else {
+                ty.clone()
+            };
+            self.expect_conversion(&value_type, &value);
+            Self::cast_integer(&mut value, &value_type);
             args.push(value);
         }
         self.expect_reserved(",");
@@ -42,6 +80,7 @@ impl AstBuilderImpl<'_> {
             let valid = match operation {
                 AtomicOperation::Load => [0, 1, 2, 5].contains(&value),
                 AtomicOperation::Store => [0, 3, 5].contains(&value),
+                AtomicOperation::Update(..) => (0..=5).contains(&value),
             };
             if !valid {
                 self.error_logger

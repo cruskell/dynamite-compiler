@@ -5577,11 +5577,7 @@ impl<'a> AstBuilderImpl<'a> {
             ) {
                 return self.floating_abs_builtin(t);
             }
-            if let Some(operation) = match t.s_value.as_str() {
-                "__atomic_load_n" => Some(AtomicOperation::Load),
-                "__atomic_store_n" => Some(AtomicOperation::Store),
-                _ => None,
-            } {
+            if let Some(operation) = Self::atomic_operation(&t.s_value) {
                 return self.atomic_builtin(t, operation);
             }
             if t.s_value == "__builtin_constant_p" {

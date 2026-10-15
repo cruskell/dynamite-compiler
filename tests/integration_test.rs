@@ -2596,10 +2596,27 @@ fn invalid_atomic_load_store_is_diagnosed(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
-    output_option: &str,
-    optimization: &str,
-) {
+fn atomic_read_modify_write_matches_clang(output_option: &str, optimization: &str) {
+    let dispatch = r#"
+unsigned long execute(int op,unsigned long *p,unsigned long n){
+    switch(op){
+    case 0:return __atomic_fetch_add(p,n,5);
+    case 1:return __atomic_add_fetch(p,n,5);
+    case 2:return __atomic_fetch_sub(p,n,5);
+    case 3:return __atomic_sub_fetch(p,n,5);
+    case 4:return __atomic_fetch_and(p,n,5);
+    case 5:return __atomic_and_fetch(p,n,5);
+    case 6:return __atomic_fetch_or(p,n,5);
+    case 7:return __atomic_or_fetch(p,n,5);
+    case 8:return __atomic_fetch_xor(p,n,5);
+    case 9:return __atomic_xor_fetch(p,n,5);
+    case 10:return __atomic_fetch_nand(p,n,5);
+    case 11:return __atomic_nand_fetch(p,n,5);
+    case 12:return __atomic_exchange_n(p,n,5);
+    }
+    return 0;
+}
+"#;
     let code = r"
 struct Box{long value;};
 struct Tiny{signed char value;};
