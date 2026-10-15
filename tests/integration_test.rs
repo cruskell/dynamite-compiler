@@ -6643,6 +6643,7 @@ fn thread_local_self_size_initializers_remain_constant() {
 
 #[test_matrix([
     "static int a[][2]={1,2,3,4,5};int evaluate(void){return sizeof(a)+a[0][0]+a[1][1]+a[2][0]+a[2][1];}",
+    "static unsigned long count=sizeof((int[][2]){1,2,3,4,5});static int (*p)[2]=(int[][2]){2,3,4};int evaluate(void){return count+p[0][1]+p[1][0]+p[1][1];}",
     "struct Pair{int x,y;};struct Box{struct Pair p[2];int tail;};int evaluate(void){struct Box b={1,2,3,4,5};struct Box z={0};return b.p[0].x+3*b.p[0].y+5*b.p[1].x+7*b.p[1].y+11*b.tail+z.p[1].y;}",
     "struct Box{int a[3];int tail;};static struct Box g={.a[1]=4,5,6};int evaluate(void){int a[2][3]={[0][1]=4,5,6};struct Box b={.a[1]=4,5,6};return a[0][0]+a[0][1]+3*a[0][2]+5*a[1][0]+7*b.a[2]+11*b.tail+13*g.tail;}",
     "struct Pair{int x,y;};int evaluate(void){struct Pair first={3,5};struct Pair a[2]={first,7,9};return a[0].x+3*a[0].y+5*a[1].x+7*a[1].y;}",
@@ -6664,6 +6665,7 @@ fn aggregate_brace_elision_matches_clang(body: &str, output_option: &str, optimi
     "int main(){int a[1][2]={1,2,3};return 0;}",
     "union U{int x;long y;};union U u={1,2};int main(){return 0;}",
     "int main(){int a[][2]={1,2,3,4};return 0;}",
+    "int main(){return sizeof((int[][2]){1,2,3,4});}",
     "struct S{int x,y;};int main(){struct S a[]={1,2};return 0;}",
     "struct S{int x,y;};int main(){struct S a[]={[0].x=1,2};return 0;}",
 ], ["asm", "llvm"])]

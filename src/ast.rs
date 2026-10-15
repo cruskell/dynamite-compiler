@@ -5176,7 +5176,8 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 self.expect_reserved(")");
                 if self.tokens[self.cur].s_value == "{" {
-                    if matches!(ty, Type::Arr(_, None)) {
+                    let inferred = matches!(ty, Type::Arr(_, None));
+                    if inferred && self.return_type.is_some() {
                         let saved = self.cur;
                         let count = self.initializer_count(&ty);
                         self.cur = saved;
@@ -5188,7 +5189,8 @@ impl<'a> AstBuilderImpl<'a> {
                     };
                     let literal = if self.return_type.is_some() {
                         let object = self.register_local_variable(name, ty);
-                        let initializer = self.local_variable_initialization(&object, &token);
+                        let initializer = self
+                            .local_variable_initialization_with_elision(&object, &token, !inferred);
                         let mut children = vec![];
                         Self::initializer_expressions(initializer, &mut children);
                         children.push(object);
@@ -5200,8 +5202,14 @@ impl<'a> AstBuilderImpl<'a> {
                             ..Node::default()
                         }
                     } else {
-                        self.expect_object_type(&ty, &token);
                         let data = self.global_initializer(&ty);
+                        let count = if let GlobalVariableData::Arr(elements) = &data {
+                            elements.len()
+                        } else {
+                            0
+                        };
+                        ty = self.infer_array_size(ty, count, &token);
+                        self.expect_object_type(&ty, &token);
                         self.validate_global_initializer(&ty, &data, &token);
                         self.global_variables.insert(
                             name.s_value.clone(),
