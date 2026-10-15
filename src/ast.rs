@@ -430,8 +430,8 @@ impl<'a> AstBuilderImpl<'a> {
         self.declaration_attributes(false);
     }
 
-    fn declaration_attributes(&mut self, record_alignment: bool) -> usize {
-        let mut alignment = 0;
+    fn declaration_attributes(&mut self, allow_alignment: bool) -> Vec<usize> {
+        let mut alignments = vec![];
         while matches!(self.tokens[self.cur].tt, TokenType::Ident)
             && matches!(
                 self.tokens[self.cur].s_value.as_str(),
@@ -481,7 +481,7 @@ impl<'a> AstBuilderImpl<'a> {
                         | "sentinel"
                         | "diagnose_if"
                 );
-                if record_alignment && name.s_value.trim_matches('_') == "aligned" {
+                if allow_alignment && name.s_value.trim_matches('_') == "aligned" {
                     self.cur += 1;
                     let value = if self.attempt_reserved("(").is_some() {
                         let expression = self.ternary();
@@ -500,10 +500,10 @@ impl<'a> AstBuilderImpl<'a> {
                     if value <= 0 || !(value as usize).is_power_of_two() || value > 16 {
                         self.error_logger.print_error_position(
                             name.pos,
-                            "record alignment must be a power of two no greater than 16",
+                            "alignment must be a power of two no greater than 16",
                         );
                     }
-                    alignment = alignment.max(value as usize);
+                    alignments.push(value as usize);
                     if self.tokens[self.cur].s_value != ")" {
                         self.expect_reserved(",");
                     }
@@ -538,24 +538,39 @@ impl<'a> AstBuilderImpl<'a> {
             }
             self.expect_reserved(")");
         }
-        alignment
+        alignments
+    }
+
+    fn record_alignment_attributes(&mut self) -> usize {
+        self.declaration_attributes(true)
+            .into_iter()
+            .max()
+            .unwrap_or(0)
     }
 
     fn declarator(&mut self) -> Declarator {
+        self.declarator_with_alignment(None)
+    }
+
+    fn declarator_with_alignment(&mut self, mut alignments: Option<&mut Vec<usize>>) -> Declarator {
         self.declaration_annotations();
         let mut pointers = vec![];
         while self.attempt_reserved("*").is_some() {
             pointers.push(self.pointer_qualifiers());
         }
         let mut direct = if self.attempt_reserved("(").is_some() {
-            let inner = self.declarator();
+            let inner = self.declarator_with_alignment(alignments.as_deref_mut());
             self.expect_reserved(")");
             inner
         } else {
             Declarator::Name(self.attempt_ident())
         };
         loop {
-            self.declaration_annotations();
+            if let Some(alignments) = alignments.as_deref_mut() {
+                alignments.extend(self.declaration_attributes(true));
+            } else {
+                self.declaration_annotations();
+            }
             if self.attempt_reserved("[").is_some() {
                 let mut minimum = self.attempt_reserved("static");
                 let qualifiers = self.attempt_qualifiers();
@@ -1273,7 +1288,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn struct_type(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
-        let mut requested_record_alignment = self.declaration_attributes(true);
+        let mut requested_record_alignment = self.record_alignment_attributes();
         let name = self.attempt_ident();
         self.declaration_annotations();
         let key = format!(
@@ -1508,7 +1523,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if defining {
             requested_record_alignment =
-                requested_record_alignment.max(self.declaration_attributes(true));
+                requested_record_alignment.max(self.record_alignment_attributes());
         } else {
             self.declaration_annotations();
         }
@@ -1542,7 +1557,28 @@ impl<'a> AstBuilderImpl<'a> {
     fn typedef_definition(&mut self) {
         let base = self.expect_type();
         loop {
-            let (token, ty) = self.expect_ident_with_type(base.clone());
+            let mut alignments = vec![];
+            let (name, ty, _, _, _) = self
+                .declarator_with_alignment(Some(&mut alignments))
+                .resolve(base.clone());
+            let token = name.unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(self.tokens[self.cur].pos, "ident expected");
+                unreachable!()
+            });
+            self.validate_type_layout(&ty, &token);
+            if !alignments.is_empty()
+                && (ty.size_of() == 0
+                    || matches!(ty.unqualified(), Type::Func(..) | Type::VariadicFunc(..))
+                    || alignments
+                        .iter()
+                        .any(|alignment| *alignment != ty.align_of()))
+            {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "only natural alignment attributes on complete object typedefs are supported",
+                );
+            }
             if let Some(previous) = self.scope_stack.last().unwrap().get(&token.s_value) {
                 let valid = matches!(previous, Identifier::TypeDef(previous)
                     if !previous.is_variably_modified()

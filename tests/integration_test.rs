@@ -1874,3 +1874,43 @@ fn unsupported_or_malformed_enumerator_annotations_are_diagnosed(code: &str, out
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn natural_typedef_alignment_attributes_preserve_layout(output_option: &str) {
+    let code = r#"
+typedef char Byte __attribute__((aligned(1)));
+typedef short Half __attribute__((__aligned__(2)));
+typedef int Word __attribute__((aligned(4),unused));
+typedef long Wide __attribute__((aligned(8)));
+typedef double Real __attribute__((aligned(8)));
+typedef int *Pointer __attribute__((aligned(8)));
+typedef int Row[3] __attribute__((aligned(4)));
+typedef int (*Callback)(int) __attribute__((aligned(8)));
+struct S{char tag;Wide value;};
+typedef struct S Record __attribute__((aligned(8)));
+Record global={3,7};
+int identity(int value){return value;}
+int main(){
+    Byte byte=1;Half half=2;Word word=3;Real real=4.5;
+    Pointer p=&word;Row row={5,6,7};Record record=global;Callback call=identity;
+    return (sizeof(Row)!=12)+(_Alignof(Word)!=4)+(_Alignof(Record)!=8)
+        +(sizeof(record)!=16)+(record.value!=7)+(record.tag!=3)
+        +(call(*p)!=3)+(row[2]!=7)+(real!=4.5)+(byte!=1)+(half!=2);
+}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "typedef int Word __attribute__((aligned(8)));",
+    "typedef long Wide __attribute__((aligned(4)));",
+    "typedef int Word __attribute__((aligned(4),aligned(2)));",
+    "typedef int Function(void) __attribute__((aligned(1)));",
+    "typedef struct Missing Record __attribute__((aligned(1)));",
+    "typedef int Word __attribute__((aligned(3)));",
+], ["asm", "llvm"])]
+fn unsupported_typedef_alignment_changes_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
