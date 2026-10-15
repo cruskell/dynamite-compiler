@@ -2211,7 +2211,7 @@ int check(struct Outer x,struct Outer *p){
 
 #[test_matrix([
     "struct __attribute__((aligned(3))) S{int x;};",
-    "struct S{char x;};struct S __attribute__((aligned(16))) value;",
+    "struct S{char x;};struct S __attribute__((aligned(8192))) value;",
     "struct S{char x;};struct __attribute__((aligned(16))) S value;",
     "struct S{int x;} __attribute__((aligned(0)));",
     "struct __attribute__((aligned(8192))) S{int x;};",
