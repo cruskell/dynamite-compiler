@@ -43,6 +43,45 @@ fn compiler_macros(command: &mut Command) {
         "-D__has_builtin(x)=__DYNAMITE_PROBE(__DYNAMITE_BUILTIN_##x)",
         "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
     ]);
+    // SIMD storage types do not provide the corresponding vector intrinsic families.
+    for name in [
+        "__ARM_NEON",
+        "__ARM_NEON__",
+        "__ARM_NEON_FP",
+        "__ARM_NEON_SVE_BRIDGE",
+        "__ARM_FEATURE_SVE",
+        "__ARM_FEATURE_SVE2",
+        "__ARM_FEATURE_SVE_BITS",
+        "__MMX__",
+        "__SSE__",
+        "__SSE2__",
+        "__SSE3__",
+        "__SSSE3__",
+        "__SSE4_1__",
+        "__SSE4_2__",
+        "__AVX__",
+        "__AVX2__",
+        "__FMA__",
+        "__F16C__",
+        "__AVX512F__",
+        "__AVX512CD__",
+        "__AVX512DQ__",
+        "__AVX512BW__",
+        "__AVX512VL__",
+        "__AVX512IFMA__",
+        "__AVX512VBMI__",
+        "__AVX512VBMI2__",
+        "__AVX512VNNI__",
+        "__AVX512BITALG__",
+        "__AVX512VPOPCNTDQ__",
+        "__AVX5124VNNIW__",
+        "__AVX5124FMAPS__",
+        "__AVX512VP2INTERSECT__",
+        "__AVX512FP16__",
+        "__AVX512BF16__",
+    ] {
+        command.arg(format!("-U{name}"));
+    }
     for name in [
         "__builtin_bzero",
         "__atomic_exchange_n",
@@ -481,6 +520,34 @@ mod tests {
 #[cfg(test)]
 mod option_tests {
     use super::*;
+
+    #[test]
+    fn unsupported_simd_intrinsic_capabilities_are_not_inherited() {
+        let code = r"
+#if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__ARM_NEON_FP) || defined(__ARM_NEON_SVE_BRIDGE) || defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_SVE2) || defined(__MMX__) || defined(__SSE__) || defined(__SSE2__) || defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__)
+#error unsupported vector intrinsics advertised
+#endif
+#if !defined(__aarch64__) && !defined(__x86_64__)
+#error target architecture macro lost
+#endif
+#if __SIZEOF_POINTER__ != 8
+#error target ABI macro lost
+#endif
+int selected_scalar_path;
+";
+        for system_headers in [false, true] {
+            let expanded = preprocess_with_options(
+                code,
+                None,
+                &PreprocessorOptions {
+                    system_headers,
+                    ..PreprocessorOptions::default()
+                },
+            )
+            .unwrap();
+            assert!(expanded.code.contains("int selected_scalar_path;"));
+        }
+    }
 
     #[test]
     fn storage_only_integer128_is_not_advertised_as_an_arithmetic_extension() {

@@ -961,3 +961,12 @@ conservative: no type-based alias-analysis metadata is emitted, including throug
 annotated typedefs. Alias-enabled accesses therefore remain valid when the
 resulting IR is optimized with strict-aliasing enabled. Attribute arguments are
 diagnosed rather than silently ignored.
+
+## SIMD preprocessing capabilities
+
+The preprocessing profile withholds host NEON/SVE and x86 MMX/SSE/AVX intrinsic
+capability macros while those vector intrinsic families remain unimplemented.
+Portable sources can therefore select their scalar alternatives. Target
+architecture and ABI macros, ordinary floating-point operations and the supported
+storage/type-query subset of vector typedefs remain available. This controls
+source feature selection rather than changing the generated code's target CPU.
