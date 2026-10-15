@@ -1903,7 +1903,13 @@ impl<'a> AstBuilderImpl<'a> {
         let Type::Enum(value) = &enum_type else {
             unreachable!()
         };
-        *value.underlying.borrow_mut() = ty;
+        // The supported LP64 ABIs use unsigned int for nonnegative 32-bit enums.
+        // Enumerator constants keep their separately selected source-language type.
+        *value.underlying.borrow_mut() = if smallest >= 0 && largest <= i128::from(u32::MAX) {
+            Type::integer(32, false)
+        } else {
+            ty
+        };
         enum_type
     }
 

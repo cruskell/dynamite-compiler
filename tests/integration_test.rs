@@ -6857,3 +6857,44 @@ fn invalid_integer_address_initializers_are_diagnosed(code: &str, output_option:
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn nonnegative_enum_abi_matches_clang(output_option: &str, optimization: &str) {
+    let definitions = r#"
+enum Flags{ZERO=0,SEVEN=7};enum Negative{MINUS=-1,PLUS=3};enum Fixed:int{FIXED=2};
+enum Large{HIGH=0xffffffffU};
+"#;
+    let code = [definitions,r#"
+_Static_assert(__builtin_types_compatible_p(enum Flags,unsigned int),"unsigned enum representation");
+_Static_assert(!__builtin_types_compatible_p(enum Flags,int),"distinct signed representation");
+_Static_assert(__builtin_types_compatible_p(enum Negative,int),"negative enum representation");
+_Static_assert(__builtin_types_compatible_p(enum Fixed,int),"fixed representation");
+_Static_assert(_Generic(SEVEN,int:1,default:0),"ordinary enumerator type");
+_Static_assert(_Generic(HIGH,unsigned int:1,default:0),"extended enumerator type");
+extern enum Flags shared;unsigned int shared=SEVEN;
+int accept_unsigned(unsigned value){return value==7;}
+int accept_enum(enum Flags value){return value==7;}
+int (*as_enum)(enum Flags)=accept_unsigned;
+int (*as_unsigned)(unsigned)=accept_enum;
+int foreign(enum Flags,int(*)(unsigned));
+int reference(void);
+int main(void){enum Flags all=(enum Flags)-1;enum Negative negative=MINUS;
+    if(all<0 || all!=~0U || negative>=0 || shared!=7)return 1;
+    if(_Generic(+all,unsigned int:0,default:1))return 2;
+    return as_enum(SEVEN)!=1 || as_unsigned(SEVEN)!=1 || foreign(SEVEN,accept_enum)!=1 || reference()!=1;}
+"#].concat();
+    let companion = [
+        definitions,
+        r#"
+int foreign(enum Flags value,int(*call)(unsigned)){return call(value);}
+int reference(void){return __builtin_types_compatible_p(enum Flags,unsigned int)
+    && !__builtin_types_compatible_p(enum Flags,int)
+    && _Generic(SEVEN,int:1,default:0)
+    && _Generic(+(enum Flags)0,unsigned int:1,default:0);}
+"#,
+    ]
+    .concat();
+    let output =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
