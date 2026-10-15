@@ -1286,6 +1286,47 @@ fn invalid_gnu_inline_spellings_are_diagnosed(
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_inline_direct_calls_use_local_bodies(output_option: &str, optimization: &str) {
+    let code = r"
+#define HEADER extern inline __attribute__((gnu_inline))
+int missing(void);
+HEADER int unused(void){return missing();}
+static int calls;
+HEADER int next(int n){calls++;return n+1;}
+HEADER int nested(int n){return next(n)+1;}
+HEADER int recurse(int n){return n?recurse(n-1)+1:0;}
+HEADER int variadic(int n,...){return n+1;}
+struct Pair{long a,b;};
+HEADER struct Pair record(struct Pair p){p.a++;return p;}
+int main(){struct Pair p={7,9};p=record(p);
+    return nested(40)!=42 || calls!=1 || recurse(5)!=5 || variadic(41,3)!=42 || p.a!=8 || p.b!=9;}
+";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_inline_addresses_keep_external_identity(output_option: &str, optimization: &str) {
+    let code = r"
+extern inline __attribute__((gnu_inline)) int value(void){return 3;}
+int compare(int (*p)(void));
+int main(){int (*p)(void)=value;return value()!=3 || p()!=7 || compare(value);}
+";
+    let companion =
+        "int value(void){return 7;}int compare(int (*p)(void)){return p!=value || p()!=7;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn gnu_inline_attributes_preserve_definition_and_reference_linkage(
     output_option: &str,
     optimization: &str,
