@@ -2138,7 +2138,7 @@ int check(struct Outer x,struct Outer *p){
     "struct S{char x;};struct S __attribute__((aligned(16))) value;",
     "struct S{char x;};struct __attribute__((aligned(16))) S value;",
     "struct S{int x;} __attribute__((aligned(0)));",
-    "struct __attribute__((aligned(32))) S{int x;};",
+    "struct __attribute__((aligned(8192))) S{int x;};",
     "int n;struct __attribute__((aligned(n))) S{int x;};",
 ], ["asm", "llvm"])]
 fn invalid_record_alignment_is_diagnosed(code: &str, output_option: &str) {
@@ -2389,6 +2389,60 @@ int main(){
     "struct S{int x;};int main(){struct S s={1};return __builtin_ctz(s);}"
 ], ["asm", "llvm"])]
 fn invalid_integer_bit_scan_builtins(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix([32,64,128,256,4096], ["asm", "llvm"], ["-O0", "-O2"])]
+fn extended_record_alignment_in_static_storage(
+    alignment: usize,
+    output_option: &str,
+    optimization: &str,
+) {
+    let definitions = format!(
+        "struct __attribute__((aligned({alignment}))) Wide{{long n;char tag;}};struct Container{{char prefix;struct Wide value;char tail;}};union Choice{{char tag;struct Wide value;}};"
+    );
+    let code=[definitions.as_str(),r#"
+struct Wide array[2]={{7,3},{11,5}};
+struct Container container={1,{13,9},2};
+union Choice choice={4};
+extern struct Wide foreign;
+int check(struct Wide*,struct Container*,union Choice*,unsigned long,unsigned long);
+struct Wide *stored(){static struct Wide value={17,6};return &value;}
+int main(){
+    unsigned long alignment=_Alignof(struct Wide);
+    if((unsigned long)array%alignment || (unsigned long)&array[1]%alignment || (unsigned long)stored()%alignment) return 1;
+    if(sizeof(struct Wide)!=alignment || (unsigned long)&array[1]-(unsigned long)&array[0]!=alignment) return 2;
+    if(__builtin_offsetof(struct Container,value)!=alignment || __builtin_offsetof(struct Container,tail)!=2*alignment || sizeof(struct Container)!=3*alignment) return 3;
+    if(_Alignof(struct Container)!=alignment || sizeof(union Choice)!=alignment) return 4;
+    if(array[1].n!=11 || container.value.n!=13 || container.tail!=2 || stored()->n!=17 || foreign.n!=23) return 5;
+    array[0]=*stored();
+    if(array[0].n!=17 || array[0].tag!=6) return 6;
+    return check(array,&container,&choice,sizeof(struct Wide),alignment);
+}
+"#].concat();
+    let companion=[definitions.as_str(),r#"
+struct Wide foreign={23,8};
+int check(struct Wide *a,struct Container *c,union Choice *u,unsigned long size,unsigned long alignment){return a[0].n!=17 || a[1].n!=11 || c->prefix!=1 || c->value.tag!=9 || c->tail!=2 || u->tag!=4 || size!=sizeof(struct Wide) || alignment!=_Alignof(struct Wide);}
+"#].concat();
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "struct __attribute__((aligned(64))) S{int x;};int main(){struct S s;return 0;}",
+    "struct __attribute__((aligned(64))) S{int x;};struct S f(struct S);",
+    "struct __attribute__((aligned(64))) S{int x;};struct S f(void);",
+    "struct S;struct S f(void);struct __attribute__((aligned(64))) S{int x;};",
+    "struct __attribute__((aligned(64))) S{int x;};void f(int,...);struct S s;int main(){f(0,s);return 0;}"
+], ["asm", "llvm"])]
+fn unsupported_extended_record_stack_abi_is_diagnosed(code: &str, output_option: &str) {
     assert!(
         std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
             .is_err()
@@ -3068,7 +3122,7 @@ int check(struct Layout value,struct Declaration declaration,struct Mixed *mixed
 
 #[test_matrix([
     "struct S{int x __attribute__((aligned(3)));};",
-    "struct S{int x __attribute__((aligned(32)));};",
+    "struct S{int x __attribute__((aligned(8192)));};",
     "struct S{int x __attribute__((aligned(0)));};",
     "int n;struct S{int x __attribute__((aligned(n)));};",
     "struct S{int x __attribute__((aligned(8))):3;};",

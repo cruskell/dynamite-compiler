@@ -442,6 +442,12 @@ impl<'a> AstBuilderImpl<'a> {
                             "128-bit integer parameters and results are not supported",
                         );
                     }
+                    if matches!(ty.unqualified(), Type::Struct(_)) && ty.align_of() > 16 {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "records aligned above 16 bytes cannot be passed or returned by value",
+                        );
+                    }
                     if matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_float16() {
                         self.error_logger.print_error_position(
                             token.pos,
@@ -580,10 +586,10 @@ impl<'a> AstBuilderImpl<'a> {
                     } else {
                         16
                     };
-                    if value <= 0 || !(value as usize).is_power_of_two() || value > 16 {
+                    if value <= 0 || !(value as usize).is_power_of_two() || value > 4096 {
                         self.error_logger.print_error_position(
                             name.pos,
-                            "alignment must be a power of two no greater than 16",
+                            "alignment must be a power of two no greater than 4096",
                         );
                     }
                     alignments.push(value as usize);
@@ -3207,6 +3213,19 @@ impl<'a> AstBuilderImpl<'a> {
             self.error_logger.print_error_position(
                 node.token.as_ref().map_or(0, |token| token.pos),
                 "records containing _Float16 cannot be passed or returned by value",
+            );
+        }
+        if node.nt == NodeType::CallFunc
+            && node
+                .args
+                .iter()
+                .filter_map(Node::resolve_type)
+                .chain(node.resolve_type())
+                .any(|ty| matches!(ty.unqualified(), Type::Struct(_)) && ty.align_of() > 16)
+        {
+            self.error_logger.print_error_position(
+                node.token.as_ref().map_or(0, |token| token.pos),
+                "records aligned above 16 bytes cannot be passed or returned by value",
             );
         }
         if !address_only {
