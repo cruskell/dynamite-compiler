@@ -7225,3 +7225,43 @@ fn memory_clobber_inline_assembly_emits_llvm_barriers() {
     assert!(generated.contains("~{memory}"), "{generated}");
     assert!(!generated.contains("call {  } asm"), "{generated}");
 }
+
+#[test_matrix([
+    "struct Shape { char tag; long value; };",
+    "struct Shape { void *p[7]; unsigned flag:1; };",
+    "struct Inner { char tag; long value; }; struct Shape {char start;struct Inner inner;unsigned first:3,second:5;};",
+    "struct Shape {unsigned first:1;unsigned :0;unsigned second:3;char tail;};",
+    "#pragma pack(push,1)\nstruct Shape {char tag;unsigned first:3,second:9;char tail;};\n#pragma pack(pop)",
+    "struct __attribute__((aligned(16))) Shape {char tag;unsigned flag:1;};",
+], ["asm", "llvm"], ["-O0", "-O2"])]
+fn record_zero_initialization_clears_padding(code: &str, output_option: &str, optimization: &str) {
+    let code = format!(
+        r#"{code}
+int main(void){{
+    for(int pass=0;pass<2;pass++){{
+        struct Shape *value=&(struct Shape){{0}};
+        unsigned char *bytes=(unsigned char*)value;
+        for(unsigned long i=0;i<sizeof(*value);i++)if(bytes[i])return 1;
+        for(unsigned long i=0;i<sizeof(*value);i++)bytes[i]=255;
+    }}
+    return 0;
+}}
+"#
+    );
+    let output = compile_and_run_with_c_flags(&code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test]
+fn record_zero_initialization_retains_volatile_member_stores() {
+    let generated = dynamite_compiler::generate(
+        "struct V{char tag;volatile int field;};int main(){struct V v={0};return v.field;}",
+        "llvm",
+        false,
+    );
+    assert_eq!(
+        generated.matches("store volatile i32").count(),
+        1,
+        "{generated}"
+    );
+}
