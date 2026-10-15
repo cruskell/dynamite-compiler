@@ -42,6 +42,8 @@ fn compiler_macros(command: &mut Command) {
         "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
     ]);
     for name in [
+        "__atomic_load_n",
+        "__atomic_store_n",
         "__builtin_constant_p",
         "__builtin_clz",
         "__builtin_clzl",
@@ -486,6 +488,9 @@ mod option_tests {
 #endif
 #if __has_feature(blocks) || __has_extension(c_atomic) || __has_c_attribute(nodiscard)
 #error Unsupported language feature
+#endif
+#if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
+#error Atomic load/store missing
 #endif
 #if !__has_builtin(__builtin_constant_p)
 #error Constant query missing

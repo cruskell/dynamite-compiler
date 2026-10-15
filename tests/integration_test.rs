@@ -2503,6 +2503,99 @@ fn invalid_compile_time_constant_queries(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn atomic_load_store_preserve_values_and_publication(output_option: &str, optimization: &str) {
+    let code = r#"
+int run_publication(void*(*)(void*));
+struct State { int ready; int data; int error; };
+void *publish(void *raw){
+    struct State *s=(struct State*)raw;
+    int i;
+    for(i=1;i<=10000;++i){
+        while(__atomic_load_n(&s->ready,2)){}
+        s->data=i;
+        __atomic_store_n(&s->ready,1,3);
+    }
+    return 0;
+}
+int plus_three(int n){return n+3;}
+int calls;
+int order(){calls++;return 5;}
+int *address(int *p){calls++;return p;}
+int value(){calls++;return 19;}
+int main(){
+    signed char byte=-7;unsigned char high=250;
+    short word=-12345;unsigned short wide_word=60000;
+    int integer=-1234567;unsigned int unsigned_integer=4000000000U;
+    long large=-123456789012345L;unsigned long high_large=0xfedcba9876543210UL;
+    _Bool truth=0;
+    int target=31;int *pointer=0;
+    int (*callback)(int)=plus_three;
+    if(__atomic_load_n(&byte,0)!=-7 || __atomic_load_n(&high,1)!=250) return 1;
+    if(__atomic_load_n(&word,2)!=-12345 || __atomic_load_n(&wide_word,5)!=60000) return 2;
+    if(__atomic_load_n(&integer,5)!=-1234567 || __atomic_load_n(&unsigned_integer,0)!=4000000000U) return 3;
+    if(__atomic_load_n(&large,0)!=-123456789012345L || __atomic_load_n(&high_large,5)!=0xfedcba9876543210UL) return 4;
+    __atomic_store_n(&byte,-9,0);__atomic_store_n(&high,251,3);
+    __atomic_store_n(&word,-23456,5);__atomic_store_n(&wide_word,65000,0);
+    __atomic_store_n(&integer,27,3);__atomic_store_n(&unsigned_integer,4100000000U,5);
+    __atomic_store_n(&large,-9876543210123L,0);__atomic_store_n(&high_large,0x8000000000000001UL,3);
+    __atomic_store_n(&truth,9,5);__atomic_store_n(&pointer,&target,3);
+    if(byte!=-9 || high!=251 || word!=-23456 || wide_word!=65000 || integer!=27 || unsigned_integer!=4100000000U) return 5;
+    if(large!=-9876543210123L || high_large!=0x8000000000000001UL || !__atomic_load_n(&truth,2) || *__atomic_load_n(&pointer,2)!=31) return 6;
+    __atomic_store_n(address(&integer),value(),order());
+    if(calls!=3 || __atomic_load_n(address(&integer),order())!=19 || calls!=5) return 7;
+    if(__atomic_load_n(&pointer,2)[0]!=31 || __atomic_load_n(&callback,2)(7)!=10) return 8;
+    volatile unsigned char observed=0;
+    __atomic_store_n(&observed,201,5);
+    if(__atomic_load_n(&observed,5)!=201) return 8;
+    if(_Generic(__atomic_load_n(&high,0),unsigned char:0,default:1)) return 9;
+    if(__builtin_constant_p(__atomic_load_n(&integer,0))) return 10;
+    return run_publication(publish);
+}
+"#;
+    let companion = r#"
+#include <pthread.h>
+struct State {int ready;int data;int error;};
+static void *consume(void *raw){struct State*s=raw;for(int i=1;i<=10000;++i){while(!__atomic_load_n(&s->ready,__ATOMIC_ACQUIRE)){}if(s->data!=i)s->error=11;__atomic_store_n(&s->ready,0,__ATOMIC_RELEASE);}return 0;}
+int run_publication(void*(*publish)(void*)){struct State s={0};pthread_t a,b;if(pthread_create(&a,0,publish,&s))return 12;if(pthread_create(&b,0,consume,&s))return 13;pthread_join(a,0);pthread_join(b,0);return s.error;}
+"#;
+    if output_option == "llvm" {
+        let ir = dynamite_compiler::generate(code, output_option, false);
+        assert!(ir.contains("load atomic volatile i8"));
+        assert!(ir.contains("store atomic volatile i8"));
+        assert!(ir.contains("seq_cst"));
+    }
+    assert_eq!(
+        compile_and_run_with_c_flags(
+            code,
+            output_option,
+            Some(companion),
+            &[optimization, "-pthread"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){return __atomic_load_n(1,0);}",
+    "int main(){double x=1;return __atomic_load_n(&x,0);}",
+    "int main(){__int128 x;__atomic_store_n(&x,1,0);return 0;}",
+    "int main(){const int x=1;__atomic_store_n(&x,2,0);return 0;}",
+    "int main(){int x;__atomic_store_n(&x,1,2);return 0;}",
+    "int main(){int x;return __atomic_load_n(&x,3);}",
+    "int main(){int x;return __atomic_load_n(&x,6);}",
+    "int main(){int x;return __atomic_store_n(&x,1,0);}",
+    "int main(){int x;__atomic_store_n(&x,1);return 0;}"
+], ["asm", "llvm"])]
+fn invalid_atomic_load_store_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,

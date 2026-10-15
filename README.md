@@ -725,3 +725,18 @@ foldable integer expressions, conservatively returning zero for object reads,
 calls and expressions with side effects. It does not perform data-flow constant
 propagation or general floating-expression analysis. Invalid division and shift
 operations are not classified as known constants.
+
+## GNU atomic scalar loads and stores
+
+`__atomic_load_n` and `__atomic_store_n` support naturally aligned 1-, 2-, 4-
+and 8-byte integer, bool and pointer objects. Arguments, including runtime memory
+order expressions, are evaluated once. Loads preserve the unqualified object
+type; stores require a writable object and return void. Volatile accesses remain
+volatile in LLVM IR.
+
+All valid GNU load/store orders currently use the stronger sequentially consistent
+implementation. Native x86_64 uses fenced loads and memory exchanges; AArch64 uses
+acquire loads and release stores; LLVM emits `seq_cst` atomic operations. This
+preserves synchronization while leaving weaker-order optimization for later.
+Invalid constant orders and unsupported object types are diagnosed. Generic
+buffer forms and other GNU atomic operations are not implemented by this support.
