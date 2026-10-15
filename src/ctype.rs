@@ -179,7 +179,7 @@ impl Type {
                 left.qualifiers() == right.qualifiers() && left.compatible(right)
             }
             (Self::Arr(left, count), Self::Arr(right, other_count)) => {
-                count == other_count
+                (count == other_count || count.is_none() || other_count.is_none())
                     && left.qualifiers() == right.qualifiers()
                     && left.compatible(right)
             }
@@ -190,9 +190,47 @@ impl Type {
                         .iter()
                         .zip(other_args)
                         .all(|(left, right)| left.compatible(right))
+                    && result.qualifiers() == other_result.qualifiers()
                     && result.compatible(other_result)
             }
             (left, right) => left == right,
+        }
+    }
+
+    /// Typedef redeclarations require identical types, not merely compatible array bounds or enums.
+    pub fn identical(&self, other: &Self) -> bool {
+        self.qualifiers() == other.qualifiers() && self.identical_unqualified(other)
+    }
+
+    fn identical_unqualified(&self, other: &Self) -> bool {
+        match (self.unqualified(), other.unqualified()) {
+            (Self::Ptr(left), Self::Ptr(right)) => left.identical(right),
+            (Self::Arr(left, count), Self::Arr(right, other_count)) => {
+                count == other_count && left.identical(right)
+            }
+            (Self::Func(args, result), Self::Func(other_args, other_result))
+            | (Self::VariadicFunc(args, result), Self::VariadicFunc(other_args, other_result)) => {
+                args.len() == other_args.len()
+                    && args
+                        .iter()
+                        .zip(other_args)
+                        .all(|(left, right)| left.identical_unqualified(right))
+                    && result.identical(other_result)
+            }
+            (left, right) => left == right,
+        }
+    }
+
+    /// GNU type queries ignore outer qualification, including qualification of array elements.
+    pub fn unqualified_for_type_query(&self) -> Self {
+        match self.unqualified() {
+            Self::Arr(child, count) => {
+                Self::Arr(Box::new(child.unqualified_for_type_query()), *count)
+            }
+            Self::Vla(child, offset) => {
+                Self::Vla(Box::new(child.unqualified_for_type_query()), *offset)
+            }
+            ty => ty.clone(),
         }
     }
 

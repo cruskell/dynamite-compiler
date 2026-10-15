@@ -4402,6 +4402,10 @@ int main(){
     "typedef int T[2][3];typedef const int T[2][3];",
     "typedef int T[2];typedef int T[3];",
     "typedef int T[];typedef int T[3];",
+    "typedef int (*ArrayPointer)[];typedef int (*ArrayPointer)[3];",
+    "typedef void T(int(*)[]);typedef void T(int(*)[3]);",
+    "typedef const int T(void);typedef int T(void);",
+    "enum E{VALUE=-1};typedef enum E T;typedef int T;",
     "int value;typedef int value;",
     "int main(){int n=3;typedef int T[n];typedef int T[n];return 0;}",
     "int main(){int n=3;typedef int T[n];typedef int T[3];return 0;}",
@@ -4527,6 +4531,116 @@ int foreign(struct Record r,enum HugeRange max,enum SignedRange min){return r.fl
     "enum E { NEGATIVE=-1, TOO_LARGE=18446744073709551615UL };"
 ], ["asm", "llvm"])]
 fn invalid_extended_enumerator_ranges(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn builtin_types_compatible_queries_match_clang(output_option: &str, optimization: &str) {
+    let definitions = r"
+typedef const int Const;typedef int Plain;
+typedef int Fn(int);typedef int QualifiedFn(const int);
+typedef const int QualifiedResult(void);typedef int PlainResult(void);
+typedef int Adjusted(const int);typedef int Adjusted(int);
+typedef int OtherFn(long);typedef int VariadicFn(int,...);
+typedef int ArrayFn(int[3]);typedef int PointerFn(int*);
+enum First:int{FIRST=3};enum Second:int{SECOND=5};
+struct Record{long value;};struct Other{long value;};struct Opaque;
+union Mixed{int x;float y;};
+";
+    let pairs = [
+        ("int", "const volatile int", 1),
+        ("Const", "Plain", 1),
+        ("char", "signed char", 0),
+        ("char", "unsigned char", 0),
+        ("_Bool", "unsigned char", 0),
+        ("long", "long long", 0),
+        ("unsigned long", "unsigned long long", 0),
+        ("int*const", "int*", 1),
+        ("const int*", "int*", 0),
+        ("int*restrict", "int*", 1),
+        ("int[]", "int[3]", 1),
+        ("int[2]", "int[3]", 0),
+        ("const int[2]", "int[2]", 1),
+        ("const int[2][3]", "int[2][3]", 1),
+        ("int*const[2]", "int*[2]", 1),
+        ("const int*[2]", "int*[2]", 0),
+        ("int(*)[2]", "const int(*)[2]", 0),
+        ("int(*)[]", "int(*)[2]", 1),
+        ("int[2][3]", "int[][3]", 1),
+        ("int[2][3]", "int[][4]", 0),
+        ("Fn", "QualifiedFn", 1),
+        ("QualifiedResult", "PlainResult", 0),
+        ("Adjusted", "Fn", 1),
+        ("Fn", "OtherFn", 0),
+        ("Fn", "VariadicFn", 0),
+        ("ArrayFn", "PointerFn", 1),
+        ("Fn*", "QualifiedFn*", 1),
+        ("enum First", "enum First", 1),
+        ("enum First", "enum Second", 0),
+        ("enum First", "int", 1),
+        ("struct Record", "struct Record", 1),
+        ("struct Record", "struct Other", 0),
+        ("struct Opaque", "struct Opaque", 1),
+        ("union Mixed", "struct Record", 0),
+        ("void", "void", 1),
+        ("void", "int", 0),
+        ("__int128", "unsigned __int128", 0),
+    ];
+    let mut code = String::from(
+        "#if !__has_builtin(__builtin_types_compatible_p)\n#error missing type query\n#endif\n",
+    );
+    code.push_str(definitions);
+    let mut companion = String::from(definitions);
+    for (index, (left, right, expected)) in pairs.iter().enumerate() {
+        code.push_str(&format!("_Static_assert(__builtin_types_compatible_p({left},{right})=={expected},\"type pair\");int reference{index}(void);\n"));
+        companion.push_str(&format!(
+            "int reference{index}(void){{return __builtin_types_compatible_p({left},{right});}}\n"
+        ));
+    }
+    code.push_str("int main(){int bad=0;");
+    for (index, (left, right, _)) in pairs.iter().enumerate() {
+        code.push_str(&format!(
+            "bad+=(__builtin_types_compatible_p({left},{right})!=reference{index}());"
+        ));
+    }
+    code.push_str("return bad;}");
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn builtin_types_compatible_queries_do_not_evaluate_bounds(output_option: &str) {
+    let code = r#"
+int calls;int side_effect(void){calls++;return 1;}
+extern int values[];int values[3]={3,5,7};extern int values[];
+int main(){int n=2;int array[4];
+    _Static_assert(__builtin_types_compatible_p(int[n++],int[7]),"VLA bounds ignored");
+    if(!__builtin_types_compatible_p(__typeof__(side_effect()),int))return 1;
+    if(__builtin_types_compatible_p(__typeof__(array),int*))return 2;
+    if(!__builtin_types_compatible_p(__typeof__(array),int[4]))return 3;
+    int (*pointer)[]=&values;
+    return n!=2 || calls!=0 || sizeof(values)!=12 || (*pointer)[2]!=7
+        || _Generic(__builtin_types_compatible_p(int,int),int:0,default:1);
+}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int main(){return __builtin_types_compatible_p();}",
+    "int main(){return __builtin_types_compatible_p(int);}",
+    "int main(){return __builtin_types_compatible_p(int,int,int);}",
+    "int main(){return __builtin_types_compatible_p(1,int);}",
+    "int main(){return __builtin_types_compatible_p(int value,int);}",
+    "int main(){return __builtin_types_compatible_p(void[2],int);}",
+], ["asm", "llvm"])]
+fn invalid_types_compatible_queries_are_diagnosed(code: &str, output_option: &str) {
     assert!(
         std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
             .is_err()

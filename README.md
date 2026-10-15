@@ -1104,3 +1104,13 @@ with each other even when they share an integer representation; each enum is
 compatible with its selected underlying integer type. Existing underlying-type
 selection, enumerator range rules, sizes, and ABI remain unchanged. Enum identities
 and source qualifiers are lowered to runtime types after semantic validation.
+
+## Type compatibility queries
+
+`__builtin_types_compatible_p(type1, type2)` produces an integer constant
+expression describing compatibility without array/function decay or evaluating
+VLA/typeof bounds. It ignores outer qualification (including array qualification),
+retains pointed-to qualifiers, and supports the compiler's scalar, aggregate,
+enum, array, and function types. An omitted array bound is compatible with a known
+bound; differing known bounds remain incompatible. Preprocessing advertises this
+builtin through `__has_builtin`.
