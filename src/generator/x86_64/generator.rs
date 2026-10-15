@@ -11,7 +11,7 @@ use crate::func::Func;
 use crate::generator::Os;
 use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
-use crate::node::{Node, NodeType};
+use crate::node::{AtomicOperation, Node, NodeType};
 use crate::token::Token;
 use std::{
     collections::{HashMap, HashSet},
@@ -996,8 +996,53 @@ impl<'a> AsmGenerator<'a> {
         lines.push(Assembly::epilogue());
         lines.into()
     }
+    fn gen_atomic(
+        &self,
+        node: &Node,
+        operation: AtomicOperation,
+        offset: usize,
+        breakable_branch_num: usize,
+    ) -> Assembly {
+        let mut lines = vec![];
+        for argument in &node.args {
+            lines.push(self.gen_node(argument, offset, breakable_branch_num));
+        }
+        lines.push(Assembly::inst1(POP, R11));
+        if operation == AtomicOperation::Load {
+            lines.extend([
+                Assembly::inst1(POP, RAX),
+                Assembly::inst0(MFENCE),
+                self.deref_rax(node),
+                Assembly::inst0(MFENCE),
+                Self::normalize_integer(&node.resolve_type().unwrap(), RAX),
+                Assembly::inst1(PUSH, RAX),
+            ]);
+        } else {
+            let size = node.args[0].dest_type().unwrap().size_of();
+            lines.extend([
+                Assembly::inst1(POP, RAX),
+                Assembly::inst1(POP, RDI),
+                Assembly::inst2(
+                    XCHG,
+                    Ptr(RDI, size),
+                    match size {
+                        1 => AL,
+                        2 => AX,
+                        4 => EAX,
+                        _ => RAX,
+                    },
+                ),
+                Assembly::inst1(PUSH, 0),
+            ]);
+        }
+        lines.into()
+    }
+
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::Atomic(operation) => {
+                return self.gen_atomic(node, operation, offset, breakable_branch_num);
+            }
             NodeType::VaStart | NodeType::VaEnd => {
                 let mut lines = vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),

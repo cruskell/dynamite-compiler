@@ -2,8 +2,15 @@ use crate::ctype::{BitField, Type};
 use crate::token::Token;
 use std::mem::swap;
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum AtomicOperation {
+    Load,
+    Store,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
+    Atomic(AtomicOperation),
     VaStart,
     VaEnd,
     Assign,
@@ -106,7 +113,8 @@ impl Node {
     fn has_effects(node: &Self, value: bool) -> bool {
         if matches!(
             node.nt,
-            NodeType::Assign
+            NodeType::Atomic(_)
+                | NodeType::Assign
                 | NodeType::CallFunc
                 | NodeType::AddOverflow
                 | NodeType::SuffixIncr
@@ -318,7 +326,8 @@ impl Node {
                     .unwrap()
                     .promoted(),
             ),
-            NodeType::LocalVar
+            NodeType::Atomic(_)
+            | NodeType::LocalVar
             | NodeType::CallFunc
             | NodeType::AddOverflow
             | NodeType::GlobalVar

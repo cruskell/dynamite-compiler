@@ -11,7 +11,7 @@ use crate::func::Func;
 use crate::generator::Os;
 use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
-use crate::node::{Node, NodeType};
+use crate::node::{AtomicOperation, Node, NodeType};
 use crate::token::Token;
 use std::{
     collections::{HashMap, HashSet},
@@ -1011,8 +1011,36 @@ impl<'a> AsmGenerator<'a> {
         lines.push(Self::epilogue(options.offset));
         lines.into()
     }
+    fn gen_atomic(&self, node: &Node, operation: AtomicOperation, options: Options) -> Assembly {
+        let mut lines = vec![];
+        for argument in &node.args {
+            lines.push(self.gen_node(argument, options));
+        }
+        lines.push(Self::pop(X10));
+        let ty = node.args[0].dest_type().unwrap();
+        if operation == AtomicOperation::Load {
+            lines.extend([
+                Self::pop(X8),
+                Assembly::inst2(LDAR, X8, Ptr(X8, ty.size_of())),
+                Self::normalize_integer(&ty, X8),
+                Self::push(X8),
+            ]);
+        } else {
+            lines.extend([
+                Self::pop(X9),
+                Self::pop(X8),
+                Assembly::inst2(STLR, X9, Ptr(X8, ty.size_of())),
+                Self::push(0),
+            ]);
+        }
+        lines.into()
+    }
+
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
+            NodeType::Atomic(operation) => {
+                return self.gen_atomic(node, operation, options);
+            }
             NodeType::VaStart | NodeType::VaEnd => {
                 let mut lines = vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), options),

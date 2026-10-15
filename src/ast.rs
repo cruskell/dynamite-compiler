@@ -2,11 +2,13 @@ use crate::ctype::{BitField, Qualifiers, StructDefinition, StructMember, StructT
 use crate::error;
 use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
-use crate::node::{Node, NodeType};
+use crate::node::{AtomicOperation, Node, NodeType};
 use crate::token::{Token, TokenType};
 use std::collections::{HashMap, HashSet};
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "atomic.rs"]
+mod atomic;
 #[path = "object_size.rs"]
 mod object_size;
 #[path = "overflow.rs"]
@@ -5574,6 +5576,13 @@ impl<'a> AstBuilderImpl<'a> {
                 "__builtin_fabsf" | "__builtin_fabs" | "__builtin_fabsl"
             ) {
                 return self.floating_abs_builtin(t);
+            }
+            if let Some(operation) = match t.s_value.as_str() {
+                "__atomic_load_n" => Some(AtomicOperation::Load),
+                "__atomic_store_n" => Some(AtomicOperation::Store),
+                _ => None,
+            } {
+                return self.atomic_builtin(t, operation);
             }
             if t.s_value == "__builtin_constant_p" {
                 return self.constant_query_builtin(t);

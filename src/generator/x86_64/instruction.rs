@@ -1,6 +1,8 @@
 use crate::generator::Os;
 
 pub enum InstOperator {
+    MFENCE,
+    XCHG,
     MOVD,
     MOVQ,
     ADDSS,
@@ -66,6 +68,8 @@ impl InstOperator {
         //     return "movzb";
         // }
         match self {
+            MFENCE => "mfence",
+            XCHG => "xchg",
             MOVD => "movd",
             MOVQ => "movq",
             ADDSS => "addss",
@@ -141,6 +145,7 @@ pub enum Register {
     EDI,
     DI,
     DIL,
+    AX,
     AL,
     CL,
     RIP,
@@ -172,6 +177,7 @@ impl Display for Register {
             EDI => "edi",
             DI => "di",
             DIL => "dil",
+            AX => "ax",
             AL => "al",
             CL => "cl",
             RIP => "rip",

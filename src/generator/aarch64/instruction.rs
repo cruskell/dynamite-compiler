@@ -49,6 +49,8 @@ pub enum InstOperator {
     AND,
     OR,
     XOR,
+    LDAR,
+    STLR,
     LDR,
     STR,
     ADRP,
@@ -115,6 +117,8 @@ impl InstOperator {
             AND => "and",
             OR => "orr",
             XOR => "eor",
+            LDAR => "ldar",
+            STLR => "stlr",
             LDR => "ldr",
             STR => "str",
             ADRP => "adrp",
@@ -301,8 +305,14 @@ impl Instruction {
         if let (Some(InstOperand::Reg(register)), Some(InstOperand::Ptr(base, size))) =
             (&self.operand1, &self.operand2)
         {
-            if matches!(self.operator, LDR | LDRU | STR) {
+            if matches!(self.operator, LDR | LDRU | STR | LDAR | STLR) {
                 let (operator, operand) = match (&self.operator, size) {
+                    (LDAR, 1) => ("ldarb", register.to_string().replacen('x', "w", 1)),
+                    (LDAR, 2) => ("ldarh", register.to_string().replacen('x', "w", 1)),
+                    (LDAR, 4) => ("ldar", register.to_string().replacen('x', "w", 1)),
+                    (STLR, 1) => ("stlrb", register.to_string().replacen('x', "w", 1)),
+                    (STLR, 2) => ("stlrh", register.to_string().replacen('x', "w", 1)),
+                    (STLR, 4) => ("stlr", register.to_string().replacen('x', "w", 1)),
                     (LDR, 1) => ("ldrsb", register.to_string()),
                     (LDR, 2) => ("ldrsh", register.to_string()),
                     (LDRU, 1) => ("ldrb", register.to_string().replacen('x', "w", 1)),
