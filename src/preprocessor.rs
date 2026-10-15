@@ -74,10 +74,11 @@ fn compiler_macros(command: &mut Command) {
             command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
         }
     }
-    for name in crate::ast::METADATA_ATTRIBUTES
-        .iter()
-        .copied()
-        .chain(["aligned", "packed"])
+    for name in
+        crate::ast::METADATA_ATTRIBUTES
+            .iter()
+            .copied()
+            .chain(["aligned", "packed", "gnu_inline"])
     {
         for spelling in [name.to_string(), format!("__{name}__")] {
             command.arg(format!("-D__DYNAMITE_ATTRIBUTE_{spelling}=~,1"));
