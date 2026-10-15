@@ -63,7 +63,121 @@ fn normalize(value: Node, field: BitField, ty: &Type) -> Node {
         cast(value, ty.clone())
     }
 }
-fn read(mut node: Node) -> Node {
+fn packed_chunks(field: BitField) -> impl Iterator<Item = (usize, usize, usize, usize)> {
+    let start = usize::from(field.shift);
+    let end = start + usize::from(field.width);
+    (0..end.div_ceil(8)).map(move |byte| {
+        let low = start.saturating_sub(byte * 8);
+        let width = (end - byte * 8).min(8) - low;
+        (byte, low, width, byte * 8 + low - start)
+    })
+}
+fn packed_byte(pointer: &Node, index: usize, volatile: bool) -> Node {
+    let address = binary(NodeType::Add, pointer.clone(), number(index as u64));
+    Node {
+        volatile_access: volatile,
+        ..Node::new_with_op_and_lhs(pointer.token.clone(), NodeType::Deref, address)
+    }
+}
+fn packed_read(mut node: Node, offset: &mut usize) -> Node {
+    let field = node.bit_field.take().unwrap();
+    let ty = node.object_type().unwrap();
+    let pointer_type = Type::Ptr(Box::new(Type::integer(8, false)));
+    let pointer = temporary(pointer_type.clone(), offset, &node);
+    let save_pointer = binary(
+        NodeType::Assign,
+        pointer.clone(),
+        cast(*node.lhs.take().unwrap(), pointer_type),
+    );
+    let mut value = number(0);
+    for (byte, low, width, shift) in packed_chunks(field) {
+        let part = binary(
+            NodeType::BitAnd,
+            binary(
+                NodeType::BitRight,
+                cast(
+                    packed_byte(&pointer, byte, node.volatile_access),
+                    Type::integer(64, false),
+                ),
+                number(low as u64),
+            ),
+            number((1u64 << width) - 1),
+        );
+        value = binary(
+            NodeType::BitOr,
+            value,
+            binary(NodeType::BitLeft, part, number(shift as u64)),
+        );
+    }
+    sequence(vec![save_pointer, normalize(value, field, &ty)], &node)
+}
+fn packed_write(mut target: Node, value: Node, offset: &mut usize) -> Node {
+    let source = target.clone();
+    let field = target.bit_field.take().unwrap();
+    let ty = target.object_type().unwrap();
+    let pointer_type = Type::Ptr(Box::new(Type::integer(8, false)));
+    let pointer = temporary(pointer_type.clone(), offset, &source);
+    let save_pointer = binary(
+        NodeType::Assign,
+        pointer.clone(),
+        cast(*target.lhs.take().unwrap(), pointer_type),
+    );
+    let value = if ty == Type::Bool {
+        cast(value, Type::Bool)
+    } else {
+        value
+    };
+    let result = temporary(ty.clone(), offset, &source);
+    let mut children = vec![
+        save_pointer,
+        binary(
+            NodeType::Assign,
+            result.clone(),
+            normalize(value, field, &ty),
+        ),
+    ];
+    for (byte, low, width, shift) in packed_chunks(field) {
+        let byte_mask = ((1u64 << width) - 1) << low;
+        let target = packed_byte(&pointer, byte, source.volatile_access);
+        let inserted = binary(
+            NodeType::BitAnd,
+            binary(
+                NodeType::BitLeft,
+                binary(
+                    NodeType::BitRight,
+                    cast(result.clone(), Type::integer(64, false)),
+                    number(shift as u64),
+                ),
+                number(low as u64),
+            ),
+            number(byte_mask),
+        );
+        let value = if byte_mask == 255 {
+            inserted
+        } else {
+            binary(
+                NodeType::BitOr,
+                binary(
+                    NodeType::BitAnd,
+                    cast(target.clone(), Type::integer(64, false)),
+                    number(!byte_mask),
+                ),
+                inserted,
+            )
+        };
+        children.push(binary(
+            NodeType::Assign,
+            target,
+            cast(value, Type::integer(8, false)),
+        ));
+    }
+    children.push(result);
+    sequence(children, &source)
+}
+fn read(mut node: Node, offset: &mut usize) -> Node {
+    if node.bit_field.unwrap().bytewise {
+        return packed_read(node, offset);
+    }
     let field = node.bit_field.take().unwrap();
     let ty = node.object_type().unwrap();
     let value = binary(
@@ -74,6 +188,9 @@ fn read(mut node: Node) -> Node {
     normalize(value, field, &ty)
 }
 fn write(mut target: Node, value: Node, offset: &mut usize) -> Node {
+    if target.bit_field.unwrap().bytewise {
+        return packed_write(target, value, offset);
+    }
     let source = target.clone();
     let field = target.bit_field.take().unwrap();
     let ty = target.object_type().unwrap();
@@ -149,7 +266,11 @@ pub fn lower(node: &mut Node, offset: &mut usize) {
         );
         target.lhs = Some(Box::new(pointer));
         let previous = temporary(target.resolve_type().unwrap(), offset, &source);
-        let save_value = binary(NodeType::Assign, previous.clone(), read(target.clone()));
+        let save_value = binary(
+            NodeType::Assign,
+            previous.clone(),
+            read(target.clone(), offset),
+        );
         let operation = if source.nt == NodeType::SuffixIncr {
             NodeType::Add
         } else {
@@ -181,6 +302,6 @@ pub fn lower(node: &mut Node, offset: &mut usize) {
         lower(child, offset);
     }
     if node.bit_field.is_some() {
-        *node = read(std::mem::take(node));
+        *node = read(std::mem::take(node), offset);
     }
 }

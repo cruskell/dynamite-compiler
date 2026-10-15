@@ -3026,14 +3026,94 @@ int check(struct Parent *p,union U1 *unions,struct B1 *b,struct B4 *w,struct P1 
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
 }
 
-#[test_matrix([
-    "#pragma pack(1)\nstruct S{unsigned int x:3;};",
-    "#pragma pack(4)\nstruct S{unsigned long x:3;};",
-], ["asm", "llvm"])]
-fn unsupported_packed_bit_field_storage_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn pragma_packed_bitfields_preserve_layout_and_access(output_option: &str, optimization: &str) {
+    let definitions = r#"
+#pragma pack(push,1)
+struct Cross { char a; unsigned int b:32; unsigned long c:48; unsigned short d:8; unsigned char e:8; char tail; };
+struct Gap { unsigned char a:3; unsigned long b:64; unsigned int c:1; };
+struct Signed { signed long n:7; _Bool b:1; };
+struct Tiny { unsigned long n:1; };
+struct Zero { char a; unsigned int :0; unsigned int b:1; };
+struct Mixed { char pad[7]; unsigned long bit:1; float value; };
+union U { unsigned long bits:17; unsigned char bytes[3]; };
+#pragma pack(pop)
+"#;
+    let code = [definitions, r#"
+struct Cross global={3,0x11223344U,0x123456789abcUL,0x5a,0xa5,9};
+struct Gap initial={5,0xfedcba9876543210UL,1};
+int check_cross(struct Cross);
+struct Cross return_cross(struct Cross);
+int check_gap(struct Gap);
+struct Gap return_gap(struct Gap);
+int check_mixed(struct Mixed);
+int zero_layout(unsigned long,unsigned long);
+void *boundary(void);
+int main(){
+    if(sizeof(struct Cross)!=14 || _Alignof(struct Cross)!=1 || sizeof(struct Gap)!=9) return 1;
+    if(check_cross(global) || check_gap(initial)) return 2;
+    struct Cross cross=return_cross(global);
+    struct Gap gap=return_gap(initial);
+    if(cross.b!=0x11223344U || cross.c!=0x123456789abcUL || cross.tail!=9) return 3;
+    if(gap.a!=5 || gap.b!=0xfedcba9876543210UL || gap.c!=1) return 4;
+    struct Gap array[2]={{1,7,1},{2,9,0}};
+    int i=0;
+    array[i++].b+=3;
+    unsigned long old=array[0].b++;
+    if(i!=1 || old!=10 || array[0].b!=11 || array[0].a!=1 || array[0].c!=1 || array[1].b!=9) return 5;
+    struct Signed signed_value={-7,1};
+    if(signed_value.n++!=-7 || signed_value.n!=-6 || !signed_value.b) return 6;
+    union U u={0x12345};
+    if(u.bits!=0x12345 || u.bytes[0]!=0x45 || u.bytes[1]!=0x23 || u.bytes[2]!=1) return 7;
+    struct Mixed mixed={{0},1,3.5f};
+    if(check_mixed(mixed)) return 8;
+    if(zero_layout(sizeof(struct Zero),_Alignof(struct Zero))) return 9;
+    volatile struct Tiny *last=(volatile struct Tiny*)boundary();
+    last->n=1;
+    if(last->n++!=1 || last->n!=0) return 10;
+    return 0;
+}
+"#].concat();
+    let companion = [definitions, r#"
+#include <sys/mman.h>
+#include <unistd.h>
+#include <stdlib.h>
+int check_cross(struct Cross x){return x.a!=3 || x.b!=0x11223344U || x.c!=0x123456789abcUL || x.d!=0x5a || x.e!=0xa5 || x.tail!=9;}
+struct Cross return_cross(struct Cross x){return x;}
+int check_gap(struct Gap x){return x.a!=5 || x.b!=0xfedcba9876543210UL || x.c!=1;}
+struct Gap return_gap(struct Gap x){return x;}
+int check_mixed(struct Mixed x){return x.bit!=1 || x.value!=3.5f;}
+int zero_layout(unsigned long size,unsigned long alignment){return size!=sizeof(struct Zero) || alignment!=_Alignof(struct Zero);}
+void *boundary(void){long size=sysconf(_SC_PAGESIZE);char *p=mmap(0,size*2,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);if(p==MAP_FAILED || mprotect(p+size,size,PROT_NONE))abort();return p+size-1;}
+"#].concat();
+    if output_option == "llvm" {
+        let ir = dynamite_compiler::generate(&code, output_option, false);
+        assert!(ir.contains("load volatile i8"));
+        assert!(ir.contains("store volatile i8"));
+        assert!(!ir.contains("load volatile i64"));
+        assert!(!ir.contains("store volatile i64"));
+    }
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{result:?}");
+}
+
+#[test_matrix([2,4,16], ["asm", "llvm"])]
+fn pragma_packed_bitfield_alignment_limits(limit: usize, output_option: &str) {
+    let definitions = format!(
+        "#pragma pack(push,{limit})\nstruct S{{char a;unsigned int b:32;unsigned long c:48;char tail;}};\n#pragma pack(pop)\n"
+    );
+    let code = format!(
+        "{definitions}int check(struct S,unsigned long,unsigned long);int main(){{struct S x={{7,0x81234567U,0x123456789abcUL,9}};return check(x,sizeof(x),_Alignof(struct S));}}"
+    );
+    let companion = format!(
+        "{definitions}int check(struct S x,unsigned long size,unsigned long alignment){{return x.a!=7||x.b!=0x81234567U||x.c!=0x123456789abcUL||x.tail!=9||size!=sizeof(x)||alignment!=_Alignof(struct S);}}"
+    );
+    assert_eq!(
+        compile_and_run_with_c(&code, output_option, Some(&companion))
+            .status
+            .code(),
+        Some(0)
     );
 }
 

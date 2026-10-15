@@ -1662,10 +1662,6 @@ impl<'a> AstBuilderImpl<'a> {
                         }
                     }
                     let (field, offset) = if self.attempt_reserved(":").is_some() {
-                        if packing.is_some_and(|limit| member_type.align_of() > limit) {
-                            self.error_logger.print_error_position(position.pos,
-                                "bit-field storage exceeding pragma pack alignment is not supported");
-                        }
                         if !member_alignments.is_empty() {
                             self.error_logger.print_error_position(
                                 position.pos,
@@ -1701,19 +1697,35 @@ impl<'a> AstBuilderImpl<'a> {
                             align = align.max(member_alignment);
                             natural_align = natural_align.max(member_alignment);
                         }
-                        if width == 0 || usize::from(width) > container - bit_address % container {
+                        if width == 0
+                            || (packing.is_none()
+                                && usize::from(width) > container - bit_address % container)
+                        {
                             bit_address = bit_address.div_ceil(container) * container;
                         }
-                        // Anonymous fields affect AAPCS64 alignment but not SysV alignment.
+                        // AAPCS64 zero-width fields retain natural alignment on Linux.
                         if name.is_some() || cfg!(target_arch = "aarch64") {
-                            align = align.max(member_type.align_of());
+                            let field_alignment = if width == 0
+                                && cfg!(all(target_arch = "aarch64", target_os = "linux"))
+                            {
+                                member_type.align_of()
+                            } else {
+                                member_alignment
+                            };
+                            align = align.max(field_alignment);
                             natural_align = natural_align.max(member_type.align_of());
                         }
+                        let bytewise = packing.is_some();
                         let field = BitField {
                             width,
-                            shift: (bit_address % container) as u8,
+                            shift: (bit_address % if bytewise { 8 } else { container }) as u8,
+                            bytewise,
                         };
-                        let offset = bit_address / container * member_type.size_of();
+                        let offset = if bytewise {
+                            bit_address / 8
+                        } else {
+                            bit_address / container * member_type.size_of()
+                        };
                         bit_address += usize::from(width);
                         size = size.max(bit_address.div_ceil(8));
                         (field, offset)
@@ -1732,7 +1744,14 @@ impl<'a> AstBuilderImpl<'a> {
                             size + member_type.size_of()
                         };
                         bit_address = size * 8;
-                        (BitField { width: 0, shift: 0 }, offset)
+                        (
+                            BitField {
+                                width: 0,
+                                shift: 0,
+                                bytewise: false,
+                            },
+                            offset,
+                        )
                     };
                     if name.is_some() || matches!(member_type.unqualified(), Type::Struct(_)) {
                         let anonymous = name.is_none();
