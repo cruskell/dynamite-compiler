@@ -2251,6 +2251,51 @@ fn invalid_qualified_record_value_conversions(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn qualified_scalar_casts(output_option: &str, optimization: &str) {
+    let code = r#"
+typedef char *String;
+typedef int *Pointer;
+int global = (const int)7;
+int main() {
+    char text[] = "abc";
+    const void *key = text;
+    String p = (const String)key;
+    String q = (volatile String)key;
+    int n = 9;
+    Pointer ptr = &n;
+    const Pointer *saved = &ptr;
+    Pointer copy = (const Pointer)*saved;
+    Pointer restricted = (Pointer restrict)ptr;
+    if(p[1] != 'b' || q[2] != 'c' || *copy != 9 || *restricted != 9) return 1;
+    if((const unsigned short)65537 != 1 || (volatile double)3 != 3.0) return 2;
+    if(global != 7 || _Generic((const String)key, char*:0, default:1)) return 3;
+    (const void)n++;
+    struct S{int x;};const struct S s={3};(const void)s;
+    if(n != 10 || (const int)3.9 != 3) return 4;
+    return 0;
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){return (int * const)1.5 != 0;}",
+    "int main(){int x;return (const double)&x;}",
+    "struct S{int x;};int main(){return (const struct S)1;}"
+], ["asm", "llvm"])]
+fn invalid_qualified_scalar_casts(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,
