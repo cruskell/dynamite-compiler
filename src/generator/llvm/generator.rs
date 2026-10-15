@@ -47,13 +47,21 @@ impl Options<'_> {
 
 pub struct IrGenerator<'a> {
     error_logger: &'a dyn error::ErrorLogger,
+    symbol_names: HashMap<String, String>,
 }
 
 impl<'a> IrGenerator<'a> {
     pub fn new(error_logger: &'a dyn error::ErrorLogger) -> Self {
-        Self { error_logger }
+        Self {
+            error_logger,
+            symbol_names: HashMap::new(),
+        }
     }
     pub fn generate(&self, ast: ProgramAst) -> String {
+        let generator = Self {
+            error_logger: self.error_logger,
+            symbol_names: ast.symbol_names.clone(),
+        };
         let has_thread_local = ast
             .global_variables
             .values()
@@ -69,14 +77,14 @@ impl<'a> IrGenerator<'a> {
                 }
                 declarations
             },
-            self.gen_string_literals(ast.string_literals),
+            generator.gen_string_literals(ast.string_literals),
             ast.global_variables
                 .iter()
-                .map(|(s, gv)| self.gen_global_variable(s, gv))
+                .map(|(s, gv)| generator.gen_global_variable(s, gv))
                 .collect::<Vec<String>>(),
             ast.functions
                 .iter()
-                .map(|(name, f)| self.gen_func(name, f) + "\n")
+                .map(|(name, f)| generator.gen_func(name, f) + "\n")
                 .collect::<Vec<String>>(),
             reserved_functions()
                 .iter()
@@ -96,9 +104,9 @@ impl<'a> IrGenerator<'a> {
                         args.push("...".to_string());
                     }
                     Some(format!(
-                        "declare {} @{}({})",
+                        "declare {} {}({})",
                         Self::gen_type(result.clone()),
-                        name,
+                        generator.symbol_name(name),
                         args.join(", ")
                     ))
                 })
@@ -106,6 +114,15 @@ impl<'a> IrGenerator<'a> {
         ]
         .concat()
         .join("\n")
+    }
+
+    fn symbol_name(&self, name: &str) -> String {
+        if let Some(label) = self.symbol_names.get(name) {
+            // LLVM's leading byte 1 suppresses target-specific symbol prefixes.
+            format!("@\"\\01{label}\"")
+        } else {
+            format!("@{name}")
+        }
     }
 
     fn gen_string_literals(&self, string_literals: &[Token]) -> Vec<String> {
@@ -144,19 +161,19 @@ impl<'a> IrGenerator<'a> {
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> String {
         if gv.declaration_only {
             return format!(
-                "@{} = external {}global {}, align {}",
-                name,
+                "{} = external {}global {}, align {}",
+                self.symbol_name(name),
                 if gv.thread_local { "thread_local " } else { "" },
                 Self::gen_type(gv.ty.clone()),
                 Self::align(&gv.ty).max(gv.alignment)
             );
         }
         format!(
-            "@{} = {}{}global {}, align {}",
-            name,
+            "{} = {}{}global {}, align {}",
+            self.symbol_name(name),
             if gv.internal { "internal " } else { "" },
             if gv.thread_local { "thread_local " } else { "" },
-            Self::gen_initializer_element(&gv.ty, gv.data.as_ref()),
+            self.gen_initializer_element(&gv.ty, gv.data.as_ref()),
             Self::align(&gv.ty).max(gv.alignment),
         )
     }
@@ -225,7 +242,7 @@ impl<'a> IrGenerator<'a> {
         Self::gen_type(ty)
     }
 
-    fn gen_initializer_element(ty: &Type, data: Option<&GlobalVariableData>) -> String {
+    fn gen_initializer_element(&self, ty: &Type, data: Option<&GlobalVariableData>) -> String {
         let data = if !matches!(ty, Type::Arr(..) | Type::Struct(_)) {
             let mut value = data;
             while let Some(GlobalVariableData::Arr(elements)) = value {
@@ -265,9 +282,12 @@ impl<'a> IrGenerator<'a> {
                         word[..chunk.len()].copy_from_slice(chunk);
                         if let Some((symbol, offset)) = addresses.get(&(index * width)) {
                             let pointer = if *offset == 0 {
-                                format!("@{symbol}")
+                                self.symbol_name(symbol)
                             } else {
-                                format!("getelementptr (i8, ptr @{symbol}, i64 {offset})")
+                                format!(
+                                    "getelementptr (i8, ptr {}, i64 {offset})",
+                                    self.symbol_name(symbol)
+                                )
                             };
                             format!("i64 ptrtoint (ptr {pointer} to i64)")
                         } else {
@@ -278,7 +298,7 @@ impl<'a> IrGenerator<'a> {
                     .join(", ");
                 format!("{} [{}]", Self::gen_type(ty.clone()), elements)
             }
-            Type::Qualified(child, _) => Self::gen_initializer_element(child, data),
+            Type::Qualified(child, _) => self.gen_initializer_element(child, data),
             Type::Struct(struct_type) => {
                 if let Some(GlobalVariableData::Arr(elements)) = data {
                     let mut fields = vec![];
@@ -290,10 +310,7 @@ impl<'a> IrGenerator<'a> {
                             let padding = format!("[{} x i8]", member.offset - aligned_offset);
                             fields.push(format!("{padding} zeroinitializer"));
                         }
-                        fields.push(Self::gen_initializer_element(
-                            &member.ty,
-                            elements.get(index),
-                        ));
+                        fields.push(self.gen_initializer_element(&member.ty, elements.get(index)));
                         offset = member.offset + member.ty.size_of();
                     }
                     if ty.size_of() > offset {
@@ -311,7 +328,7 @@ impl<'a> IrGenerator<'a> {
                         "{} [{}]",
                         Self::gen_type(ty.clone()),
                         (0..*size)
-                            .map(|i| Self::gen_initializer_element(children_ty, v.get(i)))
+                            .map(|i| self.gen_initializer_element(children_ty, v.get(i)))
                             .collect::<Vec<String>>()
                             .join(", "),
                     )
@@ -324,9 +341,12 @@ impl<'a> IrGenerator<'a> {
                 match data {
                     Some(GlobalVariableData::Address { symbol, offset }) => {
                         if *offset == 0 {
-                            format!("@{symbol}")
+                            self.symbol_name(symbol)
                         } else {
-                            format!("getelementptr (i8, ptr @{symbol}, i64 {offset})")
+                            format!(
+                                "getelementptr (i8, ptr {}, i64 {offset})",
+                                self.symbol_name(symbol)
+                            )
                         }
                     }
                     Some(GlobalVariableData::Elem(value)) if value.starts_with('@') =>
@@ -463,7 +483,11 @@ impl<'a> IrGenerator<'a> {
             parameters.push("...".into());
         }
         if func.body.is_none() || func.inline_only() {
-            return format!("declare {return_type} @{name}({})", parameters.join(", "));
+            return format!(
+                "declare {return_type} {}({})",
+                self.symbol_name(name),
+                parameters.join(", ")
+            );
         }
         let mut number = 0;
         let mut registers = HashMap::new();
@@ -480,8 +504,9 @@ impl<'a> IrGenerator<'a> {
             expression_slots: HashMap::new(),
         };
         let mut lines = vec![format!(
-            "define {}{return_type} @{name}({}) {{",
+            "define {}{return_type} {}({}) {{",
             if func.internal { "internal " } else { "" },
+            self.symbol_name(name),
             parameters.join(", ")
         )];
         for (index, argument) in signature.arguments.iter().enumerate() {
@@ -573,7 +598,7 @@ impl<'a> IrGenerator<'a> {
             lines.extend(self.gen_node(callee, options));
             options.register_queue.pop().unwrap()
         } else {
-            format!("@{}", node.global_name)
+            self.symbol_name(&node.global_name)
         };
         let mut arguments = vec![];
         for (index, arg) in node.args.iter().rev().enumerate() {
@@ -798,9 +823,9 @@ impl<'a> IrGenerator<'a> {
                 arguments.push("...".to_string());
             }
             return format!(
-                "declare {} @{}({})",
+                "declare {} {}({})",
                 Self::gen_type(result),
-                name,
+                self.symbol_name(name),
                 arguments.join(", ")
             );
         }
@@ -819,10 +844,10 @@ impl<'a> IrGenerator<'a> {
         };
         [
             vec![format!(
-                "define {}{} @{}({}) {{",
+                "define {}{} {}({}) {{",
                 if func.internal { "internal " } else { "" },
                 Self::gen_type(*return_ty.clone()),
-                name,
+                self.symbol_name(name),
                 func.args
                     .iter()
                     .enumerate()
@@ -1136,7 +1161,7 @@ impl<'a> IrGenerator<'a> {
             }
             NodeType::GlobalVar => {
                 let symbol = if node.dest.is_empty() {
-                    format!("@{}", node.global_name)
+                    self.symbol_name(&node.global_name)
                 } else {
                     node.dest.clone()
                 };
@@ -1245,7 +1270,7 @@ impl<'a> IrGenerator<'a> {
                     lines.extend(self.gen_node(callee, options));
                     options.register_queue.pop().unwrap()
                 } else {
-                    format!("@{}", node.global_name)
+                    self.symbol_name(&node.global_name)
                 };
                 let mut arguments = vec![];
                 for (i, arg) in node.args.iter().enumerate() {
@@ -2011,20 +2036,22 @@ mod tests {
 
     #[test]
     fn global_array_initializers_fill_missing_elements() {
+        let logger = error::ErrorPrinter::new("");
+        let generator = IrGenerator::new(&logger);
         let ty = Type::Arr(Box::new(Type::I32), 3);
         assert_eq!(
-            IrGenerator::gen_initializer_element(&ty, None),
+            generator.gen_initializer_element(&ty, None),
             "[3 x i32] zeroinitializer"
         );
         let data = GlobalVariableData::Arr(vec![GlobalVariableData::Elem("7".to_string())]);
         assert_eq!(
-            IrGenerator::gen_initializer_element(&ty, Some(&data)),
+            generator.gen_initializer_element(&ty, Some(&data)),
             "[3 x i32] [i32 7, i32 0, i32 0]"
         );
         let nested = Type::Arr(Box::new(ty), 2);
         let data = GlobalVariableData::Arr(vec![data]);
         assert_eq!(
-            IrGenerator::gen_initializer_element(&nested, Some(&data)),
+            generator.gen_initializer_element(&nested, Some(&data)),
             "[2 x [3 x i32]] [[3 x i32] [i32 7, i32 0, i32 0], [3 x i32] zeroinitializer]"
         );
     }

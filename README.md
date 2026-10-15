@@ -319,3 +319,13 @@ Both plain and double-underscore attribute names are accepted. These annotations
 do not enable additional diagnostics or optimizations. Attributes that require
 unsupported layout, linkage, or calling-convention behavior are diagnosed rather
 than silently discarded.
+
+## Assembler symbol labels
+
+File-scope function and object declarations may specify an exact external symbol
+with `asm("name")`, `__asm("name")`, or `__asm__("name")`. The supported labels
+contain letters, digits, underscores, periods, and dollar signs. Labels affect
+definitions, references, function pointers, and symbolic initializers consistently
+in native and LLVM output, including declarations made after an earlier use.
+Conflicting labels are diagnosed. This is declaration syntax; inline assembly
+statements and register-variable bindings are not supported by this feature.

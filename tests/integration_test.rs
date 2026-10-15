@@ -1450,3 +1450,51 @@ fn unsupported_or_malformed_attributes_are_diagnosed(code: &str, output_option: 
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn assembler_labels_preserve_linkage_and_symbolic_addresses(output_option: &str) {
+    let code = r#"
+int exported __asm__("shared_object")=17;
+int actual(int x) __asm__("shared_function");
+int actual(int x){return x+exported;}
+int *global_pointer=&exported;
+int (*global_function)(int)=actual;
+struct Handles{int *p;int (*f)(int);};
+struct Handles handles={&exported,actual};
+union Link{int *p;long value;};union Link link={&exported};
+extern int foreign_data __asm__("external_object");
+int foreign(int);int before(){return foreign(2);}
+int foreign(int) __asm__("external_function");
+int companion(void);
+int main(){return (*global_pointer!=17)+(global_function(1)!=18)
+    +(handles.f(2)!=19)+(*handles.p!=17)+(*link.p!=17)
+    +(foreign_data!=3)+(before()!=5)+(companion()!=35);}
+"#;
+    let companion = r#"
+extern int data __asm__("shared_object");
+int function(int) __asm__("shared_function");
+int partner_data __asm__("external_object")=3;
+int partner_function(int n) __asm__("external_function");
+int partner_function(int n){return n+3;}
+int companion(void){return data+function(1);}
+"#;
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int value __asm__(123);",
+    "int value __asm__(\"\");",
+    "int value __asm__(\"bad symbol\");",
+    "int value __asm__(\"first\");extern int value __asm__(\"second\");",
+], ["asm", "llvm"])]
+fn invalid_assembler_labels_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
