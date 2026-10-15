@@ -594,3 +594,12 @@ payloads and producing positive zero from negative zero, without an external
 math-library call. Floating static initializers can evaluate these operations.
 `__builtin_fabsl` follows the same rules on the supported binary64 long-double
 target (macOS AArch64); other long-double ABIs remain unsupported.
+
+## Floating infinity builtins
+
+`__builtin_inff`, `__builtin_inf` and `__builtin_infl` take no arguments and
+produce positive infinity with type `float`, `double` or `long double`.
+`__builtin_huge_valf`, `__builtin_huge_val` and `__builtin_huge_vall` produce the
+same values on the supported IEEE targets. These are typed constants usable in
+floating static initializers and type queries; no runtime function is required.
+Long-double forms retain the existing binary64-only target restriction.

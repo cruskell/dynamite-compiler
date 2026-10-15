@@ -4776,6 +4776,23 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn floating_infinity_builtin(&mut self, token: Token) -> Node {
+        let ty = match token.s_value.as_str() {
+            "__builtin_inff" | "__builtin_huge_valf" => Type::Float(32),
+            "__builtin_inf" | "__builtin_huge_val" => Type::Float(64),
+            "__builtin_infl" | "__builtin_huge_vall" => self.long_double_type(&token),
+            _ => unreachable!(),
+        };
+        self.expect_reserved("(");
+        self.expect_reserved(")");
+        Node {
+            token: Some(token),
+            value: Some(ty.float_constant(f64::INFINITY)),
+            cty: Some(ty),
+            ..Node::default()
+        }
+    }
+
     fn floating_abs_builtin(&mut self, token: Token) -> Node {
         let ty = match token.s_value.as_str() {
             "__builtin_fabsf" => Type::Float(32),
@@ -5027,6 +5044,17 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
+            if matches!(
+                t.s_value.as_str(),
+                "__builtin_inff"
+                    | "__builtin_inf"
+                    | "__builtin_infl"
+                    | "__builtin_huge_valf"
+                    | "__builtin_huge_val"
+                    | "__builtin_huge_vall"
+            ) {
+                return self.floating_infinity_builtin(t);
+            }
             if matches!(
                 t.s_value.as_str(),
                 "__builtin_fabsf" | "__builtin_fabs" | "__builtin_fabsl"
