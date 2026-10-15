@@ -367,7 +367,89 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn declaration_annotations(&mut self) {
+        while matches!(self.tokens[self.cur].tt, TokenType::Ident)
+            && matches!(
+                self.tokens[self.cur].s_value.as_str(),
+                "__attribute__" | "__attribute"
+            )
+        {
+            let token = self.tokens[self.cur].clone();
+            self.cur += 1;
+            self.expect_reserved("(");
+            self.expect_reserved("(");
+            while self.attempt_reserved(")").is_none() {
+                if self.attempt_reserved(",").is_some() {
+                    continue;
+                }
+                let name = self.tokens[self.cur].clone();
+                if !matches!(name.tt, TokenType::Ident | TokenType::Reserved) {
+                    self.error_logger
+                        .print_error_position(name.pos, "attribute name expected");
+                }
+                let supported = matches!(
+                    name.s_value.trim_matches('_'),
+                    "availability"
+                        | "deprecated"
+                        | "unavailable"
+                        | "unused"
+                        | "warn_unused_result"
+                        | "format"
+                        | "format_arg"
+                        | "nonnull"
+                        | "returns_nonnull"
+                        | "malloc"
+                        | "alloc_size"
+                        | "alloc_align"
+                        | "noreturn"
+                        | "noescape"
+                        | "always_inline"
+                        | "noinline"
+                        | "const"
+                        | "pure"
+                        | "cold"
+                        | "hot"
+                        | "not_tail_called"
+                        | "disable_tail_calls"
+                        | "swift_attr"
+                        | "enum_extensibility"
+                        | "flag_enum"
+                        | "sentinel"
+                        | "diagnose_if"
+                );
+                if !supported {
+                    self.error_logger
+                        .print_error_position(name.pos, "unsupported declaration attribute");
+                }
+                self.cur += 1;
+                if self.attempt_reserved("(").is_some() {
+                    let mut depth = 1;
+                    while depth != 0 {
+                        if self.tokens[self.cur].tt == TokenType::EOF {
+                            self.error_logger.print_error_position(
+                                token.pos,
+                                "unterminated attribute arguments",
+                            );
+                        }
+                        if self.attempt_reserved("(").is_some() {
+                            depth += 1;
+                        } else if self.attempt_reserved(")").is_some() {
+                            depth -= 1;
+                        } else {
+                            self.cur += 1;
+                        }
+                    }
+                }
+                if self.tokens[self.cur].s_value != ")" {
+                    self.expect_reserved(",");
+                }
+            }
+            self.expect_reserved(")");
+        }
+    }
+
     fn declarator(&mut self) -> Declarator {
+        self.declaration_annotations();
         let mut pointers = vec![];
         while self.attempt_reserved("*").is_some() {
             pointers.push(self.attempt_qualifiers());
@@ -380,6 +462,7 @@ impl<'a> AstBuilderImpl<'a> {
             Declarator::Name(self.attempt_ident())
         };
         loop {
+            self.declaration_annotations();
             if self.attempt_reserved("[").is_some() {
                 let mut minimum = self.attempt_reserved("static");
                 let qualifiers = self.attempt_qualifiers();
@@ -795,6 +878,7 @@ impl<'a> AstBuilderImpl<'a> {
     fn attempt_qualifiers(&mut self) -> Qualifiers {
         let mut q = Qualifiers::default();
         loop {
+            self.declaration_annotations();
             if self.attempt_reserved("const").is_some() {
                 q.constant = true;
             } else if self.attempt_reserved("volatile").is_some() {
@@ -954,7 +1038,9 @@ impl<'a> AstBuilderImpl<'a> {
         None
     }
     fn enum_type(&mut self, token: Token) -> Type {
+        self.declaration_annotations();
         let name = self.attempt_ident();
+        self.declaration_annotations();
         let key = name.as_ref().map(|name| format!(".enum.{}", name.s_value));
         if self.attempt_reserved("{").is_some() {
             if let Some(key) = &key {
@@ -1011,7 +1097,9 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn struct_type(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
+        self.declaration_annotations();
         let name = self.attempt_ident();
+        self.declaration_annotations();
         let key = format!(
             ".struct.{}",
             name.as_ref()
@@ -1236,6 +1324,7 @@ impl<'a> AstBuilderImpl<'a> {
                 complete: true,
             };
         }
+        self.declaration_annotations();
         Type::Struct(ty)
     }
 
@@ -1347,6 +1436,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut alignment = 0;
         let mut thread_local = false;
         loop {
+            self.declaration_annotations();
             if self.attempt_reserved("_Thread_local").is_some() {
                 thread_local = true;
             } else if self.attempt_reserved("inline").is_some() {
@@ -2489,6 +2579,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn stmt(&mut self) -> Node {
+        self.declaration_annotations();
         if self.attempt_static_assert() {
             return Node {
                 nt: NodeType::Block,

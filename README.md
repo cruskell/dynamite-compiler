@@ -310,3 +310,12 @@ missing matches are diagnosed.
 
 Integer type identity follows this compiler's existing width/signedness model:
 `long` and `long long` are aliases, as are `char` and `signed char`.
+
+## Declaration annotation attributes
+
+GNU `__attribute__((...))` syntax accepts common diagnostic, availability,
+format-checking, and optimization annotations without changing execution.
+Both plain and double-underscore attribute names are accepted. These annotations
+do not enable additional diagnostics or optimizations. Attributes that require
+unsupported layout, linkage, or calling-convention behavior are diagnosed rather
+than silently discarded.
