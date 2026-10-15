@@ -2098,3 +2098,141 @@ double foreign_return(struct RecordPadding v){return local_return(v).x;}
         compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
     assert_eq!(result.status.code(), Some(0), "failed case: {:?}", result);
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn aligned_variadic_arguments_match_clang(output_option: &str, optimization: &str) {
+    let shared = r#"
+#include <stdarg.h>
+struct RecordPadding{double x;} __attribute__((aligned(16)));
+struct MemberPadding{_Alignas(16) double x;};
+struct HfaMember{_Alignas(16) double x;double y;};
+struct HfaRecord{double x;double y;} __attribute__((aligned(16)));
+#define DEFINE_BASIC(name) \
+int name(int n,...){ \
+    va_list ap;va_start(ap,n); \
+    struct MemberPadding member=va_arg(ap,struct MemberPadding); \
+    int prefix=va_arg(ap,int); \
+    struct RecordPadding record=va_arg(ap,struct RecordPadding); \
+    int middle=va_arg(ap,int); \
+    struct HfaMember hm=va_arg(ap,struct HfaMember); \
+    double scalar=va_arg(ap,double); \
+    struct HfaRecord hr=va_arg(ap,struct HfaRecord); \
+    int tail=va_arg(ap,int);va_end(ap); \
+    return n!=1 || member.x!=2.5 || prefix!=12 || record.x!=3.5 || middle!=13 \
+        || hm.x!=4.5 || hm.y!=5.5 || scalar!=8.5 || hr.x!=6.5 || hr.y!=7.5 || tail!=14; \
+}
+#define DEFINE_GP(name) \
+int name(int a,int b,int c,int d,int e,int f,int g,int h,...){ \
+    va_list ap;va_start(ap,h);int prefix=va_arg(ap,int); \
+    struct RecordPadding record=va_arg(ap,struct RecordPadding); \
+    int middle=va_arg(ap,int);int next=va_arg(ap,int); \
+    struct MemberPadding member=va_arg(ap,struct MemberPadding); \
+    int tail=va_arg(ap,int);va_end(ap); \
+    return prefix!=12 || record.x!=3.5 || middle!=13 || next!=14 || member.x!=2.5 || tail!=15; \
+}
+#define DEFINE_FP(name) \
+int name(double a,double b,double c,double d,double e,double f,double g,double h,int n,...){ \
+    va_list ap;va_start(ap,n);double prefix=va_arg(ap,double); \
+    struct HfaRecord hr=va_arg(ap,struct HfaRecord); \
+    double middle=va_arg(ap,double);double next=va_arg(ap,double); \
+    struct HfaMember hm=va_arg(ap,struct HfaMember); \
+    int tail=va_arg(ap,int);va_end(ap); \
+    return prefix!=9.5 || hr.x!=6.5 || hr.y!=7.5 || middle!=10.5 || next!=11.5 \
+        || hm.x!=4.5 || hm.y!=5.5 || tail!=16; \
+}
+"#;
+    // Clang on Darwin AArch64 disagrees with its own va_arg lowering for
+    // over-aligned HFAs. Keep those HFAs naturally aligned in this interop test;
+    // the non-HFA records above still exercise sixteen-byte variadic alignment.
+    let shared = if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+        shared
+            .replace(
+                "struct HfaMember{_Alignas(16) double x;double y;};",
+                "struct HfaMember{double x;double y;};",
+            )
+            .replace(
+                "struct HfaRecord{double x;double y;} __attribute__((aligned(16)));",
+                "struct HfaRecord{double x;double y;};",
+            )
+    } else {
+        shared.to_owned()
+    };
+    let code = [
+        shared.as_str(),
+        r#"
+DEFINE_BASIC(local_basic)
+DEFINE_GP(local_gp)
+DEFINE_FP(local_fp)
+int foreign_basic(int n,...);
+int foreign_gp(int,int,int,int,int,int,int,int,...);
+int foreign_fp(double,double,double,double,double,double,double,double,int,...);
+int call_local_basic(void);int call_local_gp(void);int call_local_fp(void);
+int main(){
+    struct MemberPadding member={2.5};struct RecordPadding record={3.5};
+    struct HfaMember hm={4.5,5.5};struct HfaRecord hr={6.5,7.5};
+    if(foreign_basic(1,member,12,record,13,hm,8.5,hr,14))return 1;
+    if(call_local_basic())return 2;
+    if(foreign_gp(1,2,3,4,5,6,7,8,12,record,13,14,member,15))return 3;
+    if(call_local_gp())return 4;
+    if(foreign_fp(1,2,3,4,5,6,7,8,1,9.5,hr,10.5,11.5,hm,16))return 5;
+    if(call_local_fp())return 6;
+    return 0;
+}
+"#,
+    ]
+    .concat();
+    let companion = [
+        shared.as_str(),
+        r#"
+DEFINE_BASIC(foreign_basic)
+DEFINE_GP(foreign_gp)
+DEFINE_FP(foreign_fp)
+int local_basic(int n,...);
+int local_gp(int,int,int,int,int,int,int,int,...);
+int local_fp(double,double,double,double,double,double,double,double,int,...);
+int call_local_basic(void){
+    struct MemberPadding member={2.5};struct RecordPadding record={3.5};
+    struct HfaMember hm={4.5,5.5};struct HfaRecord hr={6.5,7.5};
+    return local_basic(1,member,12,record,13,hm,8.5,hr,14);
+}
+int call_local_gp(void){
+    struct MemberPadding member={2.5};struct RecordPadding record={3.5};
+    return local_gp(1,2,3,4,5,6,7,8,12,record,13,14,member,15);
+}
+int call_local_fp(void){
+    struct HfaMember hm={4.5,5.5};struct HfaRecord hr={6.5,7.5};
+    return local_fp(1,2,3,4,5,6,7,8,1,9.5,hr,10.5,11.5,hm,16);
+}
+"#,
+    ]
+    .concat();
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "failed case: {:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn over_aligned_hfa_variadic_round_trip(output_option: &str, optimization: &str) {
+    let code = r#"
+#include <stdarg.h>
+struct Member{_Alignas(16) double x;double y;};
+struct Wide{_Alignas(16) double x;double y;double z;double w;};
+struct Record{double x;double y;} __attribute__((aligned(16)));
+int check(int n,...){
+    va_list ap;va_start(ap,n);
+    int prefix=va_arg(ap,int);
+    struct Member m=va_arg(ap,struct Member);
+    int middle=va_arg(ap,int);
+    struct Wide wide=va_arg(ap,struct Wide);
+    struct Record r=va_arg(ap,struct Record);
+    int tail=va_arg(ap,int);va_end(ap);
+    return n!=1 || prefix!=2 || m.x!=3.5 || m.y!=4.5 || middle!=5
+        || wide.x!=1.5 || wide.y!=2.5 || wide.z!=3.5 || wide.w!=4.5
+        || r.x!=6.5 || r.y!=7.5 || tail!=8;
+}
+int main(){struct Member m={3.5,4.5};struct Wide w={1.5,2.5,3.5,4.5};
+    struct Record r={6.5,7.5};return check(1,2,m,5,w,r,8);}
+"#;
+    let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}

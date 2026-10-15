@@ -166,6 +166,18 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
         })
         .collect()
 }
+/// Alignment in eight-byte slots for direct general-register arguments.
+pub fn general_register_alignment(ty: &Type, arch: &Arch, os: Os) -> usize {
+    if matches!((arch, os), (Arch::Aarch64, Os::Linux))
+        && matches!(ty.unqualified(), Type::Struct(_))
+        && ty.natural_align_of() >= 16
+    {
+        2
+    } else {
+        1
+    }
+}
+
 pub fn stack_argument_alignment(ty: &Type, arch: &Arch, os: Os, variadic: bool) -> usize {
     if matches!(arch, Arch::Aarch64) && matches!(ty.unqualified(), Type::Struct(_)) {
         let parts = aggregate_parts(ty, arch);
@@ -225,13 +237,9 @@ pub fn signature(
         let fp = parts.len() - gp;
         let forced_stack =
             matches!((&arch, os), (Arch::Aarch64, Os::MacOS)) && variadic && index >= fixed;
-        if matches!((&arch, os), (Arch::Aarch64, Os::Linux))
-            && aggregate
-            && !indirect
-            && gp > 0
-            && ty.natural_align_of() >= 16
-        {
-            general = general.div_ceil(2) * 2;
+        if !indirect && gp > 0 {
+            let alignment = general_register_alignment(ty, &arch, os);
+            general = general.div_ceil(alignment) * alignment;
         }
         let stack_alignment = stack_argument_alignment(ty, &arch, os, variadic && index >= fixed);
         let registers = !forced_stack

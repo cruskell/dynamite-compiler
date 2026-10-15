@@ -392,6 +392,13 @@ AArch64 homogeneous floating aggregates must occupy exactly their floating
 members' payload; alignment padding can require integer-register passing instead.
 AAPCS64 argument placement distinguishes member-derived alignment from alignment
 attributes on the record itself. Native assembly and LLVM share this ABI layout.
+Variadic argument cursors use the same stack alignment, and Linux AArch64
+general-register arguments preserve required register-pair alignment when
+retrieved with `va_arg`.
+Interoperability of over-aligned homogeneous floating aggregates in Darwin
+variadic calls remains a limitation: the tested Clang 21 caller and `va_arg`
+lowering disagree with each other. Naturally aligned HFAs and aligned non-HFA
+records are covered by cross-compiler variadic tests.
 
 ## Natural-alignment typedef annotations
 

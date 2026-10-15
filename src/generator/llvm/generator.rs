@@ -448,6 +448,40 @@ impl<'a> IrGenerator<'a> {
             )
         }
     }
+    fn aggregate_signature(
+        types: &[Type],
+        result: &Type,
+        fixed: usize,
+        variadic: bool,
+    ) -> crate::generator::abi::Signature {
+        use crate::generator::abi;
+        let mut signature = abi::signature(
+            types,
+            result,
+            Self::target_arch(),
+            Self::target_os(),
+            fixed,
+            variadic,
+        );
+        if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+            for (ty, argument) in types.iter().zip(&mut signature.arguments) {
+                if let Some(offset) = argument.memory {
+                    let parts = abi::aggregate_parts(ty, &Self::target_arch());
+                    if !parts.is_empty() {
+                        // AArch64 lowers direct aggregates using the same coercion
+                        // whether they occupy registers or stack slots. LLVM byval
+                        // has different stack-slot accounting on Darwin.
+                        argument.parts = parts
+                            .into_iter()
+                            .map(|part| (part, abi::Location::Stack(offset)))
+                            .collect();
+                        argument.memory = None;
+                    }
+                }
+            }
+        }
+        signature
+    }
     fn aggregate_parameter_types(
         ty: &Type,
         argument: &crate::generator::abi::Argument,
@@ -462,9 +496,13 @@ impl<'a> IrGenerator<'a> {
         if argument.indirect {
             return vec!["ptr".into()];
         }
-        if cfg!(all(target_arch = "aarch64", target_os = "linux"))
+        if cfg!(target_arch = "aarch64")
             && matches!(ty.unqualified(), Type::Struct(_))
-            && ty.natural_align_of() >= 16
+            && (if cfg!(target_os = "linux") {
+                ty.natural_align_of()
+            } else {
+                ty.align_of()
+            }) >= 16
             && argument.parts.len() == 2
             && argument
                 .parts
@@ -501,16 +539,8 @@ impl<'a> IrGenerator<'a> {
         format!("%{register}")
     }
     fn aggregate_function(&self, name: &str, func: &Func) -> String {
-        use crate::generator::abi;
         let (types, result, variadic) = func.cty.function_signature().unwrap();
-        let signature = abi::signature(
-            &types,
-            &result,
-            Self::target_arch(),
-            Self::target_os(),
-            types.len(),
-            variadic,
-        );
+        let signature = Self::aggregate_signature(&types, &result, types.len(), variadic);
         let return_type = if matches!(result, Type::Struct(_)) {
             Self::aggregate_result_type(&result)
         } else {
@@ -639,7 +669,6 @@ impl<'a> IrGenerator<'a> {
         lines.join("\n")
     }
     fn aggregate_call(&self, node: &Node, options: &mut Options) -> Vec<String> {
-        use crate::generator::abi;
         let types = node
             .args
             .iter()
@@ -647,14 +676,8 @@ impl<'a> IrGenerator<'a> {
             .map(|arg| arg.resolve_type().unwrap())
             .collect::<Vec<_>>();
         let result = node.resolve_type().unwrap();
-        let signature = abi::signature(
-            &types,
-            &result,
-            Self::target_arch(),
-            Self::target_os(),
-            node.parameter_types.len(),
-            node.variadic,
-        );
+        let signature =
+            Self::aggregate_signature(&types, &result, node.parameter_types.len(), node.variadic);
         let mut lines = vec![];
         let callee = if let Some(callee) = &node.lhs {
             lines.extend(self.gen_node(callee, options));
@@ -675,13 +698,34 @@ impl<'a> IrGenerator<'a> {
                 options.register_queue.pop().unwrap()
             };
             let parameter_types = Self::aggregate_parameter_types(ty, argument);
+            let aligned_variadic = cfg!(all(target_arch = "aarch64", target_os = "macos"))
+                && node.variadic
+                && index >= node.parameter_types.len()
+                && aggregate
+                && !argument.indirect
+                && argument.stack_alignment == 16;
+            if aligned_variadic {
+                // Unnamed Darwin arguments occupy stack slots. Scalar i128 chunks
+                // preserve sixteen-byte alignment, including larger HFAs.
+                for offset in (0..ty.size_of()).step_by(16) {
+                    let pointer = Self::aggregate_pointer(&value, offset, options, &mut lines);
+                    let register = options.new_register();
+                    options.register_queue.pop();
+                    lines.push(format!("  %{register} = load i128, ptr {pointer}, align 1"));
+                    arguments.push(format!("i128 %{register}"));
+                }
+                continue;
+            }
             if argument.memory.is_some() || argument.indirect {
                 arguments.push(format!("{} {value}", parameter_types[0]));
-            } else if aggregate && parameter_types[0] == "i128" {
+            } else if aggregate && (parameter_types[0] == "i128") {
                 let register = options.new_register();
                 options.register_queue.pop();
-                lines.push(format!("  %{register} = load i128, ptr {value}, align 1"));
-                arguments.push(format!("i128 %{register}"));
+                lines.push(format!(
+                    "  %{register} = load {}, ptr {value}, align 1",
+                    parameter_types[0]
+                ));
+                arguments.push(format!("{} %{register}", parameter_types[0]));
             } else {
                 let mut values = vec![];
                 for (part, _) in &argument.parts {
@@ -743,11 +787,9 @@ impl<'a> IrGenerator<'a> {
             Self::gen_type(result.clone())
         };
         let variadic_signature = if node.variadic {
-            let fixed = abi::signature(
+            let fixed = Self::aggregate_signature(
                 &node.parameter_types,
                 &result,
-                Self::target_arch(),
-                Self::target_os(),
                 node.parameter_types.len(),
                 true,
             );
