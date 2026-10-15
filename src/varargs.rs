@@ -46,6 +46,58 @@ fn conditional(cond: Node, then: Node, els: Node) -> Node {
 }
 
 impl AstBuilderImpl<'_> {
+    pub(super) fn builtin_va_list_type(&mut self) -> Type {
+        if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+            return pointer();
+        }
+        let fields = if cfg!(target_arch = "x86_64") {
+            vec![
+                ("gp_offset", Type::integer(32, false)),
+                ("fp_offset", Type::integer(32, false)),
+                ("overflow_arg_area", Type::Ptr(Box::new(Type::Void))),
+                ("reg_save_area", Type::Ptr(Box::new(Type::Void))),
+            ]
+        } else {
+            vec![
+                ("__stack", Type::Ptr(Box::new(Type::Void))),
+                ("__gr_top", Type::Ptr(Box::new(Type::Void))),
+                ("__vr_top", Type::Ptr(Box::new(Type::Void))),
+                ("__gr_offs", Type::I32),
+                ("__vr_offs", Type::I32),
+            ]
+        };
+        let (structure, owner) = StructType::new(self.struct_definitions.len());
+        let mut offset: usize = 0;
+        let mut alignment: usize = 1;
+        let mut members = vec![];
+        for (name, ty) in fields {
+            alignment = alignment.max(ty.align_of());
+            offset = offset.div_ceil(ty.align_of()) * ty.align_of();
+            let size = ty.size_of();
+            members.push(StructMember {
+                name: name.into(),
+                anonymous: false,
+                ty,
+                offset,
+                bit_field: None,
+            });
+            offset += size;
+        }
+        *owner.borrow_mut() = StructDefinition {
+            members,
+            size: offset.div_ceil(alignment) * alignment,
+            align: alignment,
+            complete: true,
+            ..StructDefinition::default()
+        };
+        self.struct_definitions.push(owner);
+        if cfg!(target_arch = "x86_64") {
+            Type::Arr(Box::new(Type::Struct(structure)), 1)
+        } else {
+            Type::Struct(structure)
+        }
+    }
+
     fn va_temporary(&mut self, token: &Token, ty: Type) -> Node {
         self.register_local_variable(
             Token {

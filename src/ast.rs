@@ -237,7 +237,7 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
 
 impl<'a> AstBuilderImpl<'a> {
     pub fn new(error_logger: &'a dyn error::ErrorLogger, tokens: &'a Vec<Token>) -> Self {
-        Self {
+        let mut builder = Self {
             error_logger,
             tokens,
             cur: 0,
@@ -264,7 +264,10 @@ impl<'a> AstBuilderImpl<'a> {
             functions: HashMap::new(),
             global_variables: HashMap::new(),
             string_literals: Vec::new(),
-        }
+        };
+        let va_list = builder.builtin_va_list_type();
+        builder.scope_stack[0].insert("__builtin_va_list".into(), Identifier::TypeDef(va_list));
+        builder
     }
     fn attempt_reserved(&mut self, s_value: &str) -> Option<Token> {
         if let TokenType::Reserved = self.tokens[self.cur].tt {

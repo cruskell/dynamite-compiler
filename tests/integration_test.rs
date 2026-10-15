@@ -1400,3 +1400,32 @@ int main(){
 }"#;
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn builtin_va_list_uses_the_target_layout(output_option: &str) {
+    let code = "typedef __builtin_va_list system_list;int sum(int n,...){system_list a,b;__builtin_va_start(a,n);__builtin_va_copy(b,a);int x=__builtin_va_arg(a,int);int first=__builtin_va_arg(b,int);double y=first+__builtin_va_arg(b,double);__builtin_va_end(a);__builtin_va_end(b);return x+(int)y;}int main(){return sum(2,7,3.0)-17;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+    let expected = if cfg!(target_arch = "x86_64") {
+        24
+    } else if cfg!(target_os = "macos") {
+        8
+    } else {
+        32
+    };
+    let code = format!(
+        "int main(){{return sizeof(__builtin_va_list)-{expected}+_Alignof(__builtin_va_list)-8;}}"
+    );
+    assert_eq!(compile_and_run(&code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn builtin_va_list_interoperates_with_system_c(output_option: &str) {
+    let code = "int consume(__builtin_va_list);int relay(int n,...){__builtin_va_list ap;__builtin_va_start(ap,n);int result=consume(ap);__builtin_va_end(ap);return result;}int main(){return relay(0,9,2.5)-11;}";
+    let companion = "#include <stdarg.h>\nint consume(va_list ap){int a=va_arg(ap,int);double b=va_arg(ap,double);return a+(int)b;}";
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
