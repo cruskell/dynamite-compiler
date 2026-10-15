@@ -1826,6 +1826,60 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn default_visibility_annotations_preserve_linkage(output_option: &str, optimization: &str) {
+    let code = r#"
+extern __attribute__((__visibility__("default"))) int imported;
+static __attribute__((visibility("default"))) int internal_object=3;
+static int local(int n) __attribute__((visibility("de" "fault")));
+static int local(int n){return n+internal_object;}
+__attribute__((visibility("default"))) int exported=7;
+int api(int n) __attribute__((unused,visibility("default")));
+int api(int n){return local(n)+imported+exported;}
+int check(void);int main(void){return check();}
+"#;
+    let companion = "int imported=11;extern int exported;int api(int);int check(void){return exported!=7 || api(5)!=26;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn default_visibility_annotations_preserve_internal_llvm_symbols() {
+    let ir = dynamite_compiler::generate(
+        "static int value __attribute__((visibility(\"default\")))=3;static int local(void) __attribute__((visibility(\"default\")));static int local(void){return value;}int main(){return local()-3;}",
+        "llvm",
+        false,
+    );
+    assert!(
+        ir.lines()
+            .any(|line| line.starts_with("@value = internal global"))
+    );
+    assert!(
+        ir.lines()
+            .any(|line| line.starts_with("define internal i32 @local("))
+    );
+}
+
+#[test_matrix([
+    "int x __attribute__((visibility(\"hidden\")));",
+    "int x __attribute__((visibility(\"protected\")));",
+    "int x __attribute__((visibility(\"internal\")));",
+    "int x __attribute__((visibility()));",
+    "int x __attribute__((visibility(1)));",
+    "int x __attribute__((visibility(L\"default\")));",
+    "int x __attribute__((visibility(\"default\",\"hidden\")));",
+], ["asm", "llvm"])]
+fn unsupported_visibility_annotations_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn weak_import_declarations_preserve_optional_linkage(output_option: &str, optimization: &str) {
     let code = r#"
 extern int absent(void) __attribute__((weak_import));
