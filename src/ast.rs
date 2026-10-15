@@ -127,7 +127,12 @@ pub struct ProgramAst<'a> {
 
 pub enum Identifier {
     TypeDef(Type),
-    Constant(i64),
+    Constant(i64, Type),
+    EnumTag {
+        ty: Type,
+        fixed: bool,
+        defined: bool,
+    },
     StaticObject(Type, String),
     Local(Type, usize, bool),
     Dynamic(Type, usize, bool),
@@ -731,7 +736,12 @@ impl<'a> AstBuilderImpl<'a> {
                     .unwrap()
                     .into_iter()
                     .filter(|(_, identifier)| {
-                        matches!(identifier, Identifier::TypeDef(_) | Identifier::Constant(_))
+                        matches!(
+                            identifier,
+                            Identifier::TypeDef(_)
+                                | Identifier::Constant(..)
+                                | Identifier::EnumTag { .. }
+                        )
                     })
                     .collect();
                 direct = Declarator::Function(Box::new(direct), parameters, variadic, scope, stars);
@@ -1232,58 +1242,138 @@ impl<'a> AstBuilderImpl<'a> {
         let name = self.attempt_ident();
         self.declaration_annotations();
         let key = name.as_ref().map(|name| format!(".enum.{}", name.s_value));
-        if self.attempt_reserved("{").is_some() {
-            if let Some(key) = &key {
-                if self.scope_stack.last().unwrap().contains_key(key) {
-                    self.error_logger
-                        .print_error_position(token.pos, "enum tag is already defined");
-                }
-                self.scope_stack
-                    .last_mut()
-                    .unwrap()
-                    .insert(key.clone(), Identifier::TypeDef(Type::I32));
+        let underlying = if self.attempt_reserved(":").is_some() {
+            let position = self.tokens[self.cur].pos;
+            let ty = self.expect_type().unqualified().clone();
+            if ty.integer_info().is_none() {
+                self.error_logger.print_error_position(
+                    position,
+                    "enum underlying type must be a supported integer type",
+                );
             }
-            let mut value = 0i64;
-            loop {
-                let name = self.attempt_ident().unwrap_or_else(|| {
-                    self.error_logger
-                        .print_error_position(self.tokens[self.cur].pos, "enumerator expected");
-                    unreachable!()
-                });
-                self.declaration_annotations();
-                if self.attempt_reserved("=").is_some() {
-                    let expression = self.ternary();
-                    value = self.eval(&expression);
-                }
-                if i32::try_from(value).is_err() {
-                    self.error_logger
-                        .print_error_position(name.pos, "enumerator is outside int range");
-                }
-                if self.scope_stack.last().unwrap().contains_key(&name.s_value) {
-                    self.error_logger
-                        .print_error_position(name.pos, "duplicate enumerator");
-                }
-                self.scope_stack
-                    .last_mut()
-                    .unwrap()
-                    .insert(name.s_value, Identifier::Constant(value));
-                value += 1;
-                if self.attempt_reserved("}").is_some() {
-                    break;
-                }
-                self.expect_reserved(",");
-                if self.attempt_reserved("}").is_some() {
-                    break;
-                }
+            Some(ty)
+        } else {
+            None
+        };
+        let defining = self.tokens[self.cur].s_value == "{";
+        let previous = key.as_ref().and_then(|key| {
+            let binding = if defining || underlying.is_some() {
+                self.scope_stack.last().unwrap().get(key)
+            } else {
+                self.resolve_name(key)
+            };
+            if let Some(Identifier::EnumTag { ty, fixed, defined }) = binding {
+                Some((ty.clone(), *fixed, *defined))
+            } else {
+                None
             }
-        } else if key
-            .as_ref()
-            .is_none_or(|key| self.resolve_name(key).is_none())
-        {
-            self.error_logger
-                .print_error_position(token.pos, "enum requires a known tag or definition");
+        });
+        if !defining && underlying.is_none() {
+            return previous.map(|(ty, _, _)| ty).unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(token.pos, "enum requires a known tag or definition");
+                unreachable!()
+            });
         }
-        Type::I32
+        if !defining && name.is_none() {
+            self.error_logger
+                .print_error_position(token.pos, "enum declaration requires a tag or definition");
+        }
+        let fixed = underlying.is_some();
+        let previously_defined = previous.as_ref().is_some_and(|(_, _, defined)| *defined);
+        let ty = underlying.unwrap_or(Type::I32);
+        if let Some((previous, previous_fixed, defined)) = previous {
+            if defining && defined {
+                self.error_logger
+                    .print_error_position(token.pos, "enum tag is already defined");
+            }
+            if previous_fixed != fixed {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "enum redeclaration changes whether its underlying type is fixed",
+                );
+            }
+            if previous != ty {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "enum redeclaration has a different underlying type",
+                );
+            }
+        }
+        if let Some(key) = key {
+            self.scope_stack.last_mut().unwrap().insert(
+                key,
+                Identifier::EnumTag {
+                    ty: ty.clone(),
+                    fixed,
+                    defined: defining || previously_defined,
+                },
+            );
+        }
+        if !defining {
+            return ty;
+        }
+        self.expect_reserved("{");
+        let (bits, signed) = ty.integer_info().unwrap();
+        let (minimum, maximum) = if ty == Type::Bool {
+            (0, 1)
+        } else if signed {
+            (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+        } else {
+            (0, (1i128 << bits) - 1)
+        };
+        let mut value = 0i128;
+        loop {
+            let name = self.attempt_ident().unwrap_or_else(|| {
+                self.error_logger
+                    .print_error_position(self.tokens[self.cur].pos, "enumerator expected");
+                unreachable!()
+            });
+            self.declaration_annotations();
+            if self.attempt_reserved("=").is_some() {
+                let expression = self.ternary();
+                if !Self::integer_constant(&expression) {
+                    self.error_logger.print_error_position(
+                        name.pos,
+                        "enumerator requires an integer constant expression",
+                    );
+                }
+                let result = self.eval(&expression);
+                value = if expression
+                    .resolve_type()
+                    .unwrap()
+                    .integer_info()
+                    .is_some_and(|(_, signed)| !signed)
+                {
+                    i128::from(result as u64)
+                } else {
+                    i128::from(result)
+                };
+            }
+            if value < minimum || value > maximum {
+                self.error_logger.print_error_position(
+                    name.pos,
+                    "enumerator is outside the underlying type range",
+                );
+            }
+            if self.scope_stack.last().unwrap().contains_key(&name.s_value) {
+                self.error_logger
+                    .print_error_position(name.pos, "duplicate enumerator");
+            }
+            self.scope_stack
+                .last_mut()
+                .unwrap()
+                .insert(name.s_value, Identifier::Constant(value as i64, ty.clone()));
+            value += 1;
+            if self.attempt_reserved("}").is_some() {
+                break;
+            }
+            self.expect_reserved(",");
+            if self.attempt_reserved("}").is_some() {
+                break;
+            }
+        }
+        ty
     }
 
     fn struct_type(&mut self, token: Token) -> Type {
@@ -4654,10 +4744,11 @@ impl<'a> AstBuilderImpl<'a> {
                         thread_local,
                         ..Node::default()
                     },
-                    Identifier::Constant(value) => {
-                        Node::new_with_num(Some(t.clone()), *value as usize)
-                    }
-                    Identifier::TypeDef(..) => {
+                    Identifier::Constant(value, ty) => Node {
+                        cty: Some(ty.clone()),
+                        ..Node::new_with_num(Some(t.clone()), *value as usize)
+                    },
+                    Identifier::TypeDef(..) | Identifier::EnumTag { .. } => {
                         self.error_logger
                             .print_error_position(t.pos, "type name is not an expression");
                         unreachable!()

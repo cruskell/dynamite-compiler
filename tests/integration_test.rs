@@ -1914,3 +1914,86 @@ fn unsupported_typedef_alignment_changes_are_diagnosed(code: &str, output_option
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn fixed_underlying_enums_preserve_types_ranges_and_scopes(output_option: &str) {
+    let code = r#"
+enum Byte:unsigned char;
+typedef enum Byte Byte;
+enum Byte:unsigned char{BYTE_VALUE=250,BYTE_NEXT};
+enum Mask:unsigned int{HIGH=0x80000000U,ALL=0xffffffffU};
+enum Huge:unsigned long{HUGE_PREVIOUS=0xfffffffffffffffeULL,HUGE_MAXIMUM};
+enum Signed:signed short{MINIMUM=-32768,MAXIMUM=32767};
+enum Logic:_Bool{FALSE_VALUE=0,TRUE_VALUE=1};
+enum :unsigned short{ANONYMOUS=65535};
+enum Reset:unsigned char{LAST=255,RESET=0};
+_Static_assert(HUGE_MAXIMUM==0xffffffffffffffffULL,"full unsigned range");
+int scoped(enum Private:unsigned char{PRIVATE_VALUE=3} value){enum Private other=PRIVATE_VALUE;return value+other;}
+int main(){
+    Byte bytes[2]={BYTE_VALUE,BYTE_NEXT};
+    int mismatch=0;
+    {enum Byte:unsigned short{LOCAL_VALUE=500};mismatch+=sizeof(enum Byte)!=2;}
+    return mismatch+(sizeof(enum Byte)!=1)+(_Alignof(enum Signed)!=2)
+        +(sizeof(bytes)!=2)+(bytes[1]!=251)+(HIGH<=0)+(ALL!=0xffffffffU)
+        +(HUGE_PREVIOUS+1!=HUGE_MAXIMUM)+(MINIMUM!=-32768)+(MAXIMUM!=32767)
+        +(ANONYMOUS!=65535)+(RESET!=0)+(scoped(4)!=7)
+        +_Generic(BYTE_VALUE,unsigned char:0,default:1)
+        +_Generic(HIGH,unsigned int:0,default:1)
+        +_Generic(HUGE_MAXIMUM,unsigned long:0,default:1)
+        +_Generic(TRUE_VALUE,_Bool:0,default:1)+(FALSE_VALUE!=0);
+}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn fixed_underlying_enums_interoperate_with_clang(output_option: &str) {
+    let code = r#"
+enum Byte:unsigned char{START=250};
+enum Adjustment:signed short{DELTA=-2};
+struct Packet{char tag;enum Byte value;enum Adjustment adjustment;unsigned int flags;};
+struct Packet packet={7,START,DELTA,0x80000000U};
+enum Byte foreign(enum Byte value,enum Adjustment adjustment,double extra);
+int check(struct Packet value);
+enum Byte local(enum Byte value,enum Adjustment adjustment){return value+adjustment;}
+int main(){return (foreign(START,DELTA,3.0)!=251)+check(packet)+(sizeof(packet)!=8);}
+"#;
+    let companion = r#"
+enum Byte:unsigned char{START=250};
+enum Adjustment:signed short{DELTA=-2};
+struct Packet{char tag;enum Byte value;enum Adjustment adjustment;unsigned int flags;};
+enum Byte local(enum Byte,enum Adjustment);
+enum Byte foreign(enum Byte value,enum Adjustment adjustment,double extra){return local(value,adjustment)+(int)extra;}
+int check(struct Packet value){return value.tag!=7 || value.value!=250 || value.adjustment!=-2 || value.flags!=0x80000000U;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "enum E:float{VALUE};",
+    "typedef int *Pointer;enum E:Pointer{VALUE};",
+    "enum E:unsigned char{VALUE=256};",
+    "enum E:signed char{VALUE=128};",
+    "enum E:signed char{VALUE=-129};",
+    "enum E:unsigned int{VALUE=-1};",
+    "enum E:unsigned long{VALUE=-1};",
+    "enum E:signed long{VALUE=0xffffffffffffffffULL};",
+    "enum E:_Bool{VALUE=2};",
+    "enum E:unsigned char{MAXIMUM=255,OVERFLOW};",
+    "enum E:unsigned;enum E:unsigned long{VALUE};",
+    "enum E:unsigned;enum E{VALUE};",
+    "enum E{VALUE};enum E:int;",
+    "enum E:unsigned{FIRST};enum E:unsigned{SECOND};",
+    "enum E:unsigned{FIRST};enum E:unsigned;enum E:unsigned{SECOND};",
+    "enum E:unsigned{VALUE=1.5};",
+], ["asm", "llvm"])]
+fn invalid_fixed_underlying_enums_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
