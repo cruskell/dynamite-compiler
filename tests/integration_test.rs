@@ -2618,3 +2618,63 @@ fn invalid_checked_memory_operands_are_diagnosed(code: &str, output_option: &str
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn branch_expectation_preserves_long_values_and_effects(output_option: &str, optimization: &str) {
+    let shared = r#"
+#define DEFINE_EXPECTATIONS(name) \
+int name(int value,unsigned int narrow,unsigned long wide,void *pointer){ \
+    return __builtin_expect(value,0)!=(long)value \
+        || __builtin_expect(narrow,1)!=(long)narrow \
+        || __builtin_expect(wide,0)!=(long)wide \
+        || __builtin_expect(!!pointer,1)!=(long)(pointer!=0) \
+        || __builtin_expect(2.75,0)!=2 \
+        || _Generic(__builtin_expect(value,0),long:0,default:1); \
+}
+"#;
+    let code = [
+        shared,
+        r#"
+DEFINE_EXPECTATIONS(local_expectations)
+int foreign_expectations(int,unsigned int,unsigned long,void *);
+long global=__builtin_expect(7,0);
+_Static_assert(__builtin_expect(7,1)==7,"constant prediction");
+int values,hints;
+int next_value(){values++;return 7;}
+long next_hint(){hints++;return 0;}
+double float_hint(){hints++;return 0.5;}
+int main(){
+    long first=__builtin_expect(next_value(),next_hint());
+    long second=__builtin_expect(next_value(),0);
+    long third=__builtin_expect(next_value(),float_hint());
+    long x=7;long hint=8;long previous=__builtin_expect(x++,hint++);
+    volatile int prediction=1;long fourth=__builtin_expect(11,prediction);
+    return first!=7 || second!=7 || third!=7 || fourth!=11 || global!=7
+        || values!=3 || hints!=2 || previous!=7 || x!=8 || hint!=9
+        || local_expectations(-3,0xffffffffu,0xfffffffffffffffful,&x)
+        || foreign_expectations(-3,0xffffffffu,0xfffffffffffffffful,&x);
+}
+"#,
+    ]
+    .concat();
+    let companion = [shared, "DEFINE_EXPECTATIONS(foreign_expectations)"].concat();
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){return __builtin_expect(1);}",
+    "int main(){return __builtin_expect(1,0,1);}",
+    "int main(){int x;return __builtin_expect(&x,0);}",
+    "int main(){int x;return __builtin_expect(1,&x);}",
+    "void f(void);int main(){return __builtin_expect(f(),0);}",
+    "int main(){long x=1;__builtin_expect(x,0)=2;}",
+    "int main(){long x=1;long *p=&__builtin_expect(x,0);}",
+], ["asm", "llvm"])]
+fn invalid_branch_expectation_operands_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

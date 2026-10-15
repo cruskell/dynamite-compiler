@@ -96,6 +96,48 @@ pub struct Node {
 }
 
 impl Node {
+    /// Whether evaluating this expression can call, write, or read a volatile value.
+    pub(crate) fn has_side_effects(&self) -> bool {
+        Self::has_effects(self, true)
+    }
+
+    fn has_effects(node: &Self, value: bool) -> bool {
+        if matches!(
+            node.nt,
+            NodeType::Assign
+                | NodeType::CallFunc
+                | NodeType::SuffixIncr
+                | NodeType::SuffixDecr
+                | NodeType::VaStart
+                | NodeType::VaEnd
+        ) || (value
+            && (node.volatile_access
+                || node.object_type().is_some_and(|ty| {
+                    ty.qualifiers().volatile
+                        && !matches!(ty.unqualified(), Type::Arr(..) | Type::Vla(..))
+                })))
+        {
+            return true;
+        }
+        if node.nt == NodeType::Addr {
+            return node
+                .lhs
+                .as_deref()
+                .is_some_and(|child| Self::has_effects(child, false));
+        }
+        [
+            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|child| Self::has_effects(child, true))
+            || node
+                .children
+                .iter()
+                .chain(&node.args)
+                .any(|child| Self::has_effects(child, true))
+    }
+
     pub fn new_with_op(token: Option<Token>, nt: NodeType, lhs: Node, rhs: Node) -> Self {
         let (mut lhs, mut rhs) = (lhs, rhs);
         if let NodeType::Add = nt {
