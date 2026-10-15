@@ -3,9 +3,21 @@ use crate::token::{StringEncoding, Token, TokenType};
 use crate::trie::Trie;
 use std::collections::HashSet;
 
-pub const TYPES: [&str; 11] = [
-    "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool", "float",
+pub const TYPES: [&str; 14] = [
+    "int",
+    "char",
+    "void",
+    "short",
+    "long",
+    "signed",
+    "unsigned",
+    "_Bool",
+    "bool",
+    "float",
     "double",
+    "__int128",
+    "__int128_t",
+    "__uint128_t",
 ];
 const RESERVED_WORDS: [&str; 34] = [
     "return",

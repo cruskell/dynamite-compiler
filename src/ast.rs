@@ -146,6 +146,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
         for function in self.functions.values() {
             if let Some(body) = &function.body {
                 self.validate_void_expressions(body);
+                self.validate_wide_integer_expressions(body, false);
                 if function.inline_only() {
                     if let Some(token) = &function.mutable_static {
                         self.error_logger.print_error_position(
@@ -366,10 +367,15 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "invalid function result type");
                 }
-                for arg in args {
-                    self.validate_type_layout(arg, token);
+                for ty in args.iter().chain(std::iter::once(result.as_ref())) {
+                    if matches!(ty.unqualified(), Type::Integer128 { .. }) {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "128-bit integer parameters and results are not supported",
+                        );
+                    }
+                    self.validate_type_layout(ty, token);
                 }
-                self.validate_type_layout(result, token);
             }
             _ => {}
         }
@@ -1066,6 +1072,25 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn attempt_unqualified_type(&mut self) -> Option<Type> {
+        let word = self.tokens[self.cur].s_value.as_str();
+        if matches!(word, "__int128" | "__int128_t" | "__uint128_t") {
+            let mut signed = word != "__uint128_t";
+            self.cur += 1;
+            if word == "__int128" {
+                if self.attempt_reserved("unsigned").is_some() {
+                    signed = false;
+                } else {
+                    self.attempt_reserved("signed");
+                }
+            }
+            return Some(Type::Integer128 { signed });
+        }
+        if matches!(word, "signed" | "unsigned") && self.tokens[self.cur + 1].s_value == "__int128"
+        {
+            let signed = word == "signed";
+            self.cur += 2;
+            return Some(Type::Integer128 { signed });
+        }
         if (self.tokens[self.cur].s_value == "long"
             && self.tokens[self.cur + 1].s_value == "double")
             || (self.tokens[self.cur].s_value == "double"
@@ -1890,6 +1915,12 @@ impl<'a> AstBuilderImpl<'a> {
         let ty = ty.unqualified();
         match (ty, data) {
             (_, GlobalVariableData::Zero) => {}
+            (Type::Integer128 { .. }, _) => {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "128-bit integer value initialization is not supported",
+                );
+            }
             (Type::Struct(ty), GlobalVariableData::Union { index, value }) => {
                 self.validate_global_initializer(&ty.members()[*index].ty, value, token);
             }
@@ -2606,6 +2637,33 @@ impl<'a> AstBuilderImpl<'a> {
         }
         for child in node.children.iter().chain(&node.args) {
             self.validate_inline_body(child);
+        }
+    }
+
+    fn validate_wide_integer_expressions(&self, node: &Node, address_only: bool) {
+        if !address_only
+            && node
+                .resolve_type()
+                .is_some_and(|ty| matches!(ty.unqualified(), Type::Integer128 { .. }))
+        {
+            self.error_logger.print_error_position(
+                node.token.as_ref().map_or(0, |token| token.pos),
+                "128-bit integer value operations are not supported",
+            );
+        }
+        if let Some(lhs) = &node.lhs {
+            self.validate_wide_integer_expressions(lhs, node.nt == NodeType::Addr);
+        }
+        for child in [
+            &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        .map(Box::as_ref)
+        .chain(node.children.iter())
+        .chain(node.args.iter())
+        {
+            self.validate_wide_integer_expressions(child, false);
         }
     }
 
