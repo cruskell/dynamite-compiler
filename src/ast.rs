@@ -347,6 +347,11 @@ impl<'a> AstBuilderImpl<'a> {
         }
         None
     }
+    fn attempt_inline(&mut self) -> Option<Token> {
+        self.attempt_reserved("inline")
+            .or_else(|| self.attempt_reserved("__inline"))
+            .or_else(|| self.attempt_reserved("__inline__"))
+    }
     fn attempt_ident(&mut self) -> Option<Token> {
         if let TokenType::Ident = self.tokens[self.cur].tt {
             self.cur += 1;
@@ -1888,7 +1893,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.declaration_annotations();
             if self.attempt_reserved("_Thread_local").is_some() {
                 thread_local = true;
-            } else if self.attempt_reserved("inline").is_some() {
+            } else if self.attempt_inline().is_some() {
                 inline = true;
             } else if let Some(value) = self.attempt_alignment_specifier() {
                 alignment = alignment.max(value);
@@ -1952,7 +1957,7 @@ impl<'a> AstBuilderImpl<'a> {
         if qualifiers != Qualifiers::default() {
             base = Type::Qualified(Box::new(base), qualifiers);
         }
-        inline |= self.attempt_reserved("inline").is_some();
+        inline |= self.attempt_inline().is_some();
         if self.attempt_reserved(";").is_some() {
             if thread_local {
                 self.error_logger.print_error_position(
@@ -3365,11 +3370,11 @@ impl<'a> AstBuilderImpl<'a> {
         while let Some(value) = self.attempt_alignment_specifier() {
             requested_alignment = requested_alignment.max(value);
         }
-        let inline = self.attempt_reserved("inline");
+        let inline = self.attempt_inline();
         let storage = self
             .attempt_reserved("static")
             .or_else(|| self.attempt_reserved("extern"));
-        let inline = inline.or_else(|| self.attempt_reserved("inline"));
+        let inline = inline.or_else(|| self.attempt_inline());
         let mut storage = storage;
         loop {
             if self.attempt_reserved("_Thread_local").is_some() {
@@ -3395,7 +3400,10 @@ impl<'a> AstBuilderImpl<'a> {
                     ..self.tokens[self.cur - 1].clone()
                 })
             });
-            if storage.s_value == "inline" {
+            if matches!(
+                storage.s_value.as_str(),
+                "inline" | "__inline" | "__inline__"
+            ) {
                 storage.s_value = "extern".to_owned();
             }
             while let Some(value) = self.attempt_alignment_specifier() {

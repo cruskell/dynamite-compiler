@@ -20,7 +20,7 @@ pub const TYPES: [&str; 15] = [
     "__int128_t",
     "__uint128_t",
 ];
-const RESERVED_WORDS: [&str; 34] = [
+const RESERVED_WORDS: [&str; 36] = [
     "return",
     "if",
     "else",
@@ -44,6 +44,8 @@ const RESERVED_WORDS: [&str; 34] = [
     "volatile",
     "restrict",
     "inline",
+    "__inline",
+    "__inline__",
     "_Static_assert",
     "_Generic",
     "auto",
