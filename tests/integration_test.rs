@@ -6551,3 +6551,43 @@ fn invalid_zero_length_array_contexts_are_diagnosed(code: &str, output_option: &
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn parenthesized_type_keyword_strings_remain_expressions(output_option: &str, optimization: &str) {
+    let keywords = [
+        "char",
+        "short",
+        "int",
+        "long",
+        "signed",
+        "unsigned",
+        "__int128",
+        "__int128_t",
+        "__uint128_t",
+        "float",
+        "double",
+        "void",
+        "struct",
+        "union",
+        "enum",
+        "const",
+        "volatile",
+        "restrict",
+        "typeof",
+        "_Bool",
+        "bool",
+        "Number",
+    ];
+    let mut code = String::from(
+        "typedef int Number;struct Entry{const char *name;};int first(const char *s){return s[0];}int main(){",
+    );
+    for keyword in keywords {
+        code.push_str(&format!(
+            "{{struct Entry e={{(\"{keyword}\")}};const char *p=((\"{keyword}\"));if(e.name[0]!={first}||first((\"{keyword}\"))!={first}||p[0]!={first}||sizeof((\"{keyword}\"))!={size})return 1;}}",
+            first = keyword.as_bytes()[0], size = keyword.len()+1,
+        ));
+    }
+    code.push_str("return 0;}");
+    let output = compile_and_run_with_c_flags(&code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
