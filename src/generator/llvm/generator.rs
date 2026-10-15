@@ -368,6 +368,7 @@ impl<'a> IrGenerator<'a> {
                 }
                 format!("{{ {} }}", fields.join(", "))
             }
+            Type::Enum(value) => Self::gen_type(value.underlying.borrow().clone()),
             Type::I8 | Type::SignedChar => "i8".to_string(),
             Type::LongLong { .. } => "i64".to_string(),
             Type::I32 => "i32".to_string(),
@@ -533,6 +534,7 @@ impl<'a> IrGenerator<'a> {
                     _ => "null".to_string(),
                 }
             ),
+            Type::Enum(value) => self.gen_initializer_element(&value.underlying.borrow(), data),
             Type::I8
             | Type::SignedChar
             | Type::I32

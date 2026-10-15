@@ -1094,3 +1094,13 @@ unsuffixed decimal constants use unsigned long long as an extension. Type-based
 selection and declaration compatibility preserve these identities without
 changing their sizes, alignment or ABI. The 64-bit byte-swap builtin returns
 unsigned long long, matching Clang's builtin signature.
+
+## Enumeration type identity
+
+Each enumeration tag and anonymous enumeration has a distinct type identity.
+Typedefs and fixed-underlying forward declarations retain that identity, while
+inner-scope definitions introduce new types. Distinct enums remain incompatible
+with each other even when they share an integer representation; each enum is
+compatible with its selected underlying integer type. Existing underlying-type
+selection, enumerator range rules, sizes, and ABI remain unchanged. Enum identities
+and source qualifiers are lowered to runtime types after semantic validation.
