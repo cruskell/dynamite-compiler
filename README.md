@@ -386,6 +386,13 @@ kind must agree. Function parameter top-level qualifiers do not change function
 type compatibility. Inner scopes may still introduce a different typedef with
 the same name.
 
+## Alignment of aggregate arguments
+
+AArch64 homogeneous floating aggregates must occupy exactly their floating
+members' payload; alignment padding can require integer-register passing instead.
+AAPCS64 argument placement distinguishes member-derived alignment from alignment
+attributes on the record itself. Native assembly and LLVM share this ABI layout.
+
 ## Natural-alignment typedef annotations
 
 Postfix `aligned(N)` attributes on complete object typedef declarations are

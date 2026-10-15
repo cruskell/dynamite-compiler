@@ -17,6 +17,7 @@ pub struct Argument {
     pub parts: Vec<(Part, Location)>,
     pub indirect: bool,
     pub memory: Option<usize>,
+    pub stack_alignment: usize,
 }
 #[derive(Clone, Debug)]
 pub struct Signature {
@@ -128,6 +129,7 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
         if floating_members(ty, 0, &mut members)
             && !members.is_empty()
             && members.len() <= 4
+            && ty.size_of() == members.len() * members[0].ty.size_of()
             && members.iter().all(|part| part.ty == members[0].ty)
         {
             return members;
@@ -164,6 +166,26 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
         })
         .collect()
 }
+pub fn stack_argument_alignment(ty: &Type, arch: &Arch, os: Os, variadic: bool) -> usize {
+    if matches!(arch, Arch::Aarch64) && matches!(ty.unqualified(), Type::Struct(_)) {
+        let parts = aggregate_parts(ty, arch);
+        if parts.is_empty() {
+            return 8;
+        }
+        if matches!(os, Os::Linux) {
+            return ty.natural_align_of().max(8);
+        }
+        if !variadic && parts[0].ty.float_bits().is_some() {
+            return parts[0].ty.align_of();
+        }
+    }
+    if matches!((arch, os), (Arch::Aarch64, Os::MacOS)) && !variadic {
+        ty.align_of()
+    } else {
+        ty.align_of().max(8)
+    }
+}
+
 pub fn signature(
     types: &[Type],
     result: &Type,
@@ -203,6 +225,15 @@ pub fn signature(
         let fp = parts.len() - gp;
         let forced_stack =
             matches!((&arch, os), (Arch::Aarch64, Os::MacOS)) && variadic && index >= fixed;
+        if matches!((&arch, os), (Arch::Aarch64, Os::Linux))
+            && aggregate
+            && !indirect
+            && gp > 0
+            && ty.natural_align_of() >= 16
+        {
+            general = general.div_ceil(2) * 2;
+        }
+        let stack_alignment = stack_argument_alignment(ty, &arch, os, variadic && index >= fixed);
         let registers = !forced_stack
             && !parts.is_empty()
             && general + gp <= general_limit
@@ -227,6 +258,7 @@ pub fn signature(
                 parts,
                 indirect,
                 memory: None,
+                stack_alignment,
             });
         } else {
             if aggregate && matches!(arch, Arch::Aarch64) && !indirect {
@@ -244,11 +276,7 @@ pub fn signature(
             } else {
                 8
             };
-            let align = if compact {
-                ty.align_of()
-            } else {
-                ty.align_of().max(8)
-            };
+            let align = stack_alignment;
             stack = stack.div_ceil(align) * align;
             let start = stack;
             stack += if compact { size } else { size.div_ceil(8) * 8 };
@@ -266,6 +294,7 @@ pub fn signature(
                 )],
                 indirect,
                 memory: aggregate.then_some(start).filter(|_| !indirect),
+                stack_alignment,
             });
         }
     }

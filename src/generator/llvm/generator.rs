@@ -456,11 +456,22 @@ impl<'a> IrGenerator<'a> {
             return vec![format!(
                 "ptr byval({}) align {}",
                 Self::gen_type(ty.clone()),
-                ty.align_of()
+                argument.stack_alignment
             )];
         }
         if argument.indirect {
             return vec!["ptr".into()];
+        }
+        if cfg!(all(target_arch = "aarch64", target_os = "linux"))
+            && matches!(ty.unqualified(), Type::Struct(_))
+            && ty.natural_align_of() >= 16
+            && argument.parts.len() == 2
+            && argument
+                .parts
+                .iter()
+                .all(|(part, _)| part.ty.float_bits().is_none())
+        {
+            return vec!["i128".into()];
         }
         let parts = argument
             .parts
@@ -571,9 +582,8 @@ impl<'a> IrGenerator<'a> {
                 let value = options.new_register();
                 options.register_queue.pop();
                 lines.push(format!(
-                    "  %{value} = load {}, ptr %abi.arg.{index}.0, align {}",
-                    Self::gen_type(ty.clone()),
-                    ty.align_of()
+                    "  %{value} = load {}, ptr %abi.arg.{index}.0, align 1",
+                    Self::gen_type(ty.clone())
                 ));
                 lines.push(format!(
                     "  store {} %{value}, ptr %{register}, align {}",
@@ -585,6 +595,12 @@ impl<'a> IrGenerator<'a> {
                     && matches!(ty, Type::Struct(_))
                     && argument.parts.len() > 1;
                 let group_type = Self::aggregate_parameter_types(ty, argument)[0].clone();
+                if group_type == "i128" {
+                    lines.push(format!(
+                        "  store i128 %abi.arg.{index}.0, ptr %{register}, align 1"
+                    ));
+                    continue;
+                }
                 for (part_index, (part, _)) in argument.parts.iter().enumerate() {
                     let value = if grouped {
                         let value = options.new_register();
@@ -661,6 +677,11 @@ impl<'a> IrGenerator<'a> {
             let parameter_types = Self::aggregate_parameter_types(ty, argument);
             if argument.memory.is_some() || argument.indirect {
                 arguments.push(format!("{} {value}", parameter_types[0]));
+            } else if aggregate && parameter_types[0] == "i128" {
+                let register = options.new_register();
+                options.register_queue.pop();
+                lines.push(format!("  %{register} = load i128, ptr {value}, align 1"));
+                arguments.push(format!("i128 %{register}"));
             } else {
                 let mut values = vec![];
                 for (part, _) in &argument.parts {

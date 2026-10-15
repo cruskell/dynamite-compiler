@@ -87,6 +87,7 @@ impl AstBuilderImpl<'_> {
             members,
             size: offset.div_ceil(alignment) * alignment,
             align: alignment,
+            natural_align: alignment,
             complete: true,
             ..StructDefinition::default()
         };

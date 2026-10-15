@@ -25,6 +25,8 @@ pub struct StructDefinition {
     pub has_flexible_array: bool,
     pub size: usize,
     pub align: usize,
+    /// Member-derived alignment before record-level alignment attributes.
+    pub natural_align: usize,
     pub complete: bool,
 }
 
@@ -331,6 +333,17 @@ impl Type {
             Type::Func(..) | Type::VariadicFunc(..) => 1,
         }
     }
+    pub fn natural_align_of(&self) -> usize {
+        if let Self::Struct(ty) = self.unqualified() {
+            let definition = ty.definition();
+            let definition = definition.borrow();
+            if definition.natural_align != 0 {
+                return definition.natural_align;
+            }
+        }
+        self.align_of()
+    }
+
     pub fn align_of(&self) -> usize {
         match self {
             Self::Qualified(child, _) => child.align_of(),
