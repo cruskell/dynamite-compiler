@@ -1,4 +1,6 @@
-use crate::ctype::{BitField, Qualifiers, StructDefinition, StructMember, StructType, Type};
+use crate::ctype::{
+    BitField, EnumType, Qualifiers, StructDefinition, StructMember, StructType, Type,
+};
 use crate::error;
 use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
@@ -134,6 +136,7 @@ pub struct AstBuilderImpl<'a> {
     jump_depths: Vec<usize>,
     continue_depths: HashMap<usize, usize>,
     switch_vla_depths: Vec<usize>,
+    next_enum_id: usize,
     struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
     scope_stack: Vec<HashMap<String, Identifier>>,
     pub functions: HashMap<String, Func>,
@@ -232,12 +235,12 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
         }
         for function in self.functions.values_mut() {
-            function.cty = function.cty.without_qualifiers();
+            function.cty = function.cty.lowered_for_codegen();
             for arg in &mut function.args {
-                Self::erase_qualifiers(arg);
+                Self::lower_source_types(arg);
             }
             if let Some(body) = &mut function.body {
-                Self::erase_qualifiers(body);
+                Self::lower_source_types(body);
                 Self::lower_variable_arithmetic(body);
                 overflow::lower(body, &mut function.offset_size);
                 Self::insert_integer_conversions(body);
@@ -245,11 +248,11 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
         }
         for global in self.global_variables.values_mut() {
-            global.ty = global.ty.without_qualifiers();
+            global.ty = global.ty.lowered_for_codegen();
         }
         for definition in &self.struct_definitions {
             for member in &mut definition.borrow_mut().members {
-                member.ty = member.ty.without_qualifiers();
+                member.ty = member.ty.lowered_for_codegen();
             }
         }
         self.lower_gnu_inline_calls();
@@ -348,6 +351,7 @@ impl<'a> AstBuilderImpl<'a> {
             jump_depths: vec![],
             continue_depths: HashMap::new(),
             switch_vla_depths: vec![],
+            next_enum_id: 0,
             struct_definitions: vec![],
             scope_stack: vec![reserved_functions()],
             functions: HashMap::new(),
@@ -1673,10 +1677,31 @@ impl<'a> AstBuilderImpl<'a> {
         let name = self.attempt_ident();
         self.declaration_annotations();
         let key = name.as_ref().map(|name| format!(".enum.{}", name.s_value));
-        let underlying = if self.attempt_reserved(":").is_some() {
+        // A generic association also places ':' immediately after an enum type name.
+        let underlying_follows = self.tokens.get(self.cur + 1).is_some_and(|token| {
+            crate::tokenizer::TYPES.contains(&token.s_value.as_str())
+                || matches!(
+                    token.s_value.as_str(),
+                    "struct"
+                        | "union"
+                        | "enum"
+                        | "const"
+                        | "volatile"
+                        | "restrict"
+                        | "__restrict"
+                        | "__restrict__"
+                        | "__attribute__"
+                )
+                || matches!(
+                    self.resolve_name(&token.s_value),
+                    Some(Identifier::TypeDef(_))
+                )
+        });
+        let underlying = if self.tokens[self.cur].s_value == ":" && underlying_follows {
+            self.cur += 1;
             let position = self.tokens[self.cur].pos;
             let ty = self.expect_type().unqualified().clone();
-            if ty.integer_info().is_none() {
+            if ty.integer_info().is_none() || matches!(ty, Type::Enum(_)) {
                 self.error_logger.print_error_position(
                     position,
                     "enum underlying type must be a supported integer type",
@@ -1713,7 +1738,7 @@ impl<'a> AstBuilderImpl<'a> {
         let fixed = underlying.is_some();
         let previously_defined = previous.as_ref().is_some_and(|(_, _, defined)| *defined);
         let ty = underlying.unwrap_or(Type::I32);
-        if let Some((previous, previous_fixed, defined)) = previous {
+        let enum_type = if let Some((previous, previous_fixed, defined)) = previous {
             if defining && defined {
                 self.error_logger
                     .print_error_position(token.pos, "enum tag is already defined");
@@ -1724,25 +1749,36 @@ impl<'a> AstBuilderImpl<'a> {
                     "enum redeclaration changes whether its underlying type is fixed",
                 );
             }
-            if previous != ty {
+            let Type::Enum(value) = &previous else {
+                unreachable!()
+            };
+            if *value.underlying.borrow() != ty {
                 self.error_logger.print_error_position(
                     token.pos,
                     "enum redeclaration has a different underlying type",
                 );
             }
-        }
+            previous
+        } else {
+            let value = Type::Enum(EnumType {
+                id: self.next_enum_id,
+                underlying: Rc::new(RefCell::new(ty.clone())),
+            });
+            self.next_enum_id += 1;
+            value
+        };
         if let Some(key) = &key {
             self.scope_stack.last_mut().unwrap().insert(
                 key.clone(),
                 Identifier::EnumTag {
-                    ty: ty.clone(),
+                    ty: enum_type.clone(),
                     fixed,
                     defined: defining || previously_defined,
                 },
             );
         }
         if !defining {
-            return ty;
+            return enum_type;
         }
         self.expect_reserved("{");
         let (bits, signed) = ty.integer_info().unwrap();
@@ -1799,7 +1835,7 @@ impl<'a> AstBuilderImpl<'a> {
             smallest = smallest.min(value);
             largest = largest.max(value);
             let constant_type = if fixed {
-                ty.clone()
+                enum_type.clone()
             } else {
                 self.enum_integer_type(value, value, &name)
             };
@@ -1818,7 +1854,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
         }
         if fixed {
-            return ty;
+            return enum_type;
         }
         let ty = self.enum_integer_type(smallest, largest, &token);
         let scope = self.scope_stack.last_mut().unwrap();
@@ -1829,13 +1865,17 @@ impl<'a> AstBuilderImpl<'a> {
             scope.insert(
                 key,
                 Identifier::EnumTag {
-                    ty: ty.clone(),
+                    ty: enum_type.clone(),
                     fixed: false,
                     defined: true,
                 },
             );
         }
-        ty
+        let Type::Enum(value) = &enum_type else {
+            unreachable!()
+        };
+        *value.underlying.borrow_mut() = ty;
+        enum_type
     }
 
     fn struct_type(&mut self, token: Token) -> Type {
@@ -3331,17 +3371,17 @@ impl<'a> AstBuilderImpl<'a> {
             ty.convert_constant(value)
         }
     }
-    fn erase_qualifiers(node: &mut Node) {
+    fn lower_source_types(node: &mut Node) {
         node.volatile_access |= node
             .object_type()
             .is_some_and(|ty| ty.qualifiers().volatile);
         if let Some(ty) = &mut node.cty {
-            *ty = ty.without_qualifiers();
+            *ty = ty.lowered_for_codegen();
         }
         node.parameter_types = node
             .parameter_types
             .iter()
-            .map(Type::without_qualifiers)
+            .map(Type::lowered_for_codegen)
             .collect();
         for child in [
             &mut node.lhs,
@@ -3355,10 +3395,10 @@ impl<'a> AstBuilderImpl<'a> {
         .into_iter()
         .flatten()
         {
-            Self::erase_qualifiers(child);
+            Self::lower_source_types(child);
         }
         for child in node.children.iter_mut().chain(&mut node.args) {
-            Self::erase_qualifiers(child);
+            Self::lower_source_types(child);
         }
     }
 
@@ -5093,6 +5133,7 @@ impl<'a> AstBuilderImpl<'a> {
                     || (!matches!(
                         source.unqualified(),
                         Type::I8
+                            | Type::Enum(_)
                             | Type::SignedChar
                             | Type::LongLong { .. }
                             | Type::I32
@@ -5346,6 +5387,12 @@ impl<'a> AstBuilderImpl<'a> {
             let bounds = self.pending_bounds.split_off(bounds_start);
             if let Some(ty) = ty {
                 if control_type.qualifiers() == ty.qualifiers() && control_type.compatible(&ty) {
+                    if selected.is_some() {
+                        self.error_logger.print_error_position(
+                            association.pos,
+                            "generic selection matches multiple association types",
+                        );
+                    }
                     selected = Some((expression, bounds));
                 }
             } else {

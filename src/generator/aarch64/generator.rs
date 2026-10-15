@@ -278,6 +278,7 @@ impl<'a> AsmGenerator<'a> {
                     format!("  .zero {}", children_ty.size_of() * size).into()
                 }
             }
+            Type::Enum(value) => self.gen_initializer_element(&value.underlying.borrow(), data),
             Type::I8 | Type::SignedChar => format!(
                 "  .byte {}",
                 if let Some(GlobalVariableData::Elem(s)) = data {

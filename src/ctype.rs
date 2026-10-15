@@ -11,6 +11,18 @@ pub struct Qualifiers {
     pub restricted: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct EnumType {
+    pub id: usize,
+    pub underlying: Rc<RefCell<Type>>,
+}
+
+impl PartialEq for EnumType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
 #[derive(Clone)]
 pub struct StructType {
     pub id: usize,
@@ -120,6 +132,7 @@ pub enum Type {
     /// Object alignment supplied by a scalar typedef, independent of type identity.
     Aligned(Box<Type>, usize),
     Struct(StructType),
+    Enum(EnumType),
     I8,
     SignedChar,
     I32,
@@ -156,6 +169,10 @@ impl Type {
 
     pub fn compatible(&self, other: &Self) -> bool {
         match (self.unqualified(), other.unqualified()) {
+            (Self::Enum(left), Self::Enum(right)) => left == right,
+            (Self::Enum(value), other) | (other, Self::Enum(value)) => {
+                value.underlying.borrow().compatible(other)
+            }
             (Self::Vla(left, _), Self::Vla(right, _) | Self::Arr(right, _))
             | (Self::Arr(left, _), Self::Vla(right, _))
             | (Self::Ptr(left), Self::Ptr(right)) => {
@@ -252,6 +269,7 @@ impl Type {
     }
     pub fn integer_info(&self) -> Option<(u8, bool)> {
         match self {
+            Self::Enum(value) => value.underlying.borrow().integer_info(),
             Self::I8 | Self::SignedChar => Some((8, true)),
             Self::LongLong { signed } => Some((64, *signed)),
             Self::I32 => Some((32, true)),
@@ -262,6 +280,9 @@ impl Type {
         }
     }
     pub fn promoted(&self) -> Self {
+        if let Self::Enum(value) = self.unqualified() {
+            return value.underlying.borrow().promoted();
+        }
         if self.integer_info().is_some_and(|(bits, _)| bits < 32) {
             Self::I32
         } else {
@@ -303,6 +324,9 @@ impl Type {
     }
 
     pub fn convert_constant(&self, value: i64) -> i64 {
+        if let Self::Enum(ty) = self.unqualified() {
+            return ty.underlying.borrow().convert_constant(value);
+        }
         if *self == Self::Bool {
             return i64::from(value != 0);
         }
@@ -347,22 +371,27 @@ impl Type {
             }
     }
 
-    pub fn without_qualifiers(&self) -> Self {
+    /// Erase source qualifiers and enum identities after semantic validation.
+    pub fn lowered_for_codegen(&self) -> Self {
         match self {
+            Self::Enum(value) => value.underlying.borrow().lowered_for_codegen(),
             Self::Aligned(child, alignment) => {
-                Self::Aligned(Box::new(child.without_qualifiers()), *alignment)
+                Self::Aligned(Box::new(child.lowered_for_codegen()), *alignment)
             }
-            Self::Qualified(child, _) => child.without_qualifiers(),
-            Self::Ptr(child) => Self::Ptr(Box::new(child.without_qualifiers())),
-            Self::Arr(child, size) => Self::Arr(Box::new(child.without_qualifiers()), *size),
-            Self::Vla(child, offset) => Self::Vla(Box::new(child.without_qualifiers()), *offset),
+            Self::Qualified(child, _) => child.lowered_for_codegen(),
+            Self::Vector(child, lanes) => {
+                Self::Vector(Box::new(child.lowered_for_codegen()), *lanes)
+            }
+            Self::Ptr(child) => Self::Ptr(Box::new(child.lowered_for_codegen())),
+            Self::Arr(child, size) => Self::Arr(Box::new(child.lowered_for_codegen()), *size),
+            Self::Vla(child, offset) => Self::Vla(Box::new(child.lowered_for_codegen()), *offset),
             Self::Func(args, result) => Self::Func(
-                args.iter().map(Self::without_qualifiers).collect(),
-                Box::new(result.without_qualifiers()),
+                args.iter().map(Self::lowered_for_codegen).collect(),
+                Box::new(result.lowered_for_codegen()),
             ),
             Self::VariadicFunc(args, result) => Self::VariadicFunc(
-                args.iter().map(Self::without_qualifiers).collect(),
-                Box::new(result.without_qualifiers()),
+                args.iter().map(Self::lowered_for_codegen).collect(),
+                Box::new(result.lowered_for_codegen()),
             ),
             _ => self.clone(),
         }
@@ -396,6 +425,7 @@ impl Type {
     pub fn size_of(&self) -> usize {
         match self {
             Type::Qualified(child, _) | Type::Aligned(child, _) => child.size_of(),
+            Type::Enum(value) => value.underlying.borrow().size_of(),
             Type::Void => 0,
             Type::Struct(ty) => ty.definition().borrow().size,
             Type::I8 | Type::SignedChar => 1,

@@ -4533,6 +4533,60 @@ fn invalid_extended_enumerator_ranges(code: &str, output_option: &str) {
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn enum_type_identities_preserve_scopes_and_representation(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r"
+enum First{FIRST=3};enum Second{SECOND=5};
+typedef enum First Alias;
+enum Byte:unsigned char;typedef enum Byte Byte;
+enum Byte:unsigned char{BYTE=250};
+enum OtherByte:unsigned char{OTHER_BYTE=251};
+enum Flag:_Bool{OFF,ON};
+struct Record{volatile enum First value;enum Byte byte;enum Flag flag;};
+struct Record global={FIRST,BYTE,ON};
+enum Wide{WIDE_VALUE=0x100000000UL};
+enum First identity(enum First value){return value;}
+int main(){
+    Alias a=FIRST;enum Second b=SECOND;Byte byte=BYTE;enum Wide wide=WIDE_VALUE;
+    if(_Generic(a,enum First:0,enum Second:1,default:2))return 1;
+    if(_Generic(b,enum Second:0,enum First:1,default:2))return 2;
+    if(_Generic(&a,enum First*:0,enum Second*:1,default:2))return 3;
+    if(_Generic(byte,enum Byte:0,enum OtherByte:1,default:2))return 4;
+    if(_Generic(BYTE,enum Byte:0,enum OtherByte:1,default:2))return 5;
+    {enum First{LOCAL=9};enum First local=LOCAL;
+     if(_Generic(local,Alias:1,default:0)||_Generic(a,enum First:1,default:0))return 6;}
+    volatile int nine=9;enum Flag flag=(enum Flag)nine;
+    global.value=identity(a);global.flag=flag;
+    if(flag!=1 || global.value!=3 || global.flag!=1 || global.byte!=250)return 7;
+    if(sizeof(enum First)!=4 || sizeof(enum Byte)!=1 || sizeof(enum Wide)!=8 || wide!=WIDE_VALUE)return 8;
+    return identity(a)!=3 || (enum Flag)9!=1;
+}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "enum A{ONE};enum B{TWO};typedef enum A T;typedef enum B T;",
+    "enum A{ONE};enum B{TWO};void f(enum A);void f(enum B);",
+    "enum A{ONE};enum B{TWO};int main(){enum A a;enum B *p=&a;return 0;}",
+    "enum A:int{ONE};enum B:int{TWO};int main(){return _Generic(ONE,enum B:1);}",
+    "enum A{ONE};enum B{TWO};int main(){return _Generic(1,enum A:0,enum B:1);}",
+    "enum A{ONE};enum B:enum A{TWO};",
+], ["asm", "llvm"])]
+fn distinct_enum_type_mismatches_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn fixed_underlying_enums_preserve_types_ranges_and_scopes(output_option: &str) {
     let code = r#"
