@@ -452,6 +452,12 @@ so all backends agree on mixed-sign sums and narrowing. It runs after
 unevaluated expressions have been discarded, allowing type queries without
 performing the write. Volatile destinations receive one volatile store.
 
+## Assembly linkage symbols
+
+The x86_64 backend quotes C linkage names in assembly definitions and operands.
+Names such as `flags`, `rax`, or `offset` therefore remain symbols when used in
+calls, address calculations, GOT references, and static initializer relocations.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their

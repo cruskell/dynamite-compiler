@@ -2861,3 +2861,31 @@ fn invalid_checked_integer_addition_is_diagnosed(code: &str, output_option: &str
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn assembler_register_and_operator_names_remain_linkage_symbols(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+long flags=3,offset[2]={5,7},rax=11,xmm0=13,byte=17;
+long *pointers[5]={&flags,offset+1,&rax,&xmm0,&byte};
+extern long rip;extern long rcx(long);
+long *imported=&rip;long (*external_function)(long)=rcx;
+long rdx(long x){return x+flags+rax;}
+long and(long x){return rdx(x)+byte;}
+long (*function)(long)=and;
+long alias(long) __asm__("r8");
+long alias(long x){return x+23;}
+int main(){
+    return flags!=3 || offset[1]!=7 || rax!=11 || xmm0!=13 || byte!=17 || rip!=19
+        || *pointers[0]!=3 || *pointers[1]!=7 || *pointers[2]!=11 || *pointers[3]!=13 || *pointers[4]!=17
+        || *imported!=19 || rdx(2)!=16 || and(2)!=33 || function(2)!=33
+        || rcx(2)!=21 || external_function(2)!=21 || alias(2)!=25;
+}
+"#;
+    let companion = "long rip=19;long rcx(long x){return x+rip;}";
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
