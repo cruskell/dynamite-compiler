@@ -3210,7 +3210,7 @@ impl<'a> AstBuilderImpl<'a> {
             actual.as_ref().map(Type::unqualified),
         ) {
             (target, Some(source)) if target.is_arithmetic() && source.is_arithmetic() => true,
-            (Type::Bool, Some(Type::Ptr(_) | Type::Arr(..) | Type::Vla(..))) => true,
+            (Type::Bool, Some(source)) if source.is_pointer_value() => true,
             (
                 Type::Ptr(target),
                 Some(Type::Ptr(source) | Type::Arr(source, _) | Type::Vla(source, _)),
@@ -4773,7 +4773,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let ty = ty.unqualified().clone();
                 let operand = self.unary();
                 let source = operand.resolve_type().unwrap();
-                if (ty.float_bits().is_some() && source.dest_type().is_some())
+                if (ty.float_bits().is_some() && source.is_pointer_value())
                     || (source.float_bits().is_some() && matches!(ty.unqualified(), Type::Ptr(_)))
                 {
                     self.error_logger

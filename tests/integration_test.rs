@@ -1789,6 +1789,42 @@ struct Pair echo(struct Pair p){struct Pair result={p.y,p.x};return result;}
     assert_eq!(result.status.code(), Some(0));
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn function_designators_convert_to_pointer_values(output_option: &str, optimization: &str) {
+    let code = r"
+int function(void){return 7;}int another(void){return 9;}int variadic(int n,...){return n;}
+int accept(_Bool value){return value;}
+int main(void){
+    _Bool present=function,other=variadic;
+    if(!function || !variadic || !present || !other || function==0 || 0==function)return 1;
+    if(!(function && variadic) || !(0 || function))return 2;
+    if(accept(function)!=1 || accept(variadic)!=1)return 3;
+    int (*pointer)(void)=function;
+    if((unsigned long)function!=(unsigned long)pointer || !(unsigned long)variadic)return 4;
+    if((function?11:13)!=11 || (variadic?17:19)!=17)return 5;
+    int (*choice)(void)=1?function:another;
+    if(choice()!=7 || (0?function:another)()!=9)return 6;
+    return pointer()!=7 || !(_Bool)function || !(_Bool)variadic;
+}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int f(void){return 0;}int main(){double x=(double)f;return 0;}",
+    "int f(int n,...){return n;}int main(){float x=(float)f;return 0;}",
+], ["asm", "llvm"])]
+fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["_Thread_local", "__thread"], ["-O0", "-O2"])]
 fn thread_local_storage_is_private_and_interoperates_with_clang(keyword: &str, optimization: &str) {
     let code = format!(

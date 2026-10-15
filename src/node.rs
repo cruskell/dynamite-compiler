@@ -286,8 +286,18 @@ impl Node {
             | NodeType::LogicalAnd
             | NodeType::LogicalOr => Some(Type::I32),
             NodeType::Conditional => {
-                let then = self.then.as_ref().unwrap().resolve_type();
-                let otherwise = self.els.as_ref().unwrap().resolve_type();
+                let then = self
+                    .then
+                    .as_ref()
+                    .unwrap()
+                    .resolve_type()
+                    .map(|ty| ty.decayed());
+                let otherwise = self
+                    .els
+                    .as_ref()
+                    .unwrap()
+                    .resolve_type()
+                    .map(|ty| ty.decayed());
                 if then.as_ref().is_some_and(|ty| ty.is_arithmetic())
                     && otherwise.as_ref().is_some_and(|ty| ty.is_arithmetic())
                 {

@@ -801,3 +801,11 @@ be writable and have compatible types; their volatile accesses are preserved.
 Native backends use locked compare-exchange or an acquire/release exclusive loop;
 LLVM emits `cmpxchg` with a conditional failure store. Generic buffer-form
 `__atomic_compare_exchange` remains unsupported.
+
+## Function designator value conversions
+
+Function names, including variadic functions, behave as pointer values in
+conditions, logical operators, implicit or explicit `_Bool` conversions and
+explicit pointer-sized integer casts. Both native assembly and LLVM output
+preserve these conversions. Function designators cannot be cast directly to
+floating types, matching the restriction on ordinary pointer casts.

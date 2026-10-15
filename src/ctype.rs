@@ -195,6 +195,23 @@ impl Type {
             _ => None,
         }
     }
+    /// Apply array-to-pointer and function-to-pointer value conversions.
+    pub fn decayed(&self) -> Self {
+        match self.unqualified() {
+            Self::Arr(child, _) | Self::Vla(child, _) => Self::Ptr(child.clone()),
+            ty @ (Self::Func(..) | Self::VariadicFunc(..)) => Self::Ptr(Box::new(ty.clone())),
+            ty => ty.clone(),
+        }
+    }
+
+    /// Whether value conversion yields a pointer, including arrays and functions.
+    pub fn is_pointer_value(&self) -> bool {
+        matches!(
+            self.unqualified(),
+            Self::Ptr(_) | Self::Arr(..) | Self::Vla(..) | Self::Func(..) | Self::VariadicFunc(..)
+        )
+    }
+
     pub fn is_arithmetic(&self) -> bool {
         self.integer_info().is_some() || self.float_bits().is_some()
     }

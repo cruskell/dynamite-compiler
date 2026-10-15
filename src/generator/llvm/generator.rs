@@ -1345,7 +1345,7 @@ impl<'a> IrGenerator<'a> {
             lines.push(format!("  %{register} = inttoptr i64 {wide_value} to ptr"));
             return format!("%{register}");
         }
-        if *target == Type::Bool && matches!(source, Type::Ptr(_) | Type::Arr(..) | Type::Vla(..)) {
+        if *target == Type::Bool && source.is_pointer_value() {
             let predicate = options.new_register();
             options.register_queue.pop();
             lines.push(format!("  %{predicate} = icmp ne ptr {value}, null"));
@@ -1354,9 +1354,7 @@ impl<'a> IrGenerator<'a> {
             lines.push(format!("  %{result} = zext i1 %{predicate} to i8"));
             return format!("%{result}");
         }
-        if matches!(source, Type::Ptr(_) | Type::Arr(..) | Type::Vla(..))
-            && target.integer_info().is_some()
-        {
+        if source.is_pointer_value() && target.integer_info().is_some() {
             let register = options.new_register();
             options.register_queue.pop();
             lines.push(format!(
@@ -1407,7 +1405,7 @@ impl<'a> IrGenerator<'a> {
         lines.extend(self.gen_node(node, options));
         let value = options.register_queue.pop().unwrap();
         let ty = node.resolve_type().unwrap();
-        let pointer = matches!(ty, Type::Ptr(_) | Type::Arr(..) | Type::Vla(..));
+        let pointer = ty.is_pointer_value();
         let register = options.new_register();
         options.register_queue.pop();
         lines.push(format!(
@@ -2429,8 +2427,10 @@ impl<'a> IrGenerator<'a> {
             } else {
                 Type::arithmetic_type(&left_ty, &right_ty)
             }
-        } else if let Type::Arr(child, _) = &left_ty {
-            Type::Ptr(child.clone())
+        } else if left_ty.is_pointer_value() {
+            left_ty.decayed()
+        } else if right_ty.is_pointer_value() && matches!(node.nt, NodeType::Eq | NodeType::Ne) {
+            right_ty.decayed()
         } else {
             left_ty.clone()
         };
