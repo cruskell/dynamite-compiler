@@ -1735,7 +1735,7 @@ impl<'a> AsmGenerator<'a> {
         if let Some(label) = self.symbol_names.get(&s.to_string()) {
             return format!("\"{label}\"");
         }
-        format!(
+        let symbol = format!(
             "{}{}",
             if let Os::MacOS = self.target_os {
                 "_"
@@ -1744,6 +1744,7 @@ impl<'a> AsmGenerator<'a> {
             },
             s
         )
-        .replace('@', "L_")
+        .replace('@', "L_");
+        format!("\"{symbol}\"")
     }
 }
