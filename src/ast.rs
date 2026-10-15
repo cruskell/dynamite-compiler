@@ -1527,6 +1527,17 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn attempt_unqualified_type(&mut self) -> Option<Type> {
+        if self.tokens[self.cur].tt != TokenType::Reserved {
+            if self.tokens[self.cur].tt == TokenType::Ident {
+                let name = self.tokens[self.cur].s_value.clone();
+                if let Some(Identifier::TypeDef(ty)) = self.resolve_name(&name) {
+                    let ty = ty.clone();
+                    self.cur += 1;
+                    return Some(ty);
+                }
+            }
+            return None;
+        }
         if let Some(token) = self
             .attempt_reserved("typeof")
             .or_else(|| self.attempt_reserved("__typeof"))
@@ -1547,16 +1558,19 @@ impl<'a> AstBuilderImpl<'a> {
             }
             return Some(Type::Integer128 { signed });
         }
-        if matches!(word, "signed" | "unsigned") && self.tokens[self.cur + 1].s_value == "__int128"
+        if matches!(word, "signed" | "unsigned")
+            && self.tokens[self.cur + 1].tt == TokenType::Reserved
+            && self.tokens[self.cur + 1].s_value == "__int128"
         {
             let signed = word == "signed";
             self.cur += 2;
             return Some(Type::Integer128 { signed });
         }
-        if (self.tokens[self.cur].s_value == "long"
-            && self.tokens[self.cur + 1].s_value == "double")
-            || (self.tokens[self.cur].s_value == "double"
-                && self.tokens[self.cur + 1].s_value == "long")
+        if self.tokens[self.cur + 1].tt == TokenType::Reserved
+            && ((self.tokens[self.cur].s_value == "long"
+                && self.tokens[self.cur + 1].s_value == "double")
+                || (self.tokens[self.cur].s_value == "double"
+                    && self.tokens[self.cur + 1].s_value == "long"))
         {
             let token = self.tokens[self.cur].clone();
             self.cur += 2;
@@ -1591,7 +1605,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut width = false;
         let mut sign = false;
         let mut longs = 0;
-        loop {
+        while self.tokens[self.cur].tt == TokenType::Reserved {
             let word = self.tokens[self.cur].s_value.as_str();
             match word {
                 "unsigned" | "signed" => {
@@ -1638,14 +1652,6 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 Type::integer(bits, signed)
             });
-        }
-        if let TokenType::Ident = self.tokens[self.cur].tt {
-            let name = self.tokens[self.cur].s_value.clone();
-            if let Some(Identifier::TypeDef(ty)) = self.resolve_name(&name) {
-                let ty = ty.clone();
-                self.cur += 1;
-                return Some(ty);
-            }
         }
         None
     }
