@@ -17,7 +17,7 @@ impl AstBuilderImpl<'_> {
         self.expect_reserved(":");
         let mut outputs = vec![];
         let mut read_write = 0;
-        loop {
+        while !matches!(self.tokens[self.cur].s_value.as_str(), ":" | ")") {
             if outputs.len() == 7 {
                 self.error_logger.print_error_position(
                     token.pos,
@@ -54,6 +54,7 @@ impl AstBuilderImpl<'_> {
             }
         }
         let mut inputs = vec![];
+        let mut memory = false;
         if self.attempt_reserved(":").is_some() {
             if !matches!(self.tokens[self.cur].s_value.as_str(), ":" | ")") {
                 loop {
@@ -98,8 +99,18 @@ impl AstBuilderImpl<'_> {
                 }
             }
             if self.attempt_reserved(":").is_some() && self.tokens[self.cur].s_value != ")" {
-                self.error_logger
-                    .print_error_position(token.pos, "asm clobbers are not supported");
+                loop {
+                    if self.inline_assembly_string() != "memory" {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "asm supports only the memory clobber",
+                        );
+                    }
+                    memory = true;
+                    if self.attempt_reserved(",").is_none() {
+                        break;
+                    }
+                }
             }
         }
         if render_inline_assembly(&template, |index, _| {
@@ -135,8 +146,9 @@ impl AstBuilderImpl<'_> {
             destination.alignment = alignment;
             destinations.push(destination);
         }
+        let volatile = volatile || destinations.is_empty();
         children.push(Node {
-            nt: NodeType::InlineAsm(volatile),
+            nt: NodeType::InlineAsm(volatile, memory),
             dest: template,
             children: destinations,
             args: inputs,

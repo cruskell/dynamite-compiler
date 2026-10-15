@@ -29,7 +29,7 @@ impl AstBuilderImpl<'_> {
                     | NodeType::Continue
                     | NodeType::Goto
                     | NodeType::Label
-                    | NodeType::InlineAsm(_)
+                    | NodeType::InlineAsm(_, _)
             )
         });
         let expression = if has_value { statements.pop() } else { None };

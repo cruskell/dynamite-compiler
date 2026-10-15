@@ -1729,6 +1729,7 @@ impl<'a> IrGenerator<'a> {
         &self,
         node: &Node,
         volatile: bool,
+        memory: bool,
         options: &mut Options,
     ) -> Vec<String> {
         let mut lines = vec![];
@@ -1796,20 +1797,35 @@ impl<'a> IrGenerator<'a> {
             .into_iter()
             .map(String::from),
         );
+        if memory {
+            constraints.push("~{memory}".to_string());
+        }
         let types = node
             .children
             .iter()
             .map(|output| Self::gen_type(output.resolve_type().unwrap()))
             .collect::<Vec<_>>();
-        let result_type = if types.len() == 1 {
+        let result_type = if types.is_empty() {
+            "void".to_string()
+        } else if types.len() == 1 {
             types[0].clone()
         } else {
             format!("{{ {} }}", types.join(", "))
         };
-        let result = format!("%{}", options.new_register());
-        options.register_queue.pop();
+        let result = if types.is_empty() {
+            String::new()
+        } else {
+            let register = format!("%{}", options.new_register());
+            options.register_queue.pop();
+            register
+        };
+        let assignment = if types.is_empty() {
+            String::new()
+        } else {
+            format!("{result} = ")
+        };
         lines.push(format!(
-            "  {result} = call {result_type} asm {}\"{template}\", \"{}\"({})",
+            "  {assignment}call {result_type} asm {}\"{template}\", \"{}\"({})",
             if volatile { "sideeffect " } else { "" },
             constraints.join(","),
             arguments.join(", ")
@@ -1860,8 +1876,8 @@ impl<'a> IrGenerator<'a> {
             NodeType::Prefetch(write, locality) => {
                 return self.gen_prefetch(node, write, locality, options);
             }
-            NodeType::InlineAsm(volatile) => {
-                return self.gen_inline_assembly(node, volatile, options);
+            NodeType::InlineAsm(volatile, memory) => {
+                return self.gen_inline_assembly(node, volatile, memory, options);
             }
             NodeType::Atomic(operation) => {
                 return self.gen_atomic(node, operation, options);

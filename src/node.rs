@@ -63,7 +63,7 @@ pub(crate) fn render_inline_assembly(
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
-    InlineAsm(bool),
+    InlineAsm(bool, bool),
     Prefetch(bool, u8),
     Atomic(AtomicOperation),
     VaStart,
@@ -171,7 +171,7 @@ impl Node {
     fn has_effects(node: &Self, value: bool) -> bool {
         if matches!(
             node.nt,
-            NodeType::InlineAsm(_)
+            NodeType::InlineAsm(_, _)
                 | NodeType::Prefetch(..)
                 | NodeType::Atomic(_)
                 | NodeType::Assign
@@ -361,7 +361,7 @@ impl Node {
                     }
                 }
             }
-            NodeType::Cast | NodeType::FloatAbs | NodeType::InlineAsm(_) => self.cty.clone(),
+            NodeType::Cast | NodeType::FloatAbs | NodeType::InlineAsm(_, _) => self.cty.clone(),
             NodeType::Num => Some(self.cty.clone().unwrap_or(Type::I32)),
             NodeType::Sequence => self.children.last().and_then(Node::resolve_type),
             NodeType::Add | NodeType::Sub => {
