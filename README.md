@@ -699,3 +699,8 @@ pointer conversions, and const-qualified objects remain nonassignable.
 Explicit scalar casts also accept top-level qualifiers on the type name, including
 qualified pointer typedefs and qualified void. The result uses the unqualified
 type; qualifiers within a pointer type remain part of that type.
+
+Integer bitwise complement uses the promoted operand width in both constant
+expressions and native execution. In particular, `~0U` is the unsigned 32-bit
+value `4294967295`, including when widened to unsigned long or used in enum
+initializers with an explicit unsigned underlying type.
