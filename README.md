@@ -290,6 +290,10 @@ Non-pointer and function-pointer applications are diagnosed.
 
 ## Inline function declarations
 
+GNU `__inline` and `__inline__` spellings are accepted wherever the standard
+`inline` function specifier is accepted. They preserve the existing C99 inline
+linkage rules and diagnostics; they do not request GNU89 inline semantics.
+
 `static inline` and `extern inline` definitions emit internal and external
 functions respectively. A plain external `inline` definition supplies no
 external definition when every file-scope declaration is inline without extern.

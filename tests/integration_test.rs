@@ -1169,6 +1169,71 @@ fn inline_function_definitions(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix([false, true], ["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_inline_spellings_preserve_standard_inline_linkage(
+    trailing_underscores: bool,
+    output_option: &str,
+    optimization: &str,
+) {
+    let keyword = if trailing_underscores {
+        "__inline__"
+    } else {
+        "__inline"
+    };
+    let code = format!(
+        r"
+int __inline__count;
+struct Pair{{long x;long y;}};
+static {keyword} __attribute__((always_inline)) struct Pair make(long x){{
+    __inline__count++;struct Pair p={{x,x+1}};return p;
+}}
+{keyword} int external(void){{return 3;}}
+extern {keyword} int defined(void){{return 9;}}
+int {keyword} postfix(void){{return 5;}}
+extern int postfix(void);
+int main(){{
+    {keyword} int external(void);
+    struct Pair (*p)(long)=make;struct Pair value=p(7);
+    return external()-7+defined()-9+postfix()-5+__inline__count-1
+        +(value.x!=7)+(value.y!=8);
+}}
+"
+    );
+    assert_eq!(
+        compile_and_run_with_c_flags(
+            &code,
+            output_option,
+            Some("int external(void){return 7;}"),
+            &[optimization]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "INLINE int object;",
+    "INLINE int f(void){static int x;return x;}",
+    "int main(){INLINE int local;return 0;}",
+], [false, true], ["asm", "llvm"])]
+fn invalid_gnu_inline_spellings_are_diagnosed(
+    code: &str,
+    trailing_underscores: bool,
+    output_option: &str,
+) {
+    let keyword = if trailing_underscores {
+        "__inline__"
+    } else {
+        "__inline"
+    };
+    let code = code.replace("INLINE", keyword);
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(&code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn inline_uses_external_definition(output_option: &str) {
     let code = "inline int value(void){static const int local=1;return local;}int main(){return value()-7;}";
