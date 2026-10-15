@@ -2,7 +2,7 @@ use crate::generator::Os;
 
 #[derive(Default)]
 pub enum InstOperator {
-    InlineAsm(String),
+    InlineAsm,
     FMOV,
     FADD,
     FSUB,
@@ -74,7 +74,7 @@ impl InstOperator {
             return "movzb";
         }
         match self {
-            InlineAsm(_) => "",
+            InlineAsm => "",
             FMOV => "fmov",
             FADD => "fadd",
             FSUB => "fsub",
@@ -218,6 +218,7 @@ impl Display for Register {
 }
 
 pub enum InstOperand {
+    InlineAsmTemplate(String),
     Reg(Register),
     Num(usize),
     Label(String),
@@ -232,6 +233,7 @@ pub enum InstOperand {
 impl Display for InstOperand {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         f.write_str(&match self {
+            InstOperand::InlineAsmTemplate(template) => template.clone(),
             InstOperand::Reg(r) => format!("{}", r),
             InstOperand::Num(i) => format!("#{}", i),
             InstOperand::Label(l) => l.clone(),
@@ -278,7 +280,9 @@ pub struct Instruction {
 }
 impl Instruction {
     pub fn to_string(&self, target_os: Os) -> String {
-        if let InstOperator::InlineAsm(template) = &self.operator {
+        if let (InstOperator::InlineAsm, Some(InstOperand::InlineAsmTemplate(template))) =
+            (&self.operator, &self.operand1)
+        {
             return template.clone();
         }
         if let (Some(destination), Some(base), Some(InstOperand::Num(value))) =

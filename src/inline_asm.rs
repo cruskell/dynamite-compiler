@@ -1,7 +1,7 @@
 //! Parse the register-output subset of GNU extended assembly.
 
 use super::*;
-use crate::node::{InlineAsmPart, InlineAssembly};
+use crate::node::render_inline_assembly;
 
 impl AstBuilderImpl<'_> {
     pub(super) fn inline_assembly(&mut self, token: Token) -> Node {
@@ -14,27 +14,10 @@ impl AstBuilderImpl<'_> {
         }
         self.expect_reserved("(");
         let template = self.inline_assembly_string();
-        let mut parts = vec![];
-        let mut text = String::new();
-        let mut chars = template.chars();
-        while let Some(ch) = chars.next() {
-            if ch != '%' {
-                text.push(ch);
-                continue;
-            }
-            match chars.next() {
-                Some('%') => text.push('%'),
-                Some('0') => {
-                    parts.push(InlineAsmPart::Text(std::mem::take(&mut text)));
-                    parts.push(InlineAsmPart::Output);
-                }
-                _ => self.error_logger.print_error_position(
-                    token.pos,
-                    "supported asm template escapes are %0 and %%",
-                ),
-            }
+        if render_inline_assembly(&template, "%0").is_none() {
+            self.error_logger
+                .print_error_position(token.pos, "supported asm template escapes are %0 and %%");
         }
-        parts.push(InlineAsmPart::Text(text));
         self.expect_reserved(":");
         if self.inline_assembly_string() != "=r" {
             self.error_logger.print_error_position(
@@ -91,7 +74,8 @@ impl AstBuilderImpl<'_> {
             Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, temporary);
         destination.alignment = alignment;
         let value = Node {
-            nt: NodeType::InlineAsm(Box::new(InlineAssembly { parts, volatile })),
+            nt: NodeType::InlineAsm(volatile),
+            dest: template,
             token: Some(token.clone()),
             cty: Some(ty),
             ..Node::default()
