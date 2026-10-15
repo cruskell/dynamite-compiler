@@ -1137,3 +1137,15 @@ retains pointed-to qualifiers, and supports the compiler's scalar, aggregate,
 enum, array, and function types. An omitted array bound is compatible with a known
 bound; differing known bounds remain incompatible. Preprocessing advertises this
 builtin through `__has_builtin`.
+
+## GNU statement expressions
+
+Within a function, `({ statements; expression; })` evaluates scoped statements
+and yields the final expression's value. Nested scopes, records, floating values,
+array/function decay, local loops and switches, and variable-length array cleanup
+are supported. The result is captured before cleanup and is not assignable.
+An empty block or a final non-expression statement yields void. `__extension__`
+markers are accepted before declarations, statements, and expressions.
+Labels, goto, return, and break/continue that escape the statement expression are
+currently diagnosed. GNU statement expressions are not integer constant
+expressions and cannot appear at file scope.

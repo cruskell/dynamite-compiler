@@ -1436,17 +1436,28 @@ impl<'a> AsmGenerator<'a> {
             }
             NodeType::If | NodeType::Conditional => {
                 let branch_num = node.token.as_ref().unwrap().pos;
+                let branch = |child: &Node| {
+                    if node.nt == NodeType::If {
+                        self.gen_statements(
+                            std::slice::from_ref(child),
+                            offset,
+                            breakable_branch_num,
+                        )
+                    } else {
+                        self.gen_node(child, offset, breakable_branch_num)
+                    }
+                };
                 return vec![
                     self.gen_node(node.cond.as_ref().unwrap(), offset, breakable_branch_num),
                     Assembly::inst1(POP, RAX),
                     Assembly::inst2(CMP, RAX, 0),
                     Assembly::inst1(JE, ElseFlag(branch_num)),
-                    self.gen_node(node.then.as_ref().unwrap(), offset, breakable_branch_num),
+                    branch(node.then.as_deref().unwrap()),
                     Assembly::inst1(JMP, EndFlag(branch_num)),
                     format!("{}:", ElseFlag(branch_num)).into(),
                     node.els
-                        .as_ref()
-                        .map(|node| self.gen_node(node, offset, breakable_branch_num))
+                        .as_deref()
+                        .map(branch)
                         .unwrap_or_else(|| vec![].into()),
                     format!("{}:", EndFlag(branch_num)).into(),
                     if matches!(node.nt, NodeType::Conditional)
@@ -1486,7 +1497,6 @@ impl<'a> AsmGenerator<'a> {
                 lines.push(Assembly::inst1(JMP, default));
                 lines.push(self.gen_node(node.then.as_ref().unwrap(), offset, branch_num));
                 lines.push(format!("{}:", EndFlag(branch_num)).into());
-                lines.push(Assembly::reset_stack(offset));
                 return lines.into();
             }
             NodeType::Goto => {
@@ -1495,16 +1505,22 @@ impl<'a> AsmGenerator<'a> {
             NodeType::Label => {
                 return vec![
                     format!(".Lgoto.{}:", node.value.unwrap()).into(),
-                    Assembly::reset_stack(offset),
-                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    self.gen_statements(
+                        std::slice::from_ref(node.lhs.as_deref().unwrap()),
+                        offset,
+                        breakable_branch_num,
+                    ),
                 ]
                 .into();
             }
             NodeType::Case => {
                 return vec![
                     format!(".Lcase.{}:", node.token.as_ref().unwrap().pos).into(),
-                    Assembly::reset_stack(offset),
-                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    self.gen_statements(
+                        std::slice::from_ref(node.lhs.as_deref().unwrap()),
+                        offset,
+                        breakable_branch_num,
+                    ),
                 ]
                 .into();
             }
@@ -1512,10 +1528,12 @@ impl<'a> AsmGenerator<'a> {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 return vec![
                     format!("{}:", BeginFlag(branch_num)).into(),
-                    Assembly::reset_stack(offset),
-                    self.gen_node(node.then.as_ref().unwrap(), offset, branch_num),
+                    self.gen_statements(
+                        std::slice::from_ref(node.then.as_deref().unwrap()),
+                        offset,
+                        branch_num,
+                    ),
                     format!(".Lcontinue.{}:", branch_num).into(),
-                    Assembly::reset_stack(offset),
                     self.gen_node(node.cond.as_ref().unwrap(), offset, branch_num),
                     Assembly::inst1(POP, RAX),
                     Assembly::inst2(CMP, RAX, 0),
@@ -1529,12 +1547,15 @@ impl<'a> AsmGenerator<'a> {
                 let v = vec![
                     format!(".Lcontinue.{}:", branch_num).into(),
                     format!("{}:", BeginFlag(branch_num)).into(),
-                    Assembly::reset_stack(offset),
                     self.gen_node(node.cond.as_ref().unwrap(), offset, branch_num),
                     Assembly::inst1(POP, RAX),
                     Assembly::inst2(CMP, RAX, 0),
                     Assembly::inst1(JE, EndFlag(branch_num)),
-                    self.gen_node(node.then.as_ref().unwrap(), offset, branch_num),
+                    self.gen_statements(
+                        std::slice::from_ref(node.then.as_deref().unwrap()),
+                        offset,
+                        branch_num,
+                    ),
                     Assembly::inst1(JMP, BeginFlag(branch_num)),
                     format!("{}:", EndFlag(branch_num)).into(),
                 ];
@@ -1544,14 +1565,9 @@ impl<'a> AsmGenerator<'a> {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 let v = vec![
                     node.ini.as_ref().map_or(Vec::new().into(), |node| {
-                        vec![
-                            self.gen_node(node, offset, branch_num),
-                            Assembly::inst1(POP, RAX),
-                        ]
-                        .into()
+                        self.gen_statements(std::slice::from_ref(node.as_ref()), offset, branch_num)
                     }),
                     format!("{}:", BeginFlag(branch_num)).into(),
-                    Assembly::reset_stack(offset),
                     node.cond
                         .as_ref()
                         .map_or(Assembly::inst2(MOV, RAX, 1), |node| {
@@ -1563,9 +1579,12 @@ impl<'a> AsmGenerator<'a> {
                         }),
                     Assembly::inst2(CMP, RAX, 0),
                     Assembly::inst1(JE, EndFlag(branch_num)),
-                    self.gen_node(node.then.as_ref().unwrap(), offset, branch_num),
+                    self.gen_statements(
+                        std::slice::from_ref(node.then.as_deref().unwrap()),
+                        offset,
+                        branch_num,
+                    ),
                     format!(".Lcontinue.{}:", branch_num).into(),
-                    Assembly::reset_stack(offset),
                     node.upd.as_ref().map_or(Vec::new().into(), |node| {
                         vec![
                             self.gen_node(node, offset, branch_num),
@@ -1927,8 +1946,26 @@ impl<'a> AsmGenerator<'a> {
             .map(|node| {
                 vec![
                     self.gen_node(node, offset, branch_num),
-                    Assembly::inst1(POP, RAX),
-                    Assembly::reset_stack(offset),
+                    if matches!(
+                        node.nt,
+                        NodeType::Block
+                            | NodeType::DefVar
+                            | NodeType::If
+                            | NodeType::While
+                            | NodeType::DoWhile
+                            | NodeType::For
+                            | NodeType::Switch
+                            | NodeType::Case
+                            | NodeType::Label
+                            | NodeType::Goto
+                            | NodeType::Break
+                            | NodeType::Continue
+                            | NodeType::Return
+                    ) {
+                        vec![].into()
+                    } else {
+                        Assembly::inst1(POP, RAX)
+                    },
                 ]
                 .into()
             })

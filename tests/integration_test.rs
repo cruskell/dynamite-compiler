@@ -6898,3 +6898,55 @@ int reference(void){return __builtin_types_compatible_p(enum Flags,unsigned int)
         compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
+
+#[test_matrix([
+    "int evaluate(void){int n=0;int value=({int x=++n;({int y=x+3;y*2;});});return value+n;}",
+    "int evaluate(void){int n=0;int a[3]={3,5,7};int *p=({a;});int size=sizeof(({n++;a;}));return size+p[1]+n;}",
+    "static int helper(int x){return x+3;}int evaluate(void){int (*call)(int)=({helper;});return call(7);}",
+    "struct Pair{long x,y;};int evaluate(void){struct Pair p=({struct Pair local={3,5};local;});return p.x+3*p.y+({struct Pair other={7,9};other;}).y;}",
+    "int evaluate(void){int n=3;long result=({int values[n++];values[0]=7;values[n-2]=9;sizeof(values)+values[0]+values[n-2];});return result+n;}",
+    "int evaluate(void){int sum=({int s=0;for(int i=0;i<7;i++){if(i==2)continue;if(i==5)break;s+=i;}switch(s){case 8:s+=3;break;default:s=0;}s;});return sum;}",
+    "int evaluate(void){double value=({double a=1.5;double b=2.25;a+b;});return value*4;}",
+    "int evaluate(void){const char *p=({\"asm\";});return p[1]+sizeof(({\"{\";}));}",
+    "int evaluate(void){int x=7;_Static_assert(__builtin_types_compatible_p(__typeof__(({asm(\"\" : \"+r\"(x));})),void),\"asm statement\");({asm(\"\" : \"+r\"(x));});return x!=7;}",
+    "int evaluate(void){int outer=7;return outer+({int n=0;while(n<3)n++;if(n==3)n+=2;n;});}",
+    "int evaluate(void){int outer=11;return ({int n=0;do n++;while(n<3);n;})+outer;}",
+    "int evaluate(void){int total=0;for(int i=0;i<1000;i++)total+=({int n=0;do n++;while(n<3);n;});return total-3000;}",
+    "int evaluate(void){int n=0;({if(1)n++;});({int only_declaration=3;});({});_Static_assert(__builtin_types_compatible_p(__typeof__(({int x;})),void),\"declaration result\");return n+sizeof(({n++;7;}));}",
+], ["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_statement_expressions_match_clang(body: &str, output_option: &str, optimization: &str) {
+    let companion = body.replace("int evaluate(void)", "int reference(void)");
+    let code =
+        format!("{body}\nint reference(void);int main(void){{return evaluate()!=reference();}}");
+    let output =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn gnu_extension_markers_preserve_declarations_and_evaluation(output_option: &str) {
+    let code = r#"
+__extension__ typedef unsigned long long Word;
+__extension__ static Word value=7;
+#define ONCE(x) __extension__ ({int captured=(x);captured*2;})
+int main(void){__extension__ Word local=value;int n=0;int result=ONCE(++n);
+    return local!=7 || result!=2 || n!=1 || __extension__ (n+2)!=3;}
+"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int value=({3;});",
+    "int main(){int n=({int hidden=3;hidden;});return hidden;}",
+    "int main(){({int value=3;value;})=7;return 0;}",
+    "int main(){int n=({int declaration;});return 0;}",
+    "int main(){int n=({return 3;7;});return n;}",
+    "int main(){while(1){int n=({break;7;});}return 0;}",
+    "int main(){int n=({goto done;7;});done:return n;}",
+], ["asm", "llvm"])]
+fn invalid_or_unsupported_statement_expressions_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

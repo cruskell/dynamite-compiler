@@ -71,13 +71,6 @@ impl Assembly {
             operand2: Some(operand2.into()),
         })
     }
-    pub fn reset_stack(stack_size: usize) -> Assembly {
-        vec![
-            Assembly::inst2(MOV, RSP, RBP),
-            Assembly::inst2(SUB, RSP, stack_size),
-        ]
-        .into()
-    }
     pub fn epilogue() -> Assembly {
         Assembly::Group(vec![
             Assembly::inst2(MOV, RSP, RBP),
