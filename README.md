@@ -5,6 +5,28 @@ A compiler for a language with syntax similar to the C language, written in Rust
 > [!IMPORTANT]
 > This project is development phase and is not ready for use.
 
+## Verified project builds
+
+The following upstream tags were clean-built with Dynamite compiler commit
+[`f1be756`](https://github.com/cruskell/dynamite-compiler/commit/f1be756843a35d7b28e5ad49b5e10090b6e72fef)
+on macOS ARM64 using the LLVM backend. Upstream source files were unchanged.
+
+| Project | Verified tag | Validation |
+| --- | --- | --- |
+| Git | [`v2.56.0`](https://github.com/git/git/tree/v2.56.0) | Clean build and repository-operation smoke tests. |
+| Redis | [`8.10.2`](https://github.com/redis/redis/tree/8.10.2) | Clean build, basic commands and Lua, and all 158 upstream test units plus five additional test groups. |
+
+Git was built with `NO_RUST=YesPlease NO_PRECOMPILED_HEADER=YesPlease`.
+Redis used the default macOS libc allocator, with TLS and separately cloned
+external modules disabled. Its build probe automatically disabled optional
+Vector Sets because C11 `_Atomic` is not supported.
+
+These checks used a `CC` adapter around the Dynamite CLI. Dynamite parsed the
+projects' C sources and generated LLVM IR; Clang handled preprocessing,
+IR-to-object lowering, and linking. C compilation did not fall back to Clang's
+C frontend. The listed platform and build options define the scope of these
+checks.
+
 ## Proposed direction
 
 Dynamite aims to shorten the time from editing C code to seeing results and
