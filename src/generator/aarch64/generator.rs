@@ -13,12 +13,16 @@ use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{Node, NodeType};
 use crate::token::Token;
-use std::{collections::HashSet, fmt::Display};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
 pub struct AsmGenerator<'a> {
     error_logger: &'a dyn error::ErrorLogger,
     target_os: Os,
     defined_symbols: HashSet<String>,
+    symbol_names: HashMap<String, String>,
 }
 
 const ARGS_REG: [Register; 8] = [X0, X1, X2, X3, X4, X5, X6, X7];
@@ -41,12 +45,14 @@ impl<'a> AsmGenerator<'a> {
             error_logger,
             target_os,
             defined_symbols: HashSet::new(),
+            symbol_names: HashMap::new(),
         }
     }
     fn generate(&self, ast: ProgramAst) -> Box<dyn crate::generator::Assembly> {
         let generator = Self {
             error_logger: self.error_logger,
             target_os: self.target_os,
+            symbol_names: ast.symbol_names.clone(),
             defined_symbols: ast
                 .functions
                 .iter()
@@ -142,16 +148,12 @@ impl<'a> AsmGenerator<'a> {
             },
             format!("  .balign {}", gv.ty.align_of().max(gv.alignment)).into(),
             format!("{}:", self.with_prefix(name)).into(),
-            Self::gen_initializer_element(&gv.ty, gv.data.as_ref(), self.target_os),
+            self.gen_initializer_element(&gv.ty, gv.data.as_ref()),
         ]
         .into()
     }
 
-    fn gen_initializer_element(
-        ty: &Type,
-        data: Option<&GlobalVariableData>,
-        target_os: Os,
-    ) -> Assembly {
+    fn gen_initializer_element(&self, ty: &Type, data: Option<&GlobalVariableData>) -> Assembly {
         let data = if !matches!(ty, Type::Arr(..) | Type::Struct(_)) {
             let mut value = data;
             while let Some(GlobalVariableData::Arr(elements)) = value {
@@ -172,14 +174,8 @@ impl<'a> AsmGenerator<'a> {
                 let mut index = 0;
                 while index < bytes.len() {
                     if let Some((symbol, delta)) = addresses.get(&index) {
-                        let prefix = if symbol.starts_with(".str.") {
-                            "L_"
-                        } else if matches!(target_os, Os::MacOS) {
-                            "_"
-                        } else {
-                            ""
-                        };
-                        lines.push(format!("  .8byte {prefix}{symbol}{delta:+}").into());
+                        let symbol = self.address_symbol(symbol);
+                        lines.push(format!("  .8byte {symbol}{delta:+}").into());
                         index += 8;
                     } else {
                         lines.push(format!("  .byte {}", bytes[index]).into());
@@ -209,10 +205,9 @@ impl<'a> AsmGenerator<'a> {
                     if member.offset > end {
                         lines.push(format!("  .zero {}", member.offset - end).into());
                     }
-                    lines.push(Self::gen_initializer_element(
+                    lines.push(self.gen_initializer_element(
                         &member.ty,
                         elements.and_then(|elements| elements.get(i)),
-                        target_os,
                     ));
                     end = member.offset + member.ty.size_of();
                 }
@@ -228,11 +223,7 @@ impl<'a> AsmGenerator<'a> {
                             .enumerate()
                             .filter(|(i, _)| i < size)
                             .map(|(_, d)| {
-                                Self::gen_initializer_element(
-                                    children_ty.as_ref(),
-                                    Some(d),
-                                    target_os,
-                                )
+                                self.gen_initializer_element(children_ty.as_ref(), Some(d))
                             })
                             .collect::<Vec<Assembly>>()
                             .into(),
@@ -296,27 +287,13 @@ impl<'a> AsmGenerator<'a> {
             _ => format!(
                 "  .8byte {}",
                 if let Some(GlobalVariableData::Address { symbol, offset }) = data {
-                    let prefix = if symbol.starts_with(".str.") {
-                        "L_"
-                    } else if matches!(target_os, Os::MacOS) {
-                        "_"
-                    } else {
-                        ""
-                    };
-                    format!("{prefix}{symbol}{offset:+}")
+                    let symbol = self.address_symbol(symbol);
+                    format!("{symbol}{offset:+}")
                 } else if let Some(GlobalVariableData::Elem(s)) = data {
                     if s.starts_with("@.str.") {
                         s.replace('@', "L_")
                     } else if let Some(name) = s.strip_prefix('@') {
-                        format!(
-                            "{}{}",
-                            if matches!(target_os, Os::MacOS) {
-                                "_"
-                            } else {
-                                ""
-                            },
-                            name
-                        )
+                        self.address_symbol(name)
                     } else {
                         s.clone()
                     }
@@ -1795,7 +1772,18 @@ impl<'a> AsmGenerator<'a> {
         }
     }
 
+    fn address_symbol(&self, symbol: &str) -> String {
+        if symbol.starts_with(".str.") {
+            format!("L_{symbol}")
+        } else {
+            self.with_prefix(symbol)
+        }
+    }
+
     fn with_prefix<T: Display>(&self, s: T) -> String {
+        if let Some(label) = self.symbol_names.get(&s.to_string()) {
+            return format!("\"{label}\"");
+        }
         format!(
             "{}{}",
             if let Os::MacOS = self.target_os {

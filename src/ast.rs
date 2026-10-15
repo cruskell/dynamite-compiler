@@ -107,12 +107,14 @@ pub struct AstBuilderImpl<'a> {
     pub functions: HashMap<String, Func>,
     pub global_variables: HashMap<String, GlobalVariable>,
     pub string_literals: Vec<Token>,
+    pub symbol_names: HashMap<String, String>,
 }
 
 pub struct ProgramAst<'a> {
     pub functions: &'a HashMap<String, Func>,
     pub global_variables: &'a HashMap<String, GlobalVariable>,
     pub string_literals: &'a Vec<Token>,
+    pub symbol_names: &'a HashMap<String, String>,
 }
 
 pub enum Identifier {
@@ -174,6 +176,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
             functions: &self.functions,
             global_variables: &self.global_variables,
             string_literals: &self.string_literals,
+            symbol_names: &self.symbol_names,
         }
     }
 }
@@ -264,6 +267,7 @@ impl<'a> AstBuilderImpl<'a> {
             functions: HashMap::new(),
             global_variables: HashMap::new(),
             string_literals: Vec::new(),
+            symbol_names: HashMap::new(),
         };
         let va_list = builder.builtin_va_list_type();
         builder.scope_stack[0].insert("__builtin_va_list".into(), Identifier::TypeDef(va_list));
@@ -365,6 +369,47 @@ impl<'a> AstBuilderImpl<'a> {
             self.error_logger
                 .print_error_position(token.pos, "array size is too large");
         }
+    }
+
+    fn assembler_label(&mut self, name: &Token) {
+        if !matches!(
+            self.tokens[self.cur].s_value.as_str(),
+            "asm" | "__asm" | "__asm__"
+        ) {
+            return;
+        }
+        self.cur += 1;
+        self.expect_reserved("(");
+        let label = self.attempt(TokenType::Str).unwrap_or_else(|| {
+            self.error_logger.print_error_position(
+                self.tokens[self.cur].pos,
+                "assembler label requires a string literal",
+            );
+            unreachable!()
+        });
+        let value = std::str::from_utf8(&label.string_bytes).unwrap_or("");
+        if label.string_encoding != crate::token::StringEncoding::Narrow
+            || value.is_empty()
+            || value == "."
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_.$".contains(&byte))
+        {
+            self.error_logger.print_error_position(
+                label.pos,
+                "assembler label requires an identifier-like symbol",
+            );
+        }
+        self.expect_reserved(")");
+        if let Some(previous) = self.symbol_names.get(&name.s_value) {
+            if previous != value {
+                self.error_logger
+                    .print_error_position(label.pos, "conflicting assembler labels");
+            }
+        }
+        self.symbol_names
+            .insert(name.s_value.clone(), value.to_owned());
+        self.declaration_annotations();
     }
 
     fn declaration_annotations(&mut self) {
@@ -1527,6 +1572,7 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(self.tokens[self.cur].pos, "ident expected");
                 unreachable!()
             });
+            self.assembler_label(&token);
             self.validate_type_layout(&ty, &token);
             if ty.is_variably_modified() {
                 self.error_logger.print_error_position(
