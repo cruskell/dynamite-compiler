@@ -1826,6 +1826,56 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn builtin_bzero_clears_only_the_requested_bytes(output_option: &str, optimization: &str) {
+    let code = r#"
+#if !__has_builtin(__builtin_bzero)
+#error missing zeroing builtin
+#endif
+char buffer[64];int pointers,lengths;
+void *destination(void){pointers++;return buffer+7;}
+unsigned long length(void){lengths++;return 17;}
+_Static_assert(_Generic(__builtin_bzero((void*)0,0),int:0,default:1),"void builtin result");
+int main(void){
+for(int i=0;i<64;i++)buffer[i]=90;
+__builtin_bzero(destination(),length());
+if(pointers!=1 || lengths!=1)return 1;
+__builtin_bzero(buffer,0);
+for(int i=0;i<64;i++)if(buffer[i]!=(i>=7 && i<24?0:90))return 2;
+return 0;
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){__builtin_bzero();}",
+    "int main(){char a[3];__builtin_bzero(a,1,2);}",
+    "int main(){__builtin_bzero(3,1);}",
+    "int main(){const char a[3]={0};__builtin_bzero(a,1);}",
+    "int main(){char a[3];__builtin_bzero(a,a);}",
+    "int main(){char a[3];int n=__builtin_bzero(a,1);}",
+    "void (*pointer)(void*,unsigned long)=__builtin_bzero;",
+    "int bzero;int main(){char a[3];__builtin_bzero(a,1);}",
+    "int bzero(void*,unsigned long);int main(){char a[3];__builtin_bzero(a,1);}",
+], ["asm", "llvm"])]
+fn invalid_builtin_bzero_calls_have_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn integer128_capability_selects_portable_arithmetic(output_option: &str, optimization: &str) {
     let code = r#"
 #ifdef __SIZEOF_INT128__

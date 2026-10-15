@@ -44,6 +44,7 @@ fn compiler_macros(command: &mut Command) {
         "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
     ]);
     for name in [
+        "__builtin_bzero",
         "__atomic_exchange_n",
         "__atomic_fetch_add",
         "__atomic_add_fetch",
@@ -541,6 +542,9 @@ mod option_tests {
 #endif
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing
+#endif
+#if !__has_builtin(__builtin_bzero)
+#error missing memory zero builtin
 #endif
 #if !__has_attribute(common) || !__has_attribute(__common__)
 #error missing common attribute
