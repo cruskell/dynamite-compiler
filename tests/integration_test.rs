@@ -3129,3 +3129,44 @@ fn invalid_incomplete_external_record_uses_are_diagnosed(code: &str, output_opti
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn leading_nullability_on_pointer_typedefs_preserves_types(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+typedef int *Pointer;typedef int (*Callback)(int);
+_Nullable Pointer nullable;
+const _Nullable Pointer constant=0;
+_Nullable const Pointer also_constant=0;
+_Nonnull Pointer identity(_Nullable Pointer value){return value;}
+_Null_unspecified Callback callback;
+_Nullable_result Pointer maybe(_Nonnull Pointer value){return value;}
+int increment(int n){return n+1;}
+int main(){
+    int n=7;nullable=&n;callback=increment;
+    _Nullable Pointer local=identity(nullable);
+    _Nonnull Pointer _Nonnull repeated=&n;
+    if(local!=&n || repeated!=&n || maybe(&n)!=&n || callback(*local)!=8)return 1;
+    if(constant || also_constant)return 2;
+    return _Generic(nullable,int*:0,default:1) || _Generic(callback,int(*)(int):0,default:1);
+}
+"#;
+    let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "_Nullable int object;",
+    "_Nonnull int *object;",
+    "typedef int *Pointer;_Nullable Pointer _Nonnull object;",
+    "typedef int *Pointer;_Nonnull const _Nullable Pointer object;",
+    "typedef int *Pointer;int main(){const _Nullable Pointer p=0;p=0;return 0;}",
+], ["asm", "llvm"])]
+fn invalid_leading_nullability_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

@@ -1013,8 +1013,11 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn pointer_qualifiers(&mut self) -> Qualifiers {
+        self.qualifiers_with_nullability(&mut None)
+    }
+
+    fn qualifiers_with_nullability(&mut self, nullability: &mut Option<Nullability>) -> Qualifiers {
         let mut qualifiers = Qualifiers::default();
-        let mut nullability = None;
         loop {
             let current = self.attempt_qualifiers();
             qualifiers.constant |= current.constant;
@@ -1029,7 +1032,7 @@ impl<'a> AstBuilderImpl<'a> {
                     "conflicting pointer nullability annotations",
                 );
             }
-            nullability = Some(annotation);
+            *nullability = Some(annotation);
             self.cur += 1;
         }
         qualifiers
@@ -1095,18 +1098,24 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn attempt_type(&mut self) -> Option<Type> {
         let saved = self.cur;
-        let mut q = self.attempt_qualifiers();
+        let mut nullability = None;
+        let mut q = self.qualifiers_with_nullability(&mut nullability);
         let Some(ty) = self.attempt_unqualified_type() else {
             self.cur = saved;
             return None;
         };
         let suffix = if matches!(ty.unqualified(), Type::Ptr(_)) {
-            self.pointer_qualifiers()
+            self.qualifiers_with_nullability(&mut nullability)
         } else {
             let qualifiers = self.attempt_qualifiers();
-            if self.nullability().is_some() {
+            if nullability.is_some() || self.nullability().is_some() {
+                let position = if nullability.is_some() {
+                    saved
+                } else {
+                    self.cur
+                };
                 self.error_logger.print_error_position(
-                    self.tokens[self.cur].pos,
+                    self.tokens[position].pos,
                     "nullability requires a pointer type",
                 );
             }

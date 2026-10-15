@@ -349,6 +349,12 @@ or add runtime checks. Non-pointer applications and conflicting annotations on
 the same pointer declarator are diagnosed. Ordinary const/volatile/restrict
 qualification remains effective when mixed with these annotations.
 
+Nullability annotations may also precede a pointer typedef, as in
+`_Nullable Handle find(void)` where `Handle` is a pointer typedef. Ordinary
+`const`, `volatile` and `restrict` qualifiers retain their meaning, and
+conflicting annotations before and after the same typedef are diagnosed.
+A leading annotation on a non-pointer base type remains invalid.
+
 ## Extended integer object layouts
 
 `__int128`, `signed __int128`, `unsigned __int128`, `__int128_t`, and
