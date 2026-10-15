@@ -335,7 +335,9 @@ impl<'a> IrGenerator<'a> {
             Type::Integer { bits, .. } => format!("i{bits}"),
             Type::Bool => "i8".to_string(),
             Type::Ptr(_) => "ptr".to_string(),
-            Type::Arr(child, size) => format!("[{} x {}]", size, Self::gen_type(*child)),
+            Type::Arr(child, size) => {
+                format!("[{} x {}]", size.unwrap_or(0), Self::gen_type(*child))
+            }
             Type::Vla(child, _) => format!("[0 x {}]", Self::gen_type(*child)),
             Type::VariadicFunc(args, result) => format!(
                 "{} ({}, ...)",
@@ -460,7 +462,7 @@ impl<'a> IrGenerator<'a> {
                     format!(
                         "{} [{}]",
                         Self::gen_type(ty.clone()),
-                        (0..*size)
+                        (0..size.unwrap_or(0))
                             .map(|i| self.gen_initializer_element(children_ty, v.get(i)))
                             .collect::<Vec<String>>()
                             .join(", "),
@@ -744,6 +746,9 @@ impl<'a> IrGenerator<'a> {
                 let grouped = cfg!(target_arch = "aarch64")
                     && matches!(ty, Type::Struct(_))
                     && argument.parts.len() > 1;
+                if argument.parts.is_empty() {
+                    continue;
+                }
                 let group_type = Self::aggregate_parameter_types(ty, argument)[0].clone();
                 if group_type == "i128" {
                     lines.push(format!(
@@ -818,6 +823,9 @@ impl<'a> IrGenerator<'a> {
                 options.register_queue.pop().unwrap()
             };
             let parameter_types = Self::aggregate_parameter_types(ty, argument);
+            if parameter_types.is_empty() {
+                continue;
+            }
             let aligned_variadic = cfg!(all(target_arch = "aarch64", target_os = "macos"))
                 && node.variadic
                 && index >= node.parameter_types.len()
@@ -997,6 +1005,11 @@ impl<'a> IrGenerator<'a> {
         let ty = options.return_ty.clone();
         let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
         let address = options.register_queue.pop().unwrap();
+        if ty.size_of() == 0 {
+            lines.push("  ret void".into());
+            options.terminated = true;
+            return lines;
+        }
         let parts = crate::generator::abi::aggregate_parts(&ty, &Self::target_arch());
         if let Some(pointer) = options.return_pointer.clone() {
             let register = options.new_register();
@@ -2315,7 +2328,7 @@ mod tests {
     fn global_array_initializers_fill_missing_elements() {
         let logger = error::ErrorPrinter::new("");
         let generator = IrGenerator::new(&logger);
-        let ty = Type::Arr(Box::new(Type::I32), 3);
+        let ty = Type::Arr(Box::new(Type::I32), Some(3));
         assert_eq!(
             generator.gen_initializer_element(&ty, None),
             "[3 x i32] zeroinitializer"
@@ -2325,7 +2338,7 @@ mod tests {
             generator.gen_initializer_element(&ty, Some(&data)),
             "[3 x i32] [i32 7, i32 0, i32 0]"
         );
-        let nested = Type::Arr(Box::new(ty), 2);
+        let nested = Type::Arr(Box::new(ty), Some(2));
         let data = GlobalVariableData::Arr(vec![data]);
         assert_eq!(
             generator.gen_initializer_element(&nested, Some(&data)),

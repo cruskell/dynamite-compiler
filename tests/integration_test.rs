@@ -3439,3 +3439,103 @@ fn floating_infinity_builtins_reject_unsupported_long_double(name: &str, output_
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn zero_length_arrays_are_complete_without_inferred_elements(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+extern long zero[];long zero[0];extern long zero[];long *saved=zero;
+static int empty[0]={};const int readonly[0]={};char empty_text[0]="";
+extern int foreign[];int same_address(long*);
+int inferred[]={2,5,7};char text[]="abc";
+int first(int values[0]){return values[0];}
+int main(){int local[1-1]={};char local_text[0]="";int actual[1]={11};long wide_zero[0];char narrow_zero[0];
+if(!narrow_zero || ((unsigned long)wide_zero&7))return 6;
+if(sizeof(zero)!=0 || sizeof(empty)!=0 || sizeof(readonly)!=0 || sizeof(empty_text)!=0 || sizeof(local)!=0 || sizeof(local_text)!=0)return 1;
+if(_Alignof(int[0])!=4 || sizeof(int[2][0])!=0 || sizeof(int[0][3])!=0)return 2;
+if(sizeof(inferred)!=12 || inferred[2]!=7 || sizeof(text)!=4 || text[3]!=0)return 3;
+if(__builtin_object_size(zero,0)!=0 || __builtin_object_size(local,1)!=0 || __builtin_object_size(foreign,0)!=(unsigned long)-1)return 4;
+if(same_address(saved) || foreign[1]!=13 || first(actual)!=11)return 5;
+return _Generic(&zero,long(*)[0]:0,default:1);
+}
+"#;
+    let companion = "int foreign[2]={3,13};extern long zero[0];int same_address(long *value){return value!=zero;}";
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn zero_length_record_members_preserve_layout_and_clang_calls(
+    output_option: &str,
+    optimization: &str,
+) {
+    let declarations = r#"
+struct Tail{char tag;long count;int values[0];};
+struct Middle{int prefix;long zero[0];char after;};
+struct Packed{char tag;long zero[0];short after;} __attribute__((packed));
+"#;
+    let code = format!(
+        r#"{declarations}
+#include <stdlib.h>
+struct Tail global={{3,7,{{}}}};struct Middle middle={{1,{{}},2}};struct Packed packed={{4,{{}},5}};
+struct Tail echo(struct Tail);int inspect(struct Middle*,struct Packed*);
+int main(){{
+if(sizeof(struct Tail)!=16 || _Alignof(struct Tail)!=8 || sizeof(global.values)!=0 || (char*)global.values-(char*)&global!=16)return 1;
+if(sizeof(struct Middle)!=16 || _Alignof(struct Middle)!=8 || (char*)&middle.after-(char*)&middle!=8)return 2;
+if(sizeof(struct Packed)!=3 || _Alignof(struct Packed)!=1 || (char*)&packed.after-(char*)&packed!=1)return 3;
+if(inspect(&middle,&packed))return 4;
+struct Tail value=echo(global);if(value.tag!=3 || value.count!=10)return 5;
+struct Tail *p=malloc(sizeof(struct Tail)+2*sizeof(int));p->tag=6;p->count=2;p->values[0]=17;p->values[1]=19;
+struct Tail copy=*p;int bad=copy.tag!=6 || copy.count!=2 || p->values[0]+p->values[1]!=36;free(p);
+if(bad || __builtin_object_size(global.values,1)!=0)return 6;
+return 0;
+}}
+"#
+    );
+    let companion = format!(
+        r#"{declarations}
+struct Tail echo(struct Tail value){{value.count+=3;return value;}}
+int inspect(struct Middle *m,struct Packed *p){{return sizeof(*m)!=16 || sizeof(*p)!=3 || m->prefix!=1 || m->after!=2 || p->tag!=4 || p->after!=5;}}
+"#
+    );
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn zero_length_members_allow_empty_record_values(output_option: &str, optimization: &str) {
+    let code = r#"
+#include <stdarg.h>
+struct Empty{int values[0];};int calls;struct Empty global;
+struct Empty generated(struct Empty value){calls++;return value;}
+long variadic(int tag,...){va_list ap;va_start(ap,tag);long before=va_arg(ap,long);struct Empty value=va_arg(ap,struct Empty);long after=va_arg(ap,long);va_end(ap);return before+after+sizeof(value);}
+long foreign(long,struct Empty,long);
+int main(){struct Empty value={{}};if(sizeof(value)!=0)return 1;if(sizeof(global)!=0)return 2;if(_Alignof(struct Empty)!=4)return 3;long result=foreign(7,generated(value),11);if(result!=18)return 4;if(calls!=2)return 5;if(variadic(0,7l,generated(value),11l)!=18 || calls!=3)return 6;if(sizeof(generated(value))!=0 || calls!=3)return 7;return 0;}
+"#;
+    let companion = "struct Empty{int values[0];};struct Empty generated(struct Empty);long variadic(int,...);long foreign(long before,struct Empty value,long after){struct Empty result=generated(value);return variadic(0,before,result,after);}";
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "extern int values[];int main(){return sizeof(values);}",
+    "int values[]={};",
+    "int values[0]={1};",
+    "int main(){int values[0]={1};return 0;}",
+    "extern int values[0];extern int values[2];",
+    "int first(int values[static 0]);",
+    "int main(){int values[-1];return 0;}",
+    "struct S{int n;int values[];int after;};",
+    "int (*left)[0];int (*right)[2];int main(){left=right;return 0;}",
+], ["asm", "llvm"])]
+fn invalid_zero_length_array_contexts_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
