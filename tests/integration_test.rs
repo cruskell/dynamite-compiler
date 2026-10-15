@@ -1300,6 +1300,101 @@ fn invalid_gnu_inline_attributes_are_diagnosed(code: &str, output_option: &str) 
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn typeof_preserves_arrays_functions_qualifiers_and_unevaluated_values(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+int values[3]={2,4,6};
+__typeof__(values) copy={1,3,5};
+__typeof("abc") text="abc";
+int add(int x){return x+7;}
+typedef typeof(add) Function;
+Function *function=add;
+struct Pair{long x;int y;};
+int calls;
+int side(void){calls++;return 2;}
+int main(){
+    const int original=7;
+    typeof(original) qualified=9;
+    __typeof__(values) *array=&copy;
+    __typeof__(side()) local=3;
+    typeof((calls++,local)) integer=5;
+    typeof(struct Pair) pair={11,13};
+    typeof(void) *nothing=0;
+    __typeof__(int (*)(int)) pointer=function;
+    typeof(*(int*)0) from_null=0;
+    return calls+local-3+integer-5+qualified-9
+        +(sizeof(copy)!=12)+(sizeof(text)!=4)+(text[2]!='c')
+        +((*array)[2]!=5)+(pointer(2)!=9)+(pair.x!=11)+(pair.y!=13)
+        +_Generic(&qualified,const int*:0,default:1)+(nothing!=0)+from_null;
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn typeof_variable_modified_types_capture_bounds_and_side_effects(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r"
+int main(){
+    int n=3;
+    int original[n];
+    n=7;
+    typeof(original) copy;
+    if(sizeof(copy)!=12)return 1;
+    int calls=0;
+    __typeof__(*(calls++,&original)) other;
+    if(calls!=1 || sizeof(other)!=12)return 2;
+    int bound=2;
+    typedef __typeof__(int[++bound]) Array;
+    Array first;Array second;
+    if(bound!=3 || sizeof(first)!=12 || sizeof(second)!=12)return 3;
+    int k=1;
+    if(0){sizeof(typeof(int[++k]));}
+    int ignored=0 && sizeof(typeof(int[++k]));
+    unsigned long alignment=_Alignof(typeof(int[++k]));
+    if(k!=1 || ignored || alignment!=4)return 4;
+    unsigned long size=sizeof(typeof(int[++k]));
+    if(k!=2 || size!=8)return 5;
+    int *p=original;
+    __typeof__((int(*)[n++])p++) pointer=(void*)original;
+    if(n!=8 || p!=original+1 || sizeof(*pointer)!=28)return 6;
+    first[2]=7;second[2]=9;copy[2]=11;other[2]=13;
+    return first[2]+second[2]+copy[2]+other[2]-40;
+}
+";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "typeof() x;",
+    "typeof(int named) x;",
+    "int main(){const int x=1;typeof(x) y=2;y=3;return y;}",
+    "struct S{int x:3;};int main(){struct S s;typeof(s.x) x;return 0;}",
+    "typeof(void) object;",
+    "extern int values[];typeof(values) object;",
+], ["asm", "llvm"])]
+fn invalid_typeof_specifiers_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn inline_uses_external_definition(output_option: &str) {
     let code = "inline int value(void){static const int local=1;return local;}int main(){return value()-7;}";
