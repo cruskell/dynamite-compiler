@@ -5989,6 +5989,16 @@ impl<'a> AstBuilderImpl<'a> {
             if let Some(operation) = Self::atomic_operation(&t.s_value) {
                 return self.atomic_builtin(t, operation);
             }
+            if t.s_value == "__builtin_bzero" {
+                return self.runtime_builtin(
+                    t,
+                    "bzero",
+                    Type::Func(
+                        vec![Type::Ptr(Box::new(Type::Void)), Type::integer(64, false)],
+                        Box::new(Type::Void),
+                    ),
+                );
+            }
             if t.s_value == "__builtin_constant_p" {
                 return self.constant_query_builtin(t);
             }

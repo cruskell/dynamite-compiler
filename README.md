@@ -910,3 +910,12 @@ explicit clobbers, register modifiers, basic assembly and asm-goto are not yet
 supported and are diagnosed. Empty input and clobber sections are accepted.
 Narrow ASCII templates are supported, including concatenation and escaped
 newlines; embedded nulls and wide strings are rejected.
+
+## Memory zeroing builtin
+
+`__builtin_bzero(destination, length)` is available as a direct-call builtin in
+native and LLVM output. It calls the target C runtime's `bzero` operation with
+`void *` and `size_t` arguments and a void result. Arguments are evaluated once,
+only the requested byte range is cleared, and zero lengths leave storage intact.
+No prior runtime prototype is required; incompatible declarations or invalid
+argument types are diagnosed. The preprocessing capability probe advertises it.
