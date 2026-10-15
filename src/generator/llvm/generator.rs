@@ -1732,11 +1732,17 @@ impl<'a> IrGenerator<'a> {
         options: &mut Options,
     ) -> Vec<String> {
         let mut lines = vec![];
-        let matching = node.lhs.as_ref().map(|input| {
-            lines.extend(self.gen_node(input, options));
-            let value = options.register_queue.pop().unwrap();
-            format!("{} {value}", Self::gen_type(input.resolve_type().unwrap()))
-        });
+        let mut matching = vec![];
+        for (index, output) in node.children.iter().enumerate() {
+            if node.value.unwrap() & (1 << index) != 0 {
+                lines.extend(self.gen_node(output, options));
+                let value = options.register_queue.pop().unwrap();
+                matching.push((
+                    index,
+                    format!("{} {value}", Self::gen_type(output.resolve_type().unwrap())),
+                ));
+            }
+        }
         let mut arguments = vec![];
         for input in &node.args {
             lines.extend(self.gen_node(input, options));
@@ -1752,7 +1758,12 @@ impl<'a> IrGenerator<'a> {
             } else {
                 crate::generator::Arch::X86_64
             };
-            crate::generator::asm_register_width(arch, modifier, 8)?;
+            let operand = node.children.iter().chain(&node.args).nth(index)?;
+            crate::generator::asm_register_width(
+                arch,
+                modifier,
+                operand.resolve_type()?.size_of(),
+            )?;
             Some(if let Some(modifier) = modifier {
                 format!("${{{index}:{modifier}}}")
             } else {
@@ -1770,28 +1781,64 @@ impl<'a> IrGenerator<'a> {
             .bytes()
             .map(|byte| format!("\\{byte:02X}"))
             .collect::<String>();
-        let mut constraints = vec!["=r"; node.args.len() + 1];
-        for constraint in &mut constraints[1..] {
-            *constraint = "r";
+        let mut constraints = vec!["=r".to_string(); node.children.len()];
+        constraints.extend(vec!["r".to_string(); node.args.len()]);
+        for (index, value) in matching {
+            constraints.push(index.to_string());
+            arguments.push(value);
         }
-        if let Some(matching) = matching {
-            constraints.push("0");
-            arguments.push(matching);
-        }
-        constraints.extend(if cfg!(target_arch = "x86_64") {
-            vec!["~{dirflag}", "~{fpsr}", "~{flags}"]
+        constraints.extend(
+            if cfg!(target_arch = "x86_64") {
+                vec!["~{dirflag}", "~{fpsr}", "~{flags}"]
+            } else {
+                vec!["~{cc}"]
+            }
+            .into_iter()
+            .map(String::from),
+        );
+        let types = node
+            .children
+            .iter()
+            .map(|output| Self::gen_type(output.resolve_type().unwrap()))
+            .collect::<Vec<_>>();
+        let result_type = if types.len() == 1 {
+            types[0].clone()
         } else {
-            vec!["~{cc}"]
-        });
+            format!("{{ {} }}", types.join(", "))
+        };
         let result = format!("%{}", options.new_register());
-        options.register_queue.push(result.clone());
+        options.register_queue.pop();
         lines.push(format!(
-            "  {result} = call {} asm {}\"{template}\", \"{}\"({})",
-            Self::gen_type(node.resolve_type().unwrap()),
+            "  {result} = call {result_type} asm {}\"{template}\", \"{}\"({})",
             if volatile { "sideeffect " } else { "" },
             constraints.join(","),
             arguments.join(", ")
         ));
+        for (index, output) in node.children.iter().enumerate() {
+            let value = if types.len() == 1 {
+                result.clone()
+            } else {
+                let value = format!("%{}", options.new_register());
+                options.register_queue.pop();
+                lines.push(format!(
+                    "  {value} = extractvalue {result_type} {result}, {index}"
+                ));
+                value
+            };
+            lines.extend(self.gen_addr(output, options));
+            let address = options.register_queue.pop().unwrap();
+            lines.push(format!(
+                "  store {}{} {value}, ptr {address}, align {}",
+                if output.volatile_access {
+                    "volatile "
+                } else {
+                    ""
+                },
+                types[index],
+                Self::access_alignment(output)
+            ));
+        }
+        options.register_queue.push("0".to_string());
         lines
     }
 

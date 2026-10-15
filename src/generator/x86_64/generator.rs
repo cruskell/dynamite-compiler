@@ -1221,7 +1221,6 @@ impl<'a> AsmGenerator<'a> {
         offset: usize,
         breakable_branch_num: usize,
     ) -> Assembly {
-        let ty = node.resolve_type().unwrap();
         let registers = [RAX, R10, R11, RCX, RDX, RSI, RDI];
         let names = [
             ["%al", "%ax", "%eax", "%rax"],
@@ -1232,12 +1231,9 @@ impl<'a> AsmGenerator<'a> {
             ["%sil", "%si", "%esi", "%rsi"],
             ["%dil", "%di", "%edi", "%rdi"],
         ];
+        let operands = node.children.iter().chain(&node.args).collect::<Vec<_>>();
         let template = render_inline_assembly(&node.dest, |index, modifier| {
-            let natural = if index == 0 {
-                ty.size_of()
-            } else {
-                node.args.get(index - 1)?.resolve_type()?.size_of()
-            };
+            let natural = operands.get(index)?.resolve_type()?.size_of();
             let width = crate::generator::asm_register_width(
                 crate::generator::Arch::X86_64,
                 modifier,
@@ -1253,30 +1249,46 @@ impl<'a> AsmGenerator<'a> {
             unreachable!()
         });
         let mut lines = vec![];
-        if let Some(input) = &node.lhs {
+        let matching = node
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| node.value.unwrap() & (1 << index) != 0)
+            .collect::<Vec<_>>();
+        for (_, input) in &matching {
             lines.push(self.gen_node(input, offset, breakable_branch_num));
         }
         for input in &node.args {
             lines.push(self.gen_node(input, offset, breakable_branch_num));
         }
-        for (index, input) in node.args.iter().enumerate().rev() {
-            let register = registers[index + 1];
+        for (index, input) in node
+            .args
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, input)| (index + node.children.len(), input))
+            .chain(matching.into_iter().rev())
+        {
+            let register = registers[index];
             lines.push(Assembly::inst1(POP, register));
             if input.resolve_type().unwrap().size_of() == 4 {
                 lines.push(Self::normalize_integer(&Type::integer(32, false), register));
             }
         }
-        if node.lhs.is_some() {
-            lines.push(Assembly::inst1(POP, RAX));
-            if ty.size_of() == 4 {
-                lines.push(Self::normalize_integer(&Type::integer(32, false), RAX));
-            }
+        lines.push(Assembly::inst1(InlineAsm, InlineAsmTemplate(template)));
+        // Buffer every result before address generation can overwrite operand registers.
+        for register in registers[..node.children.len()].iter().rev() {
+            lines.push(Assembly::inst1(PUSH, *register));
         }
-        lines.extend([
-            Assembly::inst1(InlineAsm, InlineAsmTemplate(template)),
-            Self::normalize_integer(&ty, RAX),
-            Assembly::inst1(PUSH, RAX),
-        ]);
+        for output in &node.children {
+            lines.push(self.gen_addr(output, offset, breakable_branch_num));
+            lines.extend([
+                Assembly::inst1(POP, RAX),
+                Assembly::inst1(POP, RDI),
+                self.operation2rdi(output.resolve_type(), MOV, RAX),
+            ]);
+        }
+        lines.push(Assembly::inst1(PUSH, 0));
         lines.into()
     }
 

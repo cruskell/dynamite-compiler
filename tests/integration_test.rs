@@ -2571,7 +2571,6 @@ fn register_output_inline_assembly_preserves_volatile_ir() {
     "int main(){int x;asm(\"%[name]\" : \"=r\"(x));}",
     "int main(){int memory;asm(\"nop\" : \"+m\"(memory));}",
     "int main(){int x;asm(\"nop\" : \"=m\"(x));}",
-    "int main(){int x;asm(\"nop\" : \"=r\"(x),\"=r\"(x));}",
     "int main(){int x;asm(\"nop\" : \"=r\"(x) : \"m\"(1));}",
     "int main(){int x;asm(\"nop\" : \"=r\"(x) : : \"memory\");}",
     "int main(){const int x=0;asm(\"nop\" : \"=r\"(x));}",
@@ -6945,6 +6944,75 @@ int main(void){__extension__ Word local=value;int n=0;int result=ONCE(++n);
     "int main(){int n=({goto done;7;});done:return n;}",
 ], ["asm", "llvm"])]
 fn invalid_or_unsupported_statement_expressions_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn multiple_asm_outputs_preserve_values_and_lvalue_effects(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+int calls;int value=11;int *get_pointer(void){calls++;return &value;}
+int main(void){volatile int values[2]={3,5};int i=0;unsigned long wide=7;
+    asm volatile("" : "+r"(values[i++]), "+r"(*get_pointer()), "+r"(wide));
+    long a=1,b=2,c=3,d=4,e=5,f=6,g=7;
+    asm("" : "+r"(a), "+r"(b), "+r"(c), "+r"(d), "+r"(e), "+r"(f), "+r"(g));
+    return i!=1 || calls!=1 || values[0]!=3 || value!=11 || wide!=7
+        || a!=1 || b!=2 || c!=3 || d!=4 || e!=5 || f!=6 || g!=7;}
+"#;
+    let output = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn multiple_asm_outputs_preserve_types_and_operand_numbers(
+    output_option: &str,
+    optimization: &str,
+) {
+    let arithmetic = if cfg!(target_arch = "aarch64") {
+        r"add %w0, %w0, %w3\n\tadd %x1, %x1, %x4\n\tmov %w2, #17"
+    } else {
+        r"addl %3, %0\n\taddq %4, %1\n\tmovl $17, %2"
+    };
+    let pointer = if cfg!(target_arch = "aarch64") {
+        r"mov %x1, %x2\n\tmov %w0, #19"
+    } else {
+        r"movq %2, %1\n\tmovl $19, %0"
+    };
+    let boundary = if cfg!(target_arch = "aarch64") {
+        "add %w0, %w0, %w2"
+    } else {
+        "addl %2, %0"
+    };
+    let code = format!(
+        r#"
+int object;
+int main(void){{int a=-4;unsigned long b=9;volatile int c;int x=5;unsigned long y=13;
+    asm volatile("{arithmetic}" : "+r"(a), "+r"(b), "=r"(c) : "r"(x), "r"(y));
+    if(a!=1 || b!=22 || c!=17)return 1;
+    void *address;int tag;
+    asm("{pointer}" : "=r"(tag), "=r"(address) : "r"(&object));
+    if(address!=&object || tag!=19)return 2;
+    int first=7,second=11;
+    asm("{boundary}" : "+r"(first), "+r"(second) : "r"(1), "r"(2), "r"(3), "r"(4), "r"(5));
+    return first!=8 || second!=11;}}
+"#
+    );
+    let output = compile_and_run_with_c_flags(&code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    "int main(){int x=1;asm(\"\" : \"+r\"(x),\"+r\"(x),\"+r\"(x),\"+r\"(x),\"+r\"(x),\"+r\"(x),\"+r\"(x),\"+r\"(x));}",
+    "int main(){int x=1,y=2;asm(\"\" : \"+r\"(x),\"+r\"(y) : \"r\"(1),\"r\"(2),\"r\"(3),\"r\"(4),\"r\"(5),\"r\"(6));}",
+    "int main(){int x,y;asm(\"%2\" : \"=r\"(x),\"=r\"(y));}",
+    "int main(){int x,y;asm(\"\" : \"=r\"(x),\"=&r\"(y));}",
+], ["asm", "llvm"])]
+fn unsupported_multiple_asm_outputs_are_diagnosed(code: &str, output_option: &str) {
     assert!(
         std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
             .is_err()

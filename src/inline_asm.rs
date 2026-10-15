@@ -1,4 +1,4 @@
-//! Parse the register-output subset of GNU extended assembly.
+//! Parse the numbered register-operand subset of GNU extended assembly.
 
 use super::*;
 use crate::node::render_inline_assembly;
@@ -15,34 +15,56 @@ impl AstBuilderImpl<'_> {
         self.expect_reserved("(");
         let template = self.inline_assembly_string();
         self.expect_reserved(":");
-        let constraint = self.inline_assembly_string();
-        if !matches!(constraint.as_str(), "=r" | "+r") {
-            self.error_logger
-                .print_error_position(token.pos, "asm requires one =r or +r output");
-        }
-        self.expect_reserved("(");
-        let output = self.assign();
-        self.expect_reserved(")");
-        self.expect_assignable(&output);
-        let ty = output.resolve_type().unwrap();
-        if output.bit_field.is_some()
-            || !(ty
-                .integer_info()
-                .is_some_and(|(bits, _)| matches!(bits, 32 | 64))
-                || matches!(ty, Type::Ptr(_)))
-        {
-            self.error_logger.print_error_position(
-                token.pos,
-                "asm output requires a writable 32-bit or 64-bit integer or pointer object",
-            );
+        let mut outputs = vec![];
+        let mut read_write = 0;
+        loop {
+            if outputs.len() == 7 {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "asm supports at most seven register operands",
+                );
+            }
+            let constraint = self.inline_assembly_string();
+            if !matches!(constraint.as_str(), "=r" | "+r") {
+                self.error_logger
+                    .print_error_position(token.pos, "asm requires =r or +r outputs");
+            }
+            self.expect_reserved("(");
+            let output = self.assign();
+            self.expect_reserved(")");
+            self.expect_assignable(&output);
+            let ty = output.resolve_type().unwrap();
+            if output.bit_field.is_some()
+                || !(ty
+                    .integer_info()
+                    .is_some_and(|(bits, _)| matches!(bits, 32 | 64))
+                    || matches!(ty, Type::Ptr(_)))
+            {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "asm outputs require writable 32-bit or 64-bit integer or pointer objects",
+                );
+            }
+            if constraint == "+r" {
+                read_write |= 1 << outputs.len();
+            }
+            outputs.push(output);
+            if self.attempt_reserved(",").is_none() {
+                break;
+            }
         }
         let mut inputs = vec![];
         if self.attempt_reserved(":").is_some() {
             if !matches!(self.tokens[self.cur].s_value.as_str(), ":" | ")") {
                 loop {
-                    if inputs.len() == 6 || self.inline_assembly_string() != "r" {
-                        self.error_logger
-                            .print_error_position(token.pos, "asm supports at most six r inputs");
+                    if inputs.len() == 6
+                        || outputs.len() + inputs.len() == 7
+                        || self.inline_assembly_string() != "r"
+                    {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "asm supports at most six r inputs and seven total register operands",
+                        );
                     }
                     self.expect_reserved("(");
                     let mut input = self.expr();
@@ -81,7 +103,7 @@ impl AstBuilderImpl<'_> {
             }
         }
         if render_inline_assembly(&template, |index, _| {
-            (index <= inputs.len()).then(String::new)
+            (index < outputs.len() + inputs.len()).then(String::new)
         })
         .is_none()
         {
@@ -90,48 +112,43 @@ impl AstBuilderImpl<'_> {
         }
         self.expect_reserved(")");
         self.expect_reserved(";");
-        let alignment = output.alignment;
-        let temporary = self.register_local_variable(
-            Token {
-                s_value: format!(".asm.output.{}", token.pos),
-                ..token.clone()
-            },
-            Type::Ptr(Box::new(output.object_type().unwrap())),
-        );
-        let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, output);
-        let save = Node::new_with_op(
-            Some(token.clone()),
-            NodeType::Assign,
-            temporary.clone(),
-            address,
-        );
-        let mut destination =
-            Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, temporary);
-        destination.alignment = alignment;
-        let value = Node {
+        let mut children = vec![];
+        let mut destinations = vec![];
+        for (index, output) in outputs.into_iter().enumerate() {
+            let alignment = output.alignment;
+            let temporary = self.register_local_variable(
+                Token {
+                    s_value: format!(".asm.output.{}.{index}", token.pos),
+                    ..token.clone()
+                },
+                Type::Ptr(Box::new(output.object_type().unwrap())),
+            );
+            let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, output);
+            children.push(Node::new_with_op(
+                Some(token.clone()),
+                NodeType::Assign,
+                temporary.clone(),
+                address,
+            ));
+            let mut destination =
+                Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, temporary);
+            destination.alignment = alignment;
+            destinations.push(destination);
+        }
+        children.push(Node {
             nt: NodeType::InlineAsm(volatile),
-            lhs: (constraint == "+r").then(|| Box::new(destination.clone())),
             dest: template,
+            children: destinations,
             args: inputs,
+            value: Some(read_write),
             token: Some(token.clone()),
-            cty: Some(ty),
+            cty: Some(Type::Void),
             ..Node::default()
-        };
-        let update = Node::new_with_op(Some(token.clone()), NodeType::Assign, destination, value);
+        });
         Node {
             nt: NodeType::Sequence,
-            token: Some(token.clone()),
-            children: vec![
-                save,
-                update,
-                Node {
-                    nt: NodeType::Cast,
-                    token: Some(token.clone()),
-                    cty: Some(Type::Void),
-                    lhs: Some(Box::new(Node::new_with_num(Some(token.clone()), 0))),
-                    ..Node::default()
-                },
-            ],
+            token: Some(token),
+            children,
             ..Node::default()
         }
     }
