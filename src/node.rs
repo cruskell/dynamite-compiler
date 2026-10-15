@@ -145,13 +145,13 @@ pub struct Node {
     // for "for" statement
     pub ini: Option<Box<Node>>,
     pub upd: Option<Box<Node>>,
-    // for block, definition of local variables
+    // For blocks, local definitions, or inline assembly output destinations.
     pub children: Vec<Node>,
     // flag of global variables
     pub global_name: String,
     /// String symbol name, or the validated source template for inline assembly.
     pub dest: String,
-    // for calling function
+    // Function arguments or inline assembly inputs.
     pub args: Vec<Node>,
     pub parameter_types: Vec<Type>,
     pub variadic: bool,

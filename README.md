@@ -997,26 +997,26 @@ platform common-symbol directive, and LLVM output uses common global linkage.
 
 ## Register-output extended assembly
 
-Block-scope `asm`, `__asm` and `__asm__` statements support one `"=r"` or `"+r"` output
-into a writable 32-bit or 64-bit integer or pointer object, with optional
-`volatile` (including its GNU spellings). The output address is evaluated once
+Block-scope `asm`, `__asm` and `__asm__` statements support `"=r"` and `"+r"` outputs
+into writable 32-bit or 64-bit integer or pointer objects, with optional
+`volatile` (including its GNU spellings). Each output address is evaluated once
 before the assembly executes. Packed members, indirect destinations and volatile
 output stores retain their normal behavior.
 
 Read/write `"+r"` assembly receives the object's current value in its output
 register and stores the resulting value back. The destination address is still
 evaluated once; volatile objects receive one volatile read and one volatile write.
-LLVM ties the input register to output zero, and native output loads the same
+LLVM ties each read/write input to its output register, and native output loads the same
 register before executing the template. Empty templates preserve the input value.
 
-Templates use `%0` for the output, numbered `%1` and later input registers,
+Templates number all outputs first, followed by the input registers,
 and `%%` for a literal percent sign.
 The register width follows the output type. Native x86_64 templates use GNU AT&T
 syntax; AArch64 templates use its normal assembler syntax. LLVM output preserves
 side effects for volatile assembly and emits conservative condition-code clobbers.
 Assembly text remains target-specific and must obey the declared register effects.
 
-Multiple or named outputs, non-register input constraints,
+Named outputs and non-register input constraints,
 explicit clobbers, unsupported register modifiers, basic assembly and asm-goto are not yet
 supported and are diagnosed. Empty input and clobber sections are accepted.
 Narrow ASCII templates are supported, including concatenation and escaped
@@ -1080,7 +1080,9 @@ source feature selection rather than changing the generated code's target CPU.
 ## Extended assembly register inputs
 
 The register-output assembly subset accepts up to six independent `"r"` inputs
-alongside one `"=r"` or `"+r"` output. Operands use 32-bit/64-bit integer or
+alongside `"=r"` or `"+r"` outputs, with at most seven total numbered operands.
+Each output destination is captured once; all results are buffered before
+writing output objects. Operands use 32-bit/64-bit integer or
 pointer values; arrays and function designators decay to pointers. Each input is
 evaluated once, and read/write matching inputs do not change the source operand
 numbers. Floating-point, narrow integer and named operands remain unsupported.

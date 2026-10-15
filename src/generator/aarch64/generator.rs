@@ -1175,14 +1175,10 @@ impl<'a> AsmGenerator<'a> {
     }
 
     fn gen_inline_assembly(&self, node: &Node, options: Options) -> Assembly {
-        let ty = node.resolve_type().unwrap();
         let registers = [X8, X9, X10, X11, X12, X13, X14];
+        let operands = node.children.iter().chain(&node.args).collect::<Vec<_>>();
         let template = render_inline_assembly(&node.dest, |index, modifier| {
-            let natural = if index == 0 {
-                ty.size_of()
-            } else {
-                node.args.get(index - 1)?.resolve_type()?.size_of()
-            };
+            let natural = operands.get(index)?.resolve_type()?.size_of();
             let width = crate::generator::asm_register_width(
                 crate::generator::Arch::Aarch64,
                 modifier,
@@ -1202,30 +1198,54 @@ impl<'a> AsmGenerator<'a> {
             unreachable!()
         });
         let mut lines = vec![];
-        if let Some(input) = &node.lhs {
+        let matching = node
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| node.value.unwrap() & (1 << index) != 0)
+            .collect::<Vec<_>>();
+        for (_, input) in &matching {
             lines.push(self.gen_node(input, options));
         }
         for input in &node.args {
             lines.push(self.gen_node(input, options));
         }
-        for (index, input) in node.args.iter().enumerate().rev() {
-            let register = registers[index + 1];
+        for (index, input) in node
+            .args
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, input)| (index + node.children.len(), input))
+            .chain(matching.into_iter().rev())
+        {
+            let register = registers[index];
             lines.push(Self::pop(register));
             if input.resolve_type().unwrap().size_of() == 4 {
                 lines.push(Self::normalize_integer(&Type::integer(32, false), register));
             }
         }
-        if node.lhs.is_some() {
-            lines.push(Self::pop(X8));
-            if ty.size_of() == 4 {
-                lines.push(Self::normalize_integer(&Type::integer(32, false), X8));
-            }
+        lines.push(Assembly::inst1(
+            InlineAsm,
+            InstOperand::InlineAsmTemplate(template),
+        ));
+        // Buffer every result before address generation can overwrite operand registers.
+        for register in registers[..node.children.len()].iter().rev() {
+            lines.extend([
+                Assembly::inst3(SUB, X19, X19, 8),
+                Assembly::inst3(AND, X20, X19, "#-16"),
+                Assembly::inst2(MOV, SP, X20),
+                Assembly::inst2(STR, *register, Ptr(X19, 8)),
+            ]);
         }
-        lines.extend([
-            Assembly::inst1(InlineAsm, InstOperand::InlineAsmTemplate(template)),
-            Self::normalize_integer(&ty, X8),
-            Self::push(X8),
-        ]);
+        for output in &node.children {
+            lines.push(self.gen_addr(output, options));
+            lines.extend([
+                Self::pop(X8),
+                Self::pop(X13),
+                Assembly::inst2(STR, X13, Ptr(X8, output.resolve_type().unwrap().size_of())),
+            ]);
+        }
+        lines.push(Self::push(0));
         lines.into()
     }
 
