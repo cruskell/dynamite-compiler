@@ -1997,3 +1997,31 @@ fn invalid_fixed_underlying_enums_are_diagnosed(code: &str, output_option: &str)
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn empty_file_scope_declarations_are_accepted(output_option: &str) {
+    let code = r#"
+#define OMIT(argument)
+;;;OMIT(ignored);
+typedef int Number;;;
+int value=7;;;
+_Static_assert(sizeof(Number)==4,"int width");;;
+int read_value(void);;;
+int read_value(void){OMIT(statement);return value;};;;
+int main(){return read_value()-7;};;;
+"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "1;int main(){return 0;}",
+    "return 1;",
+    "int value=;",
+    "struct S{int x;};}",
+], ["asm", "llvm"])]
+fn nondeclarations_at_file_scope_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
