@@ -103,6 +103,7 @@ impl Declarator {
 #[derive(Clone, Default)]
 struct DeclarationAttributes {
     gnu_inline: bool,
+    noinline: bool,
     weak_import: bool,
     common: bool,
     typedef_declarator: bool,
@@ -179,7 +180,6 @@ pub(crate) const METADATA_ATTRIBUTES: &[&str] = &[
     "noreturn",
     "noescape",
     "always_inline",
-    "noinline",
     "const",
     "pure",
     "cold",
@@ -580,6 +580,30 @@ impl<'a> AstBuilderImpl<'a> {
                 if !matches!(name.tt, TokenType::Ident | TokenType::Reserved) {
                     self.error_logger
                         .print_error_position(name.pos, "attribute name expected");
+                }
+                if name.s_value.trim_matches('_') == "noinline" {
+                    if self.parameter_depth != 0
+                        || self.declaration_attributes_state.is_none()
+                        || self
+                            .declaration_attributes_state
+                            .as_ref()
+                            .is_some_and(|a| a.typedef_declarator)
+                    {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "noinline requires a file-scope function declaration",
+                        );
+                    }
+                    self.cur += 1;
+                    if self.tokens[self.cur].s_value == "(" {
+                        self.error_logger
+                            .print_error_position(name.pos, "noinline does not take arguments");
+                    }
+                    self.declaration_attributes_state.as_mut().unwrap().noinline = true;
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
                 }
                 if name.s_value.trim_matches('_') == "gnu_inline" {
                     if self.parameter_depth != 0
@@ -2350,7 +2374,7 @@ impl<'a> AstBuilderImpl<'a> {
             if self
                 .declaration_attributes_state
                 .take()
-                .is_some_and(|a| a.gnu_inline || a.weak_import || a.common)
+                .is_some_and(|a| a.gnu_inline || a.noinline || a.weak_import || a.common)
             {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -2397,7 +2421,7 @@ impl<'a> AstBuilderImpl<'a> {
             if self
                 .declaration_attributes_state
                 .take()
-                .is_some_and(|a| a.gnu_inline || a.weak_import || a.common)
+                .is_some_and(|a| a.gnu_inline || a.noinline || a.weak_import || a.common)
             {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -2433,6 +2457,10 @@ impl<'a> AstBuilderImpl<'a> {
             });
             self.assembler_label(&token);
             let attributes = self.declaration_attributes_state.take().unwrap_or_default();
+            if attributes.noinline && ty.function_signature().is_none() {
+                self.error_logger
+                    .print_error_position(token.pos, "noinline requires a function declaration");
+            }
             if attributes.gnu_inline && (!inline || ty.function_signature().is_none()) {
                 self.error_logger.print_error_position(
                     token.pos,
@@ -2522,6 +2550,7 @@ impl<'a> AstBuilderImpl<'a> {
                     );
                 }
                 let gnu_inline = attributes.gnu_inline || previous.gnu_inline;
+                let noinline = attributes.noinline || previous.noinline;
                 let replaceable_inline_body = previous.gnu_inline && previous.inline_only();
                 let definition = self.tokens[self.cur].s_value == "{";
                 let weak_import = attributes.weak_import || previous.weak_import;
@@ -2537,10 +2566,9 @@ impl<'a> AstBuilderImpl<'a> {
                 } else {
                     internal || external || !inline || previous.external_definition
                 };
-                self.functions
-                    .get_mut(&token.s_value)
-                    .unwrap()
-                    .external_definition = external_definition;
+                let function = self.functions.get_mut(&token.s_value).unwrap();
+                function.external_definition = external_definition;
+                function.noinline = noinline;
                 let (_, result, _) = ty.function_signature().unwrap();
                 self.return_pointer = if matches!(result, Type::Struct(_)) {
                     self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
@@ -2608,6 +2636,7 @@ impl<'a> AstBuilderImpl<'a> {
                     Func {
                         inline_definition: inline && body.is_some(),
                         gnu_inline,
+                        noinline,
                         weak_import,
                         external_definition,
                         mutable_static: self.mutable_static.take(),

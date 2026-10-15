@@ -742,10 +742,11 @@ impl<'a> IrGenerator<'a> {
         }
         if func.body.is_none() || func.inline_only() {
             return format!(
-                "declare {}{return_abi} {}({})",
+                "declare {}{return_abi} {}({}){}",
                 if func.weak_import { "extern_weak " } else { "" },
                 self.symbol_name(name),
-                parameters.join(", ")
+                parameters.join(", "),
+                if func.noinline { " noinline" } else { "" }
             );
         }
         let mut number = 0;
@@ -764,10 +765,11 @@ impl<'a> IrGenerator<'a> {
             argument_slots: HashMap::new(),
         };
         let mut lines = vec![format!(
-            "define {}{return_abi} {}({}) {{",
+            "define {}{return_abi} {}({}){} {{",
             if func.internal { "internal " } else { "" },
             self.symbol_name(name),
-            parameters.join(", ")
+            parameters.join(", "),
+            if func.noinline { " noinline" } else { "" }
         )];
         for (index, argument) in signature.arguments.iter().enumerate() {
             let ty = &types[index];
@@ -1122,11 +1124,12 @@ impl<'a> IrGenerator<'a> {
                 arguments.push("...".to_string());
             }
             return format!(
-                "declare {}{} {}({})",
+                "declare {}{} {}({}){}",
                 if func.weak_import { "extern_weak " } else { "" },
                 Self::abi_result_type(result),
                 self.symbol_name(name),
-                arguments.join(", ")
+                arguments.join(", "),
+                if func.noinline { " noinline" } else { "" }
             );
         }
         let (_, result, variadic) = func.cty.function_signature().unwrap();
@@ -1145,7 +1148,7 @@ impl<'a> IrGenerator<'a> {
         };
         [
             vec![format!(
-                "define {}{} {}({}) {{",
+                "define {}{} {}({}){} {{",
                 if func.internal { "internal " } else { "" },
                 Self::abi_result_type(*return_ty.clone()),
                 self.symbol_name(name),
@@ -1159,7 +1162,8 @@ impl<'a> IrGenerator<'a> {
                     ))
                     .chain(variadic.then_some("...".to_string()))
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join(", "),
+                if func.noinline { " noinline" } else { "" }
             )],
             func.args
                 .iter()
