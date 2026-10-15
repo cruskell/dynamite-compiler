@@ -19,10 +19,11 @@ impl AstBuilderImpl<'_> {
                 .print_error_position(token.pos, "supported asm template escapes are %0 and %%");
         }
         self.expect_reserved(":");
-        if self.inline_assembly_string() != "=r" {
+        let constraint = self.inline_assembly_string();
+        if !matches!(constraint.as_str(), "=r" | "+r") {
             self.error_logger.print_error_position(
                 token.pos,
-                "asm requires one =r output and no input operands or clobbers",
+                "asm requires one =r or +r output and no independent input operands or clobbers",
             );
         }
         self.expect_reserved("(");
@@ -75,6 +76,7 @@ impl AstBuilderImpl<'_> {
         destination.alignment = alignment;
         let value = Node {
             nt: NodeType::InlineAsm(volatile),
+            lhs: (constraint == "+r").then(|| Box::new(destination.clone())),
             dest: template,
             token: Some(token.clone()),
             cty: Some(ty),

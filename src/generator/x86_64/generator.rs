@@ -1188,21 +1188,35 @@ impl<'a> AsmGenerator<'a> {
         lines.into()
     }
 
-    fn gen_inline_assembly(&self, node: &Node) -> Assembly {
+    fn gen_inline_assembly(
+        &self,
+        node: &Node,
+        offset: usize,
+        breakable_branch_num: usize,
+    ) -> Assembly {
         let ty = node.resolve_type().unwrap();
         let register = if ty.size_of() == 4 { "%eax" } else { "%rax" };
         let template = render_inline_assembly(&node.dest, register).unwrap();
-        vec![
+        let mut lines = vec![];
+        if let Some(input) = &node.lhs {
+            lines.extend([
+                self.gen_node(input, offset, breakable_branch_num),
+                Assembly::inst1(POP, RAX),
+            ]);
+        }
+        lines.extend([
             Assembly::inst1(InlineAsm, InlineAsmTemplate(template)),
             Self::normalize_integer(&ty, RAX),
             Assembly::inst1(PUSH, RAX),
-        ]
-        .into()
+        ]);
+        lines.into()
     }
 
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
-            NodeType::InlineAsm(_) => return self.gen_inline_assembly(node),
+            NodeType::InlineAsm(_) => {
+                return self.gen_inline_assembly(node, offset, breakable_branch_num);
+            }
             NodeType::Atomic(operation) => {
                 return self.gen_atomic(node, operation, offset, breakable_branch_num);
             }

@@ -892,11 +892,17 @@ platform common-symbol directive, and LLVM output uses common global linkage.
 
 ## Register-output extended assembly
 
-Block-scope `asm`, `__asm` and `__asm__` statements support one `"=r"` output
+Block-scope `asm`, `__asm` and `__asm__` statements support one `"=r"` or `"+r"` output
 into a writable 32-bit or 64-bit integer or pointer object, with optional
 `volatile` (including its GNU spellings). The output address is evaluated once
 before the assembly executes. Packed members, indirect destinations and volatile
 output stores retain their normal behavior.
+
+Read/write `"+r"` assembly receives the object's current value in its output
+register and stores the resulting value back. The destination address is still
+evaluated once; volatile objects receive one volatile read and one volatile write.
+LLVM ties the input register to output zero, and native output loads the same
+register before executing the template. Empty templates preserve the input value.
 
 Templates use `%0` for the output register and `%%` for a literal percent sign.
 The register width follows the output type. Native x86_64 templates use GNU AT&T
@@ -904,7 +910,7 @@ syntax; AArch64 templates use its normal assembler syntax. LLVM output preserves
 side effects for volatile assembly and emits conservative condition-code clobbers.
 Assembly text remains target-specific and must obey the declared register effects.
 
-Input operands, multiple or named outputs, read/write or memory constraints,
+Independent input operands, multiple or named outputs, memory constraints,
 explicit clobbers, register modifiers, basic assembly and asm-goto are not yet
 supported and are diagnosed. Empty input and clobber sections are accepted.
 Narrow ASCII templates are supported, including concatenation and escaped

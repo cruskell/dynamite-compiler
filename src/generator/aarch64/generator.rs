@@ -1155,21 +1155,25 @@ impl<'a> AsmGenerator<'a> {
         lines.into()
     }
 
-    fn gen_inline_assembly(&self, node: &Node) -> Assembly {
+    fn gen_inline_assembly(&self, node: &Node, options: Options) -> Assembly {
         let ty = node.resolve_type().unwrap();
         let register = if ty.size_of() == 4 { "w8" } else { "x8" };
         let template = render_inline_assembly(&node.dest, register).unwrap();
-        vec![
+        let mut lines = vec![];
+        if let Some(input) = &node.lhs {
+            lines.extend([self.gen_node(input, options), Self::pop(X8)]);
+        }
+        lines.extend([
             Assembly::inst1(InlineAsm, InstOperand::InlineAsmTemplate(template)),
             Self::normalize_integer(&ty, X8),
             Self::push(X8),
-        ]
-        .into()
+        ]);
+        lines.into()
     }
 
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
-            NodeType::InlineAsm(_) => return self.gen_inline_assembly(node),
+            NodeType::InlineAsm(_) => return self.gen_inline_assembly(node, options),
             NodeType::Atomic(operation) => {
                 return self.gen_atomic(node, operation, options);
             }
