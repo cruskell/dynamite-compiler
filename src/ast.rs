@@ -146,7 +146,9 @@ pub trait AstBuilder {
 impl AstBuilder for AstBuilderImpl<'_> {
     fn build(&mut self, is_debug: bool) -> ProgramAst {
         while !self.at_eof() {
-            self.global_definition()
+            if self.attempt_reserved(";").is_none() {
+                self.global_definition();
+            }
         }
         for function in self.functions.values() {
             if let Some(body) = &function.body {

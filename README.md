@@ -406,3 +406,8 @@ its range. Conflicting declarations, noninteger underlying types, and implicit
 increments beyond the range are diagnosed. Unspecified underlying types retain
 the existing signed-int model; enum representation and compatibility use the
 underlying integer type in this compiler.
+
+## Empty external declarations
+
+Empty file-scope declarations (extra semicolons) are accepted, including after
+macros that expand to nothing.
