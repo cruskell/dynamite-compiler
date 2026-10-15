@@ -63,10 +63,22 @@ fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {
         _ => false,
     }
 }
-fn integer_slots(ty: &Type, offset: usize, slots: &mut [bool]) {
+fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
     match ty.unqualified() {
-        Type::Float(_) | Type::LongDouble(_) => {}
-        Type::Struct(st) if st.members().is_empty() && st.has_bit_fields() => slots.fill(true),
+        Type::Float(_) | Type::LongDouble(_) => {
+            for slot in slots
+                .iter_mut()
+                .take((offset + ty.size_of()).div_ceil(8))
+                .skip(offset / 8)
+            {
+                if slot.is_none() {
+                    *slot = Some(false);
+                }
+            }
+        }
+        Type::Struct(st) if st.members().is_empty() && st.has_bit_fields() => {
+            slots.fill(Some(true))
+        }
         Type::Struct(st) => {
             for member in st.members() {
                 integer_slots(&member.ty, offset + member.offset, slots);
@@ -83,7 +95,7 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [bool]) {
                 .take((offset + ty.size_of()).div_ceil(8))
                 .skip(offset / 8)
             {
-                *slot = true;
+                *slot = Some(true);
             }
         }
     }
@@ -124,16 +136,19 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
     if ty.size_of() > 16 {
         return vec![];
     }
-    let mut integers = vec![false; ty.size_of().div_ceil(8)];
+    let mut integers = vec![None; ty.size_of().div_ceil(8)];
     integer_slots(ty, 0, &mut integers);
     integers
         .into_iter()
         .enumerate()
-        .map(|(index, integer)| {
+        .filter_map(|(index, integer)| {
+            if integer.is_none() && matches!(arch, Arch::X86_64) {
+                return None;
+            }
             let size = (ty.size_of() - index * 8).min(8);
-            Part {
+            Some(Part {
                 offset: index * 8,
-                ty: if integer || matches!(arch, Arch::Aarch64) {
+                ty: if integer == Some(true) || matches!(arch, Arch::Aarch64) {
                     Type::integer(
                         if matches!(arch, Arch::Aarch64) {
                             64
@@ -145,7 +160,7 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
                 } else {
                     Type::Float(if size <= 4 { 32 } else { 64 })
                 },
-            }
+            })
         })
         .collect()
 }

@@ -427,6 +427,11 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn declaration_annotations(&mut self) {
+        self.declaration_attributes(false);
+    }
+
+    fn declaration_attributes(&mut self, record_alignment: bool) -> usize {
+        let mut alignment = 0;
         while matches!(self.tokens[self.cur].tt, TokenType::Ident)
             && matches!(
                 self.tokens[self.cur].s_value.as_str(),
@@ -476,6 +481,34 @@ impl<'a> AstBuilderImpl<'a> {
                         | "sentinel"
                         | "diagnose_if"
                 );
+                if record_alignment && name.s_value.trim_matches('_') == "aligned" {
+                    self.cur += 1;
+                    let value = if self.attempt_reserved("(").is_some() {
+                        let expression = self.ternary();
+                        if !Self::integer_constant(&expression) {
+                            self.error_logger.print_error_position(
+                                name.pos,
+                                "alignment requires an integer constant expression",
+                            );
+                        }
+                        let value = self.eval(&expression);
+                        self.expect_reserved(")");
+                        value
+                    } else {
+                        16
+                    };
+                    if value <= 0 || !(value as usize).is_power_of_two() || value > 16 {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "record alignment must be a power of two no greater than 16",
+                        );
+                    }
+                    alignment = alignment.max(value as usize);
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
+                }
                 if !supported {
                     self.error_logger
                         .print_error_position(name.pos, "unsupported declaration attribute");
@@ -505,6 +538,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             self.expect_reserved(")");
         }
+        alignment
     }
 
     fn declarator(&mut self) -> Declarator {
@@ -1238,7 +1272,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn struct_type(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
-        self.declaration_annotations();
+        let mut requested_record_alignment = self.declaration_attributes(true);
         let name = self.attempt_ident();
         self.declaration_annotations();
         let key = format!(
@@ -1272,6 +1306,12 @@ impl<'a> AstBuilderImpl<'a> {
                 .insert(key, Identifier::TypeDef(Type::Struct(ty.clone())));
             ty
         };
+        if ty.definition().borrow().complete && requested_record_alignment != 0 {
+            self.error_logger.print_error_position(
+                token.pos,
+                "alignment on an existing record reference is not supported",
+            );
+        }
         if ty.definition().borrow().is_union != is_union {
             self.error_logger
                 .print_error_position(token.pos, "aggregate tag has a different kind");
@@ -1286,7 +1326,7 @@ impl<'a> AstBuilderImpl<'a> {
             let mut bit_address = 0usize;
             let mut has_bit_fields = false;
             let mut has_flexible_array = false;
-            let mut align = 1;
+            let mut align = ty.definition().borrow().align.max(1);
             while self.attempt_reserved("}").is_none() {
                 if self.attempt_static_assert() {
                     continue;
@@ -1465,7 +1505,18 @@ impl<'a> AstBuilderImpl<'a> {
                 complete: true,
             };
         }
-        self.declaration_annotations();
+        if defining {
+            requested_record_alignment =
+                requested_record_alignment.max(self.declaration_attributes(true));
+        } else {
+            self.declaration_annotations();
+        }
+        if requested_record_alignment != 0 {
+            let definition = ty.definition();
+            let mut definition = definition.borrow_mut();
+            definition.align = definition.align.max(requested_record_alignment);
+            definition.size = definition.size.div_ceil(definition.align) * definition.align;
+        }
         Type::Struct(ty)
     }
 

@@ -181,6 +181,17 @@ impl<'a> IrGenerator<'a> {
     fn float_literal(ty: &Type, bits: usize) -> String {
         format!("0x{:016X}", ty.float_value(bits).to_bits())
     }
+    fn record_alignment_member(ty: &crate::ctype::StructType) -> Option<String> {
+        let natural = ty
+            .members()
+            .iter()
+            .map(|member| member.ty.align_of())
+            .max()
+            .unwrap_or(1);
+        let alignment = ty.definition().borrow().align;
+        (alignment > natural).then(|| format!("[0 x i{}]", alignment * 8))
+    }
+
     fn gen_type(ty: Type) -> String {
         match ty {
             Type::Qualified(child, _) => Self::gen_type(*child),
@@ -214,6 +225,9 @@ impl<'a> IrGenerator<'a> {
                 }
                 if aggregate.size_of() > offset {
                     fields.push(format!("[{} x i8]", aggregate.size_of() - offset));
+                }
+                if let Some(anchor) = Self::record_alignment_member(&ty) {
+                    fields.push(anchor);
                 }
                 format!("{{ {} }}", fields.join(", "))
             }
@@ -333,6 +347,9 @@ impl<'a> IrGenerator<'a> {
                     if ty.size_of() > offset {
                         let padding = format!("[{} x i8]", ty.size_of() - offset);
                         fields.push(format!("{padding} zeroinitializer"));
+                    }
+                    if let Some(anchor) = Self::record_alignment_member(struct_type) {
+                        fields.push(format!("{anchor} zeroinitializer"));
                     }
                     format!("{} {{ {} }}", Self::gen_type(ty.clone()), fields.join(", "))
                 } else {
