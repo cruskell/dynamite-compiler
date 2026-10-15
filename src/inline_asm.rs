@@ -14,17 +14,11 @@ impl AstBuilderImpl<'_> {
         }
         self.expect_reserved("(");
         let template = self.inline_assembly_string();
-        if render_inline_assembly(&template, "%0").is_none() {
-            self.error_logger
-                .print_error_position(token.pos, "supported asm template escapes are %0 and %%");
-        }
         self.expect_reserved(":");
         let constraint = self.inline_assembly_string();
         if !matches!(constraint.as_str(), "=r" | "+r") {
-            self.error_logger.print_error_position(
-                token.pos,
-                "asm requires one =r or +r output and no independent input operands or clobbers",
-            );
+            self.error_logger
+                .print_error_position(token.pos, "asm requires one =r or +r output");
         }
         self.expect_reserved("(");
         let output = self.assign();
@@ -42,17 +36,57 @@ impl AstBuilderImpl<'_> {
                 "asm output requires a writable 32-bit or 64-bit integer or pointer object",
             );
         }
-        // Empty optional sections are accepted; constraints requiring allocation are not.
-        for _ in 0..2 {
-            if self.attempt_reserved(":").is_none() {
-                break;
-            }
+        let mut inputs = vec![];
+        if self.attempt_reserved(":").is_some() {
             if !matches!(self.tokens[self.cur].s_value.as_str(), ":" | ")") {
-                self.error_logger.print_error_position(
-                    token.pos,
-                    "asm input operands and clobbers are not supported",
-                );
+                loop {
+                    if inputs.len() == 6 || self.inline_assembly_string() != "r" {
+                        self.error_logger
+                            .print_error_position(token.pos, "asm supports at most six r inputs");
+                    }
+                    self.expect_reserved("(");
+                    let mut input = self.expr();
+                    self.expect_reserved(")");
+                    let input_type = input.resolve_type().map(|ty| ty.decayed()).unwrap();
+                    if !(input_type
+                        .integer_info()
+                        .is_some_and(|(bits, _)| matches!(bits, 32 | 64))
+                        || matches!(input_type, Type::Ptr(_)))
+                    {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "asm inputs require 32-bit or 64-bit integers or pointers",
+                        );
+                    }
+                    if matches!(input_type, Type::Ptr(_)) {
+                        input = Node {
+                            nt: NodeType::Cast,
+                            cty: Some(input_type),
+                            token: input.token.clone(),
+                            lhs: Some(Box::new(input)),
+                            ..Node::default()
+                        };
+                    } else {
+                        Self::cast_integer(&mut input, &input_type);
+                    }
+                    inputs.push(input);
+                    if self.attempt_reserved(",").is_none() {
+                        break;
+                    }
+                }
             }
+            if self.attempt_reserved(":").is_some() && self.tokens[self.cur].s_value != ")" {
+                self.error_logger
+                    .print_error_position(token.pos, "asm clobbers are not supported");
+            }
+        }
+        if render_inline_assembly(&template, |index, _| {
+            (index <= inputs.len()).then(String::new)
+        })
+        .is_none()
+        {
+            self.error_logger
+                .print_error_position(token.pos, "invalid or out-of-range asm register operand");
         }
         self.expect_reserved(")");
         self.expect_reserved(";");
@@ -78,6 +112,7 @@ impl AstBuilderImpl<'_> {
             nt: NodeType::InlineAsm(volatile),
             lhs: (constraint == "+r").then(|| Box::new(destination.clone())),
             dest: template,
+            args: inputs,
             token: Some(token.clone()),
             cty: Some(ty),
             ..Node::default()

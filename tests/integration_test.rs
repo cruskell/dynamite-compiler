@@ -1827,6 +1827,95 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn register_input_inline_assembly_preserves_operands(output_option: &str, optimization: &str) {
+    let (wide, narrow, pointer, update) = if cfg!(target_arch = "aarch64") {
+        (
+            "add %x0, %x1, %x2",
+            "add %w0, %w1, %w2",
+            "mov %0, %1",
+            "add %0, %0, %1",
+        )
+    } else {
+        (
+            "lea (%q1,%q2), %q0",
+            "lea (%k1,%k2), %k0",
+            "mov %1, %0",
+            "add %1, %0",
+        )
+    };
+    let code = format!(
+        r#"
+int calls;unsigned long left(void){{calls++;return 5;}}unsigned long right(void){{calls++;return 7;}}
+volatile long source=4;
+int main(){{
+ unsigned long sum;asm("{wide}" : "=r"(sum) : "r"(left()),"r"(right()));if(sum!=12 || calls!=2)return 1;
+ int signed_sum;asm("{narrow}" : "=r"(signed_sum) : "r"(-9),"r"(5));if(signed_sum!=-4)return 2;
+ char array[4];void *pointer;asm("{pointer}" : "=r"(pointer) : "r"(array));if(pointer!=(void*)array)return 3;
+ long value=3;asm volatile("{update}" : "+r"(value) : "r"(source));if(value!=7)return 4;
+ long guard=17;asm("" : "+r"(guard) : "r"(1),"r"(2),"r"(3),"r"(4),"r"(5),"r"(6));if(guard!=17)return 5;
+ return 0;
+}}
+"#
+    );
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn register_input_inline_assembly_supports_aarch64_width_modifiers(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+int calls;unsigned int left(void){calls++;return 4294967295U;}unsigned int right(void){calls++;return 2;}
+unsigned long accumulator(void){calls++;return 7;}
+int main(){unsigned long value;asm("umaddl %x0, %w1, %w2, %x3" : "=r"(value) : "r"(left()),"r"(right()),"r"(accumulator()));return value!=8589934597UL || calls!=3;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn register_input_inline_assembly_retains_explicit_operand_numbering() {
+    let code = "volatile int output=7,input=11;int main(){asm volatile(\"\" : \"+r\"(output) : \"r\"(input));return 0;}";
+    let generated = dynamite_compiler::generate(code, "llvm", false);
+    assert!(generated.contains("=r,r,0,"), "{generated}");
+    assert_eq!(
+        generated.matches("load volatile i32").count(),
+        2,
+        "{generated}"
+    );
+}
+
+#[test_matrix([
+    "int main(){int x;asm(\"%2\" : \"=r\"(x) : \"r\"(1));}",
+    "int main(){int x;asm(\"%99999999999999999999999999\" : \"=r\"(x));}",
+    "int main(){int x;asm(\"nop\" : \"=r\"(x) : \"r\"(1.0));}",
+    "int main(){int x;char y=1;asm(\"nop\" : \"=r\"(x) : \"r\"(y));}",
+    "int main(){int x;asm(\"nop\" : \"=r\"(x) : \"r\"(1),\"r\"(2),\"r\"(3),\"r\"(4),\"r\"(5),\"r\"(6),\"r\"(7));}",
+], ["asm", "llvm"])]
+fn invalid_register_input_inline_assembly_has_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn simd_capability_profile_selects_portable_scalar_code(output_option: &str, optimization: &str) {
     let code = r#"
 #if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__ARM_FEATURE_SVE) || defined(__SSE2__) || defined(__AVX2__) || defined(__AVX512F__)
@@ -2204,12 +2293,12 @@ fn register_output_inline_assembly_preserves_volatile_ir() {
     "int main(){int x;asm goto(\"nop\");}",
     "int main(){int x;asm(\"%\" : \"=r\"(x));}",
     "int main(){int x;asm(\"%1\" : \"=r\"(x));}",
-    "int main(){int x;asm(\"%w0\" : \"=r\"(x));}",
+    "int main(){int x;asm(\"%Z0\" : \"=r\"(x));}",
     "int main(){int x;asm(\"%[name]\" : \"=r\"(x));}",
     "int main(){int memory;asm(\"nop\" : \"+m\"(memory));}",
     "int main(){int x;asm(\"nop\" : \"=m\"(x));}",
     "int main(){int x;asm(\"nop\" : \"=r\"(x),\"=r\"(x));}",
-    "int main(){int x;asm(\"nop\" : \"=r\"(x) : \"r\"(1));}",
+    "int main(){int x;asm(\"nop\" : \"=r\"(x) : \"m\"(1));}",
     "int main(){int x;asm(\"nop\" : \"=r\"(x) : : \"memory\");}",
     "int main(){const int x=0;asm(\"nop\" : \"=r\"(x));}",
     "int main(){asm(\"nop\" : \"=r\"(1));}",

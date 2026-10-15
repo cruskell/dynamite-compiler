@@ -21,20 +21,42 @@ pub enum AtomicOperation {
     CompareExchange(bool),
 }
 
-/// Substitute the validated GNU output placeholder without target-specific syntax.
-pub(crate) fn render_inline_assembly(template: &str, output: &str) -> Option<String> {
+/// Decode GNU numbered register operands, leaving target-specific modifiers to the backend.
+pub(crate) fn render_inline_assembly(
+    template: &str,
+    mut operand: impl FnMut(usize, Option<char>) -> Option<String>,
+) -> Option<String> {
     let mut rendered = String::new();
-    let mut chars = template.chars();
+    let mut chars = template.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '%' {
             rendered.push(ch);
             continue;
         }
-        match chars.next() {
-            Some('%') => rendered.push('%'),
-            Some('0') => rendered.push_str(output),
-            _ => return None,
+        if chars.peek() == Some(&'%') {
+            chars.next();
+            rendered.push('%');
+            continue;
         }
+        let modifier = chars
+            .peek()
+            .copied()
+            .filter(char::is_ascii_alphabetic)
+            .map(|ch| {
+                chars.next();
+                ch
+            });
+        let mut index = None;
+        while let Some(ch) = chars.peek().copied().filter(char::is_ascii_digit) {
+            chars.next();
+            index = Some(
+                index
+                    .unwrap_or(0usize)
+                    .checked_mul(10)?
+                    .checked_add(ch.to_digit(10)? as usize)?,
+            );
+        }
+        rendered.push_str(&operand(index?, modifier)?);
     }
     Some(rendered)
 }

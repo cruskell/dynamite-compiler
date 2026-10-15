@@ -1157,11 +1157,50 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_inline_assembly(&self, node: &Node, options: Options) -> Assembly {
         let ty = node.resolve_type().unwrap();
-        let register = if ty.size_of() == 4 { "w8" } else { "x8" };
-        let template = render_inline_assembly(&node.dest, register).unwrap();
+        let registers = [X8, X9, X10, X11, X12, X13, X14];
+        let template = render_inline_assembly(&node.dest, |index, modifier| {
+            let natural = if index == 0 {
+                ty.size_of()
+            } else {
+                node.args.get(index - 1)?.resolve_type()?.size_of()
+            };
+            let width = crate::generator::asm_register_width(
+                crate::generator::Arch::Aarch64,
+                modifier,
+                natural,
+            )?;
+            Some(format!(
+                "{}{}",
+                if width == 4 { "w" } else { "x" },
+                8 + index
+            ))
+        })
+        .unwrap_or_else(|| {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "unsupported asm register modifier for AArch64",
+            );
+            unreachable!()
+        });
         let mut lines = vec![];
         if let Some(input) = &node.lhs {
-            lines.extend([self.gen_node(input, options), Self::pop(X8)]);
+            lines.push(self.gen_node(input, options));
+        }
+        for input in &node.args {
+            lines.push(self.gen_node(input, options));
+        }
+        for (index, input) in node.args.iter().enumerate().rev() {
+            let register = registers[index + 1];
+            lines.push(Self::pop(register));
+            if input.resolve_type().unwrap().size_of() == 4 {
+                lines.push(Self::normalize_integer(&Type::integer(32, false), register));
+            }
+        }
+        if node.lhs.is_some() {
+            lines.push(Self::pop(X8));
+            if ty.size_of() == 4 {
+                lines.push(Self::normalize_integer(&Type::integer(32, false), X8));
+            }
         }
         lines.extend([
             Assembly::inst1(InlineAsm, InstOperand::InlineAsmTemplate(template)),
