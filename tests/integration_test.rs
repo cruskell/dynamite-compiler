@@ -1654,7 +1654,7 @@ int check(struct Wide value,void *array){
 
 #[test_matrix(["asm", "llvm"])]
 fn extended_integer_static_storage_is_zeroed(output_option: &str) {
-    let code = "__uint128_t words[2];union U{__int128 wide;char bytes[16];};union U data;int target=17;union P{__uint128_t wide;int *p;};union P pointer={.p=&target};struct Wrapper{char tag;union P payload;char end;};struct Wrapper wrapper;int main(){unsigned char *bytes=(unsigned char*)words;int i=0;while(i<32){if(bytes[i])return 1;i++;}i=0;while(i<16){if(data.bytes[i])return 2;i++;}return sizeof(words)+_Alignof(__int128_t)+sizeof(wrapper)-96+(*pointer.p-17);}";
+    let code = "__uint128_t words[2];union U{__int128 wide;char bytes[16];};union U data;int target=17;union P{__uint128_t wide;int *p;};union P pointer={.p=&target};struct Wrapper{char tag;union P payload;char end;};struct Wrapper wrapper={3,{.p=&target},5};int main(){unsigned char *bytes=(unsigned char*)words;int i=0;while(i<32){if(bytes[i])return 1;i++;}i=0;while(i<16){if(data.bytes[i])return 2;i++;}return sizeof(words)+_Alignof(__int128_t)+sizeof(wrapper)-96+(*pointer.p-17)+(wrapper.tag-3)+(wrapper.end-5)+(*wrapper.payload.p-17);}";
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
