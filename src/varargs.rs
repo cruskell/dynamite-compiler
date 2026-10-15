@@ -35,6 +35,26 @@ fn field(base: Node, offset: usize, ty: Type) -> Node {
         cast(byte_pointer, Type::Ptr(Box::new(ty))),
     )
 }
+fn align_pointer(value: Node, alignment: usize) -> Node {
+    let integer = Type::integer(64, false);
+    let offset = Node {
+        cty: Some(integer.clone()),
+        ..number(alignment - 1)
+    };
+    let mask = Node {
+        cty: Some(integer.clone()),
+        ..number(!(alignment - 1))
+    };
+    cast(
+        binary(
+            NodeType::BitAnd,
+            binary(NodeType::Add, cast(value, integer), offset),
+            mask,
+        ),
+        pointer(),
+    )
+}
+
 fn conditional(cond: Node, then: Node, els: Node) -> Node {
     Node {
         nt: NodeType::Conditional,
@@ -223,14 +243,21 @@ impl AstBuilderImpl<'_> {
         }
     }
     fn va_argument(&mut self, ap: Node, ty: Type, token: &Token) -> Node {
-        use crate::generator::{Arch, abi};
+        use crate::generator::{Arch, Os, abi};
         let state = self.va_temporary(token, pointer());
         let result = self.va_temporary(token, ty.clone());
         let destination = address(result.clone());
         let mut children = vec![binary(NodeType::Assign, state.clone(), ap)];
         let arm = cfg!(target_arch = "aarch64");
         let mac_arm = arm && cfg!(target_os = "macos");
-        let parts = abi::aggregate_parts(&ty, &if arm { Arch::Aarch64 } else { Arch::X86_64 });
+        let arch = if arm { Arch::Aarch64 } else { Arch::X86_64 };
+        let os = if cfg!(target_os = "macos") {
+            Os::MacOS
+        } else {
+            Os::Linux
+        };
+        let parts = abi::aggregate_parts(&ty, &arch);
+        let stack_alignment = abi::stack_argument_alignment(&ty, &arch, os, true);
         let indirect = arm && matches!(ty.unqualified(), Type::Struct(_)) && parts.is_empty();
         let mut stack = field(state.clone(), if arm { 0 } else { 8 }, pointer());
         let stack_size = if indirect {
@@ -240,13 +267,16 @@ impl AstBuilderImpl<'_> {
         };
         let source = self.va_temporary(token, pointer());
         let mut from_stack = {
-            // The supported types have at most eight-byte alignment.
             let mut steps = vec![
-                binary(NodeType::Assign, source.clone(), stack.clone()),
+                binary(
+                    NodeType::Assign,
+                    source.clone(),
+                    align_pointer(stack.clone(), stack_alignment),
+                ),
                 binary(
                     NodeType::Assign,
                     stack.clone(),
-                    binary(NodeType::Add, stack.clone(), number(stack_size)),
+                    binary(NodeType::Add, source.clone(), number(stack_size)),
                 ),
             ];
             if indirect {
@@ -270,11 +300,15 @@ impl AstBuilderImpl<'_> {
             // Darwin's va_list is the cursor itself, rather than a state structure.
             stack = field(state.clone(), 0, pointer());
             let mut steps = vec![
-                binary(NodeType::Assign, source.clone(), stack.clone()),
+                binary(
+                    NodeType::Assign,
+                    source.clone(),
+                    align_pointer(stack.clone(), stack_alignment),
+                ),
                 binary(
                     NodeType::Assign,
                     stack.clone(),
-                    binary(NodeType::Add, stack, number(stack_size)),
+                    binary(NodeType::Add, source.clone(), number(stack_size)),
                 ),
             ];
             if indirect {
@@ -329,6 +363,18 @@ impl AstBuilderImpl<'_> {
                 Type::integer(32, false)
             },
         );
+        let gp_alignment = abi::general_register_alignment(&ty, &arch, os) * 8;
+        if gp > 0 && !indirect && gp_alignment > 8 {
+            children.push(binary(
+                NodeType::Assign,
+                gp_offset.clone(),
+                binary(
+                    NodeType::BitAnd,
+                    binary(NodeType::Add, gp_offset.clone(), number(gp_alignment - 1)),
+                    number(!(gp_alignment - 1)),
+                ),
+            ));
+        }
         if arm {
             // A spilled aggregate exhausts its register class for later arguments.
             for (offset, count) in [(gp_offset.clone(), gp), (fp_offset.clone(), fp)] {
