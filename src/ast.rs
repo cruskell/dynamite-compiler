@@ -3060,7 +3060,10 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn expect_conversion(&self, expected: &Type, operand: &Node) {
         let actual = operand.resolve_type();
-        let compatible = match (expected.unqualified(), actual.as_ref()) {
+        let compatible = match (
+            expected.unqualified(),
+            actual.as_ref().map(Type::unqualified),
+        ) {
             (target, Some(source)) if target.is_arithmetic() && source.is_arithmetic() => true,
             (Type::Bool, Some(Type::Ptr(_) | Type::Arr(..) | Type::Vla(..))) => true,
             (
@@ -3079,7 +3082,7 @@ impl<'a> AstBuilderImpl<'a> {
             (Type::Ptr(_), Some(Type::I32)) => {
                 matches!(operand.nt, NodeType::Num) && operand.value == Some(0)
             }
-            (_, Some(actual)) => expected == actual,
+            (target, Some(source)) => target == source,
             _ => false,
         };
         if !compatible {

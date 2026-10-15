@@ -2202,6 +2202,55 @@ fn invalid_population_count_builtins(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn qualified_record_value_conversions(output_option: &str, optimization: &str) {
+    let code = r#"
+struct Pair { long x; int y; };
+union Value { long n; int i; };
+long foreign(const struct Pair);
+long take(const struct Pair p) { return p.x + p.y; }
+struct Pair copy(const struct Pair *p) { return *p; }
+struct Pair relay(struct Pair p) { return copy(&p); }
+long take_union(const union Value p) { return p.n; }
+int main() {
+    const struct Pair constant = { 10, 7 };
+    volatile struct Pair observed = { 11, 9 };
+    struct Pair a = constant;
+    struct Pair b = observed;
+    a = observed;
+    b = copy(&constant);
+    struct Pair (*callback)(struct Pair) = relay;
+    struct Pair c = callback(a);
+    const union Value u = { 13 };
+    union Value v = u;
+    v = u;
+    if(take(constant) != 17 || take(a) != 20 || take(b) != 17) return 1;
+    if(c.x != 11 || c.y != 9 || foreign(constant) != 17) return 2;
+    if(take_union(u) != 13 || take_union(v) != 13) return 3;
+    return 0;
+}
+"#;
+    let companion = "struct Pair{long x;int y;};long foreign(const struct Pair p){return p.x+p.y;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "struct A{int x;};struct B{int x;};int f(const struct A x){return x.x;}int main(){struct B b={1};return f(b);}",
+    "struct A{int x;};int f(struct A *p){return p->x;}int main(){const struct A a={1};return f(&a);}",
+    "struct A{int x;};int main(){const struct A a={1};struct A b={2};a=b;return 0;}"
+], ["asm", "llvm"])]
+fn invalid_qualified_record_value_conversions(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,
