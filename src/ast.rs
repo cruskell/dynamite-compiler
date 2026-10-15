@@ -1455,7 +1455,12 @@ impl<'a> AstBuilderImpl<'a> {
                     requested_alignment = requested_alignment.max(value);
                 }
                 loop {
-                    let (name, member_type, _, _, _) = self.declarator().resolve(base.clone());
+                    let mut member_alignments = vec![];
+                    let (name, member_type, _, _, _) = self
+                        .declarator_with_alignment(Some(&mut member_alignments))
+                        .resolve(base.clone());
+                    let requested_alignment = requested_alignment
+                        .max(member_alignments.iter().copied().max().unwrap_or(0));
                     let position = name.as_ref().unwrap_or(&token);
                     self.validate_type_layout(&member_type, position);
                     if member_type.is_variably_modified() {
@@ -1486,6 +1491,12 @@ impl<'a> AstBuilderImpl<'a> {
                         }
                     }
                     let (field, offset) = if self.attempt_reserved(":").is_some() {
+                        if !member_alignments.is_empty() {
+                            self.error_logger.print_error_position(
+                                position.pos,
+                                "alignment attributes on bit-fields are not supported",
+                            );
+                        }
                         has_bit_fields = true;
                         let expression = self.ternary();
                         let width = self.eval(&expression);

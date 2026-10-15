@@ -366,9 +366,13 @@ Struct and union tags or definitions accept GNU `__attribute__((aligned(N)))`
 before the tag or after the definition. Alignment is at least the
 natural alignment; size includes the required tail padding. Explicit supported
 alignments are powers of two through 16 bytes; bare `aligned` requests 16 bytes.
-Both assembly and LLVM preserve alignment in nested records and arrays. Larger
-record alignments, member/declarator alignment attributes, and packed attributes
-remain diagnosed as unsupported.
+Both assembly and LLVM preserve alignment in nested records and arrays.
+Postfix `aligned(N)` attributes on ordinary struct and union members raise the
+member's alignment and contribute to the record's size, alignment, and ABI
+classification. They apply only to the annotated member in a comma-separated
+declaration; weaker requests do not lower natural alignment. Bit-field alignment
+attributes, larger alignments, general object declarator alignment attributes,
+and packed attributes remain diagnosed as unsupported.
 
 ## Byte-swap builtins
 

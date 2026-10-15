@@ -2236,3 +2236,76 @@ int main(){struct Member m={3.5,4.5};struct Wide w={1.5,2.5,3.5,4.5};
     let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn aligned_members_preserve_layout_and_clang_calls(output_option: &str, optimization: &str) {
+    let shared = r#"
+struct Layout{char lead;int a __attribute__((aligned(16))),b;char tail;};
+struct Declaration{char lead;int a __attribute__((aligned(8))),b __attribute__((aligned(8)));};
+struct Small{double x __attribute__((__aligned__(16),unused));};
+struct Hfa{double x __attribute__((aligned(16)));double y;};
+struct Mixed{char lead;int (*callback)(int) __attribute__((aligned));short row[3] __attribute__((aligned(8)));int small __attribute__((aligned(1)));};
+union Choice{char byte;int word __attribute__((aligned(16)));};
+struct Combined{struct Layout layout;union Choice choice;};
+int add(int x){return x+2;}
+"#;
+    let code = [
+        shared,
+        r#"
+struct Layout global={1,2,3,4};
+struct Combined combined={.layout={5,6,7,8},.choice={.word=9}};
+struct Small local_small(int n,struct Small value){value.x+=n;return value;}
+struct Hfa local_hfa(struct Hfa value){value.x+=value.y;return value;}
+struct Small foreign_small(int,struct Small);
+struct Hfa foreign_hfa(struct Hfa);
+int check(struct Layout,struct Declaration,struct Mixed *,struct Combined *);
+int main(){
+    struct Layout array[2]={{1,2,3,4},{5,6,7,8}};
+    struct Declaration declaration={1,2,3};
+    struct Mixed mixed={1,add,{2,3,4},5};
+    struct Small small={2.5};struct Hfa hfa={3.5,4.5};
+    small=foreign_small(3,small);hfa=foreign_hfa(hfa);
+    return check(global,declaration,&mixed,&combined)
+        || small.x!=5.5 || hfa.x!=8.0 || hfa.y!=4.5
+        || sizeof(struct Layout)!=32 || _Alignof(struct Layout)!=16
+        || __builtin_offsetof(struct Layout,b)!=20
+        || sizeof(struct Declaration)!=24 || __builtin_offsetof(struct Declaration,b)!=16
+        || sizeof(struct Mixed)!=48 || __builtin_offsetof(struct Mixed,row)!=24
+        || __builtin_offsetof(struct Mixed,small)!=32 || sizeof(union Choice)!=16
+        || array[1].b!=7 || sizeof(array)!=64;
+}
+"#,
+    ]
+    .concat();
+    let companion = [shared.replace("int add(int x){return x+2;}",""),r#"
+struct Small local_small(int,struct Small);
+struct Hfa local_hfa(struct Hfa);
+struct Small foreign_small(int n,struct Small value){return local_small(n,value);}
+struct Hfa foreign_hfa(struct Hfa value){return local_hfa(value);}
+int check(struct Layout value,struct Declaration declaration,struct Mixed *mixed,struct Combined *combined){
+    return value.lead!=1 || value.a!=2 || value.b!=3 || value.tail!=4
+        || declaration.a!=2 || declaration.b!=3 || sizeof(declaration)!=24
+        || mixed->callback(3)!=5 || mixed->row[1]!=3 || mixed->small!=5
+        || combined->layout.b!=7 || combined->choice.word!=9
+        || sizeof(*mixed)!=48 || sizeof(*combined)!=48;
+}
+"#.to_owned()].concat();
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "struct S{int x __attribute__((aligned(3)));};",
+    "struct S{int x __attribute__((aligned(32)));};",
+    "struct S{int x __attribute__((aligned(0)));};",
+    "int n;struct S{int x __attribute__((aligned(n)));};",
+    "struct S{int x __attribute__((aligned(8))):3;};",
+    "struct S{int __attribute__((aligned(8))) x:3;};",
+], ["asm", "llvm"])]
+fn invalid_member_alignment_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
