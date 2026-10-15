@@ -1048,6 +1048,17 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
 
+            NodeType::FloatAbs => {
+                let shift = 65 - node.resolve_type().unwrap().float_bits().unwrap() as usize;
+                return vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Assembly::inst3(SHL, X8, X8, shift),
+                    Assembly::inst3(SHR, X8, X8, shift),
+                    Self::push(X8),
+                ]
+                .into();
+            }
             NodeType::Cast => {
                 let mut lines = vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), options),

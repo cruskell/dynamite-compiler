@@ -8,6 +8,7 @@ pub enum NodeType {
     VaEnd,
     Assign,
     Cast,
+    FloatAbs,
     LocalVar,
     GlobalVar,
     Add,
@@ -281,7 +282,7 @@ impl Node {
                     }
                 }
             }
-            NodeType::Cast => self.cty.clone(),
+            NodeType::Cast | NodeType::FloatAbs => self.cty.clone(),
             NodeType::Num => Some(self.cty.clone().unwrap_or(Type::I32)),
             NodeType::Sequence => self.children.last().and_then(Node::resolve_type),
             NodeType::Add | NodeType::Sub => {

@@ -3292,3 +3292,83 @@ fn unsupported_gnu_packing_is_diagnosed(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn floating_absolute_builtins_preserve_ieee_bits_and_effects(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+unsigned int reference32(unsigned int);unsigned long reference64(unsigned long);
+union Bits32{unsigned int bits;float value;};union Bits64{unsigned long bits;double value;};
+unsigned int absolute32(unsigned int bits){union Bits32 v;v.bits=bits;v.value=__builtin_fabsf(v.value);return v.bits;}
+unsigned long absolute64(unsigned long bits){union Bits64 v;v.bits=bits;v.value=__builtin_fabs(v.value);return v.bits;}
+float initial32=__builtin_fabsf(-2.25);double initial64=__builtin_fabs(-3.5);
+int calls;float next32(){calls++;return -2.5f;}double next64(){calls++;return -7.25;}
+int main(){
+unsigned int bits32[10]={0,0x80000000u,0x3f800000u,0xbf800000u,0x7f800000u,0xff800000u,0x7fc12345u,0xffc12345u,0x7f812345u,0xff812345u};
+unsigned long bits64[10]={0,0x8000000000000000ul,0x3ff0000000000000ul,0xbff0000000000000ul,0x7ff0000000000000ul,0xfff0000000000000ul,0x7ff8123456789abcul,0xfff8123456789abcul,0x7ff0123456789abcul,0xfff0123456789abcul};
+for(int i=0;i<10;i++)if(absolute32(bits32[i])!=reference32(bits32[i]) || absolute64(bits64[i])!=reference64(bits64[i]))return i+1;
+if(initial32!=2.25f || initial64!=3.5)return 11;
+if(__builtin_fabsf(next32())!=2.5f || __builtin_fabs(next64())!=7.25 || calls!=2)return 12;
+if(sizeof(__builtin_fabs(next64()))!=sizeof(double) || calls!=2)return 13;
+if(__builtin_fabs(-7)!=7.0 || __builtin_fabsf(-3.25)!=3.25f)return 14;
+return _Generic(__builtin_fabsf(1),float:0,default:1) || _Generic(__builtin_fabs(1),double:0,default:1);
+}
+"#;
+    let companion = r#"
+#include <string.h>
+unsigned int reference32(unsigned int bits){float value;memcpy(&value,&bits,4);value=__builtin_fabsf(value);memcpy(&bits,&value,4);return bits;}
+unsigned long reference64(unsigned long bits){double value;memcpy(&value,&bits,8);value=__builtin_fabs(value);memcpy(&bits,&value,8);return bits;}
+"#;
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test]
+fn floating_absolute_builtins_read_volatile_operands_once() {
+    let code = "float single(volatile float *p){return __builtin_fabsf(*p);}double wide(volatile double *p){return __builtin_fabs(*p);}";
+    let ir = dynamite_compiler::generate(code, "llvm", false);
+    assert_eq!(ir.matches("load volatile float").count(), 1, "{ir}");
+    assert_eq!(ir.matches("load volatile double").count(), 1, "{ir}");
+    assert!(!ir.contains("@fabs"), "{ir}");
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn floating_absolute_builtins_preserve_binary64_long_double(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = "long double initial=__builtin_fabsl(-2.5L);long double absolute(long double v){return __builtin_fabsl(v);}int main(){return initial!=2.5L || absolute(-3.25L)!=3.25L || _Generic(__builtin_fabsl(1),long double:0,default:1);}";
+    let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){return __builtin_fabs();}",
+    "int main(){return __builtin_fabsf(1,2);}",
+    "int main(){int value;return __builtin_fabs(&value);}",
+    "int main(){void *p=__builtin_fabs;}",
+    "void action(){}int main(){return __builtin_fabsf(action());}",
+], ["asm", "llvm"])]
+fn invalid_floating_absolute_builtins_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[test_matrix(["asm", "llvm"])]
+fn floating_absolute_builtins_reject_unsupported_long_double(output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(
+            "double absolute(double value){return __builtin_fabsl(value);}",
+            output_option,
+            false,
+        ))
+        .is_err()
+    );
+}
