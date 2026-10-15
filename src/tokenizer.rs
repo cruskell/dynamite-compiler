@@ -594,10 +594,20 @@ impl Tokenizer {
                     let wide = suffix.contains('l')
                         || value > u32::MAX as usize
                         || (radix == 10 && !suffix.contains('u') && value > i32::MAX as usize);
-                    let unsigned = suffix.contains('u') || (!wide && value > i32::MAX as usize);
+                    let long_long = suffix.contains("ll")
+                        || (radix == 10 && !suffix.contains('u') && value > i64::MAX as usize);
+                    let unsigned = suffix.contains('u')
+                        || (!wide && value > i32::MAX as usize)
+                        || value > i64::MAX as usize;
                     token.s_value = format!(
                         "{}{}",
-                        if wide { "l" } else { "" },
+                        if long_long {
+                            "ll"
+                        } else if wide {
+                            "l"
+                        } else {
+                            ""
+                        },
                         if unsigned { "u" } else { "" }
                     );
                     tokens.push(token);

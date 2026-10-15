@@ -278,7 +278,7 @@ impl<'a> AsmGenerator<'a> {
                     format!("  .zero {}", children_ty.size_of() * size).into()
                 }
             }
-            Type::I8 => format!(
+            Type::I8 | Type::SignedChar => format!(
                 "  .byte {}",
                 if let Some(GlobalVariableData::Elem(s)) = data {
                     s
@@ -300,7 +300,7 @@ impl<'a> AsmGenerator<'a> {
                 }
             )
             .into(),
-            Type::Integer { .. } | Type::Bool => format!(
+            Type::Integer { .. } | Type::LongLong { .. } | Type::Bool => format!(
                 "  {} {}",
                 if ty.size_of() == 1 {
                     ".byte".to_string()
