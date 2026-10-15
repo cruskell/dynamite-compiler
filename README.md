@@ -118,8 +118,12 @@ builtin `printf`, `puts`, and `putchar` API, buffer formatting/parsing
 (`sprintf`, `snprintf`, `sscanf`), and `EOF`; `stdlib.h` exposes `exit`,
 `EXIT_SUCCESS`, `EXIT_FAILURE`, allocation functions (`malloc`, `calloc`,
 `realloc`, `free`), and integer/float text conversions; `stdarg.h` exposes variadic
-argument access. Host system headers are not searched. Custom
-headers must use the compiler's supported C-like subset.
+argument access. Host system headers are not searched by default. The CLI's `--system-headers`
+option (or `PreprocessorOptions::system_headers`) selects Clang's host include
+environment instead of the bundled headers. This preserves the platform's real
+API declarations and ABI types; it does not guarantee that every extension used
+by a system header is supported. Custom headers must use the compiler's
+supported C-like subset.
 
 ## Additional language support
 

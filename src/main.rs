@@ -18,6 +18,11 @@ fn main() {
     opts.optmulti("I", "include", "add an include directory", "DIRECTORY");
     opts.optmulti("D", "define", "define a preprocessor macro", "NAME[=VALUE]");
     opts.optmulti("U", "undefine", "undefine a preprocessor macro", "NAME");
+    opts.optflag(
+        "",
+        "system-headers",
+        "preprocess with host Clang system headers",
+    );
     opts.optflag("h", "help", "print this help menu");
     opts.opt(
         "o",
@@ -58,6 +63,7 @@ fn main() {
             is_debug,
             Some(std::path::Path::new(&path)),
             &PreprocessorOptions {
+                system_headers: matches.opt_present("system-headers"),
                 include_directories: matches
                     .opt_strs("include")
                     .into_iter()
