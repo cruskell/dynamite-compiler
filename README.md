@@ -1171,3 +1171,12 @@ must share a calling representation, size, and alignment; narrow integers must
 also share signedness. Boolean, aggregate, vector, mixed pointer/integer, mixed
 integer/floating, and layout-changing attributes are diagnosed. Transparent union
 conversion does not apply to variadic arguments.
+
+## Aggregate initialization storage
+
+Brace initialization clears record padding and unused bit-field storage before
+initializing members. This provides deterministic zero-filled storage for `{0}`
+and empty initializers, including nested records, arrays, and compound literals.
+Explicit member writes retain their normal types and volatile access widths.
+C does not generally require padding bytes to have a specified value after
+subsequent member assignments or record copies.

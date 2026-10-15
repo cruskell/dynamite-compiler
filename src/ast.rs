@@ -4626,8 +4626,10 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn zero_initializer(node: &Node, token: &Token) -> Node {
-        if matches!(node.resolve_type(), Some(Type::Struct(st)) if st.definition().borrow().is_union)
-        {
+        let ty = node.resolve_type().unwrap();
+        let mut padding = vec![];
+        if let Type::Struct(record) = ty.unqualified() {
+            let is_union = record.definition().borrow().is_union;
             let address =
                 Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, node.clone());
             let bytes = Node {
@@ -4637,30 +4639,53 @@ impl<'a> AstBuilderImpl<'a> {
                 lhs: Some(Box::new(address)),
                 ..Node::default()
             };
-            return Node {
-                nt: NodeType::Block,
-                token: Some(token.clone()),
-                children: (0..node.resolve_type().unwrap().size_of())
-                    .map(|index| {
-                        Node::new_with_op(
-                            Some(token.clone()),
-                            NodeType::Assign,
-                            Self::array_element(&bytes, index, token),
-                            Node::new_with_num(Some(token.clone()), 0),
-                        )
-                    })
-                    .collect(),
-                ..Node::default()
+            // Clear gaps and bit-field storage before member-wise initialization.
+            // Typed member stores retain their normal volatile access widths.
+            let mut ranges = if is_union {
+                vec![]
+            } else {
+                record
+                    .members()
+                    .iter()
+                    .filter(|member| member.bit_field.is_none())
+                    .map(|member| (member.offset, member.offset + member.ty.size_of()))
+                    .collect::<Vec<_>>()
             };
+            ranges.sort_unstable();
+            let mut cursor = 0;
+            for (start, end) in ranges
+                .into_iter()
+                .chain(std::iter::once((ty.size_of(), ty.size_of())))
+            {
+                for index in cursor..start {
+                    padding.push(Node::new_with_op(
+                        Some(token.clone()),
+                        NodeType::Assign,
+                        Self::array_element(&bytes, index, token),
+                        Node::new_with_num(Some(token.clone()), 0),
+                    ));
+                }
+                cursor = cursor.max(end);
+            }
+            if is_union {
+                return Node {
+                    nt: NodeType::Block,
+                    token: Some(token.clone()),
+                    children: padding,
+                    ..Node::default()
+                };
+            }
         }
         if let Some(elements) = Self::aggregate_elements(node, token) {
+            padding.extend(
+                elements
+                    .iter()
+                    .map(|element| Self::zero_initializer(element, token)),
+            );
             Node {
                 nt: NodeType::Block,
                 token: Some(token.clone()),
-                children: elements
-                    .iter()
-                    .map(|element| Self::zero_initializer(element, token))
-                    .collect(),
+                children: padding,
                 ..Node::default()
             }
         } else {
