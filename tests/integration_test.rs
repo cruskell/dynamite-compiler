@@ -6907,6 +6907,8 @@ int reference(void){return __builtin_types_compatible_p(enum Flags,unsigned int)
     "int evaluate(void){int n=3;long result=({int values[n++];values[0]=7;values[n-2]=9;sizeof(values)+values[0]+values[n-2];});return result+n;}",
     "int evaluate(void){int sum=({int s=0;for(int i=0;i<7;i++){if(i==2)continue;if(i==5)break;s+=i;}switch(s){case 8:s+=3;break;default:s=0;}s;});return sum;}",
     "int evaluate(void){double value=({double a=1.5;double b=2.25;a+b;});return value*4;}",
+    "int evaluate(void){const char *p=({\"asm\";});return p[1]+sizeof(({\"{\";}));}",
+    "int evaluate(void){int x=7;_Static_assert(__builtin_types_compatible_p(__typeof__(({asm(\"\" : \"+r\"(x));})),void),\"asm statement\");({asm(\"\" : \"+r\"(x));});return x!=7;}",
     "int evaluate(void){int outer=7;return outer+({int n=0;while(n<3)n++;if(n==3)n+=2;n;});}",
     "int evaluate(void){int outer=11;return ({int n=0;do n++;while(n<3);n;})+outer;}",
     "int evaluate(void){int total=0;for(int i=0;i<1000;i++)total+=({int n=0;do n++;while(n<3);n;});return total-3000;}",

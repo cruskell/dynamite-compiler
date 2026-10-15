@@ -3905,6 +3905,9 @@ impl<'a> AstBuilderImpl<'a> {
         while self.attempt_reserved("__extension__").is_some() {}
         self.declaration_attributes(false, None, true);
         if matches!(
+            self.tokens[self.cur].tt,
+            TokenType::Ident | TokenType::Reserved
+        ) && matches!(
             self.tokens[self.cur].s_value.as_str(),
             "asm" | "__asm" | "__asm__"
         ) {

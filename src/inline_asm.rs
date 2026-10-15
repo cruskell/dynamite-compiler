@@ -120,8 +120,18 @@ impl AstBuilderImpl<'_> {
         let update = Node::new_with_op(Some(token.clone()), NodeType::Assign, destination, value);
         Node {
             nt: NodeType::Sequence,
-            token: Some(token),
-            children: vec![save, update],
+            token: Some(token.clone()),
+            children: vec![
+                save,
+                update,
+                Node {
+                    nt: NodeType::Cast,
+                    token: Some(token.clone()),
+                    cty: Some(Type::Void),
+                    lhs: Some(Box::new(Node::new_with_num(Some(token.clone()), 0))),
+                    ..Node::default()
+                },
+            ],
             ..Node::default()
         }
     }
