@@ -1435,6 +1435,7 @@ impl<'a> AstBuilderImpl<'a> {
             let mut has_bit_fields = false;
             let mut has_flexible_array = false;
             let mut align = ty.definition().borrow().align.max(1);
+            let mut natural_align = 1;
             while self.attempt_reserved("}").is_none() {
                 if self.attempt_static_assert() {
                     continue;
@@ -1512,6 +1513,7 @@ impl<'a> AstBuilderImpl<'a> {
                             bit_address =
                                 bit_address.div_ceil(member_alignment * 8) * member_alignment * 8;
                             align = align.max(member_alignment);
+                            natural_align = natural_align.max(member_alignment);
                         }
                         if width == 0 || usize::from(width) > container - bit_address % container {
                             bit_address = bit_address.div_ceil(container) * container;
@@ -1519,6 +1521,7 @@ impl<'a> AstBuilderImpl<'a> {
                         // Anonymous fields affect AAPCS64 alignment but not SysV alignment.
                         if name.is_some() || cfg!(target_arch = "aarch64") {
                             align = align.max(member_type.align_of());
+                            natural_align = natural_align.max(member_type.align_of());
                         }
                         let field = BitField {
                             width,
@@ -1535,6 +1538,7 @@ impl<'a> AstBuilderImpl<'a> {
                         }
                         size = size.div_ceil(member_alignment) * member_alignment;
                         align = align.max(member_alignment);
+                        natural_align = natural_align.max(member_alignment);
                         let offset = if is_union { 0 } else { size };
                         size = if is_union {
                             size.max(member_type.size_of())
@@ -1610,6 +1614,7 @@ impl<'a> AstBuilderImpl<'a> {
                 has_flexible_array,
                 size: size.div_ceil(align) * align,
                 align,
+                natural_align,
                 complete: true,
             };
         }

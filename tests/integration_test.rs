@@ -119,11 +119,21 @@ fn compile_and_run(code: &str, output_option: &str) -> Output {
 }
 
 fn compile_and_run_with_c(code: &str, output_option: &str, companion: Option<&str>) -> Output {
+    compile_and_run_with_c_flags(code, output_option, companion, &[])
+}
+
+fn compile_and_run_with_c_flags(
+    code: &str,
+    output_option: &str,
+    companion: Option<&str>,
+    flags: &[&str],
+) -> Output {
     let assembly = dynamite_compiler::generate(code, output_option, false);
     let mut rng = rand::thread_rng();
     fs::create_dir_all("./tests/temp").unwrap();
     let binary_name = &format!("./tests/temp/{}", Alphanumeric.sample_string(&mut rng, 32));
     let mut command = Command::new("clang");
+    command.args(flags);
     command.args([
         "-x",
         match output_option {
@@ -2024,4 +2034,67 @@ fn nondeclarations_at_file_scope_are_diagnosed(code: &str, output_option: &str) 
         std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
             .is_err()
     );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn aligned_aggregate_calls_match_clang(output_option: &str, optimization: &str) {
+    let layout = r#"
+struct RecordPadding{double x;} __attribute__((aligned(16)));
+struct MemberPadding{_Alignas(16) double x;};
+struct NestedPadding{struct RecordPadding value;};
+struct HfaMember{_Alignas(16) double x;double y;};
+struct HfaRecord{double x;double y;} __attribute__((aligned(16)));
+"#;
+    let code = [layout, r#"
+double foreign_record(int n,struct RecordPadding value,double tail);
+double foreign_member(int n,struct MemberPadding value,double tail);
+double foreign_nested(int n,struct NestedPadding value,double tail);
+double foreign_stack_record(int a,int b,int c,int d,int e,int f,int g,int h,int spacer,struct RecordPadding value,int tail);
+double foreign_stack_member(int a,int b,int c,int d,int e,int f,int g,int h,int spacer,struct MemberPadding value,int tail);
+double foreign_hfa_member(double a,double b,double c,double d,double e,double f,double g,double h,double spacer,struct HfaMember value,double tail);
+double foreign_hfa_record(double a,double b,double c,double d,double e,double f,double g,double h,double spacer,struct HfaRecord value,double tail);
+double foreign_return(struct RecordPadding value);
+double local_record(int n,struct RecordPadding value,double tail){return n+value.x+tail;}
+double local_member(int n,struct MemberPadding value,double tail){return n+value.x+tail;}
+double local_nested(int n,struct NestedPadding value,double tail){return n+value.value.x+tail;}
+double local_stack_record(int a,int b,int c,int d,int e,int f,int g,int h,int spacer,struct RecordPadding value,int tail){return a+b+c+d+e+f+g+h+spacer+value.x+tail;}
+double local_stack_member(int a,int b,int c,int d,int e,int f,int g,int h,int spacer,struct MemberPadding value,int tail){return a+b+c+d+e+f+g+h+spacer+value.x+tail;}
+double local_hfa_member(double a,double b,double c,double d,double e,double f,double g,double h,double spacer,struct HfaMember value,double tail){return a+b+c+d+e+f+g+h+spacer+value.x+value.y+tail;}
+double local_hfa_record(double a,double b,double c,double d,double e,double f,double g,double h,double spacer,struct HfaRecord value,double tail){return a+b+c+d+e+f+g+h+spacer+value.x+value.y+tail;}
+struct RecordPadding local_return(struct RecordPadding value){value.x+=1.0;return value;}
+int main(){
+    struct RecordPadding record={2.5};struct MemberPadding member={2.5};
+    struct NestedPadding nested={{2.5}};struct HfaMember hm={2.5,3.5};struct HfaRecord hr={2.5,3.5};
+    if(foreign_record(7,record,3.5)!=13.0)return 1;
+    if(foreign_member(7,member,3.5)!=13.0)return 2;
+    if(foreign_nested(7,nested,3.5)!=13.0)return 3;
+    if(foreign_stack_record(1,2,3,4,5,6,7,8,9,record,10)!=57.5)return 4;
+    if(foreign_stack_member(1,2,3,4,5,6,7,8,9,member,10)!=57.5)return 5;
+    if(foreign_hfa_member(1,2,3,4,5,6,7,8,9,hm,10)!=61.0)return 6;
+    if(foreign_hfa_record(1,2,3,4,5,6,7,8,9,hr,10)!=61.0)return 7;
+    if(foreign_return(record)!=3.5)return 8;
+    return 0;
+}
+"#].concat();
+    let companion = [layout, r#"
+double local_record(int,struct RecordPadding,double);
+double local_member(int,struct MemberPadding,double);
+double local_nested(int,struct NestedPadding,double);
+double local_stack_record(int,int,int,int,int,int,int,int,int,struct RecordPadding,int);
+double local_stack_member(int,int,int,int,int,int,int,int,int,struct MemberPadding,int);
+double local_hfa_member(double,double,double,double,double,double,double,double,double,struct HfaMember,double);
+double local_hfa_record(double,double,double,double,double,double,double,double,double,struct HfaRecord,double);
+struct RecordPadding local_return(struct RecordPadding);
+double foreign_record(int n,struct RecordPadding v,double t){return local_record(n,v,t);}
+double foreign_member(int n,struct MemberPadding v,double t){return local_member(n,v,t);}
+double foreign_nested(int n,struct NestedPadding v,double t){return local_nested(n,v,t);}
+double foreign_stack_record(int a,int b,int c,int d,int e,int f,int g,int h,int s,struct RecordPadding v,int t){return local_stack_record(a,b,c,d,e,f,g,h,s,v,t);}
+double foreign_stack_member(int a,int b,int c,int d,int e,int f,int g,int h,int s,struct MemberPadding v,int t){return local_stack_member(a,b,c,d,e,f,g,h,s,v,t);}
+double foreign_hfa_member(double a,double b,double c,double d,double e,double f,double g,double h,double s,struct HfaMember v,double t){return local_hfa_member(a,b,c,d,e,f,g,h,s,v,t);}
+double foreign_hfa_record(double a,double b,double c,double d,double e,double f,double g,double h,double s,struct HfaRecord v,double t){return local_hfa_record(a,b,c,d,e,f,g,h,s,v,t);}
+double foreign_return(struct RecordPadding v){return local_return(v).x;}
+"#].concat();
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "failed case: {:?}", result);
 }
