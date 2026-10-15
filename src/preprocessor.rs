@@ -17,6 +17,74 @@ pub struct PreprocessorOptions {
     pub undefinitions: Vec<String>,
 }
 
+fn compiler_macros(command: &mut Command) {
+    // Keep host ABI/GNU compatibility macros, but do not impersonate Clang.
+    command.args([
+        "-std=c99",
+        "-Wno-builtin-macro-redefined",
+        "-U__clang__",
+        "-U__clang_major__",
+        "-U__clang_minor__",
+        "-U__clang_patchlevel__",
+        "-U__clang_version__",
+        "-U__llvm__",
+        "-D__DYNAMITE__=1",
+        "-D__has_feature(x)=0",
+        "-D__has_extension(x)=0",
+        "-D__has_c_attribute(x)=0",
+        "-D__has_cpp_attribute(x)=0",
+        "-D__has_declspec_attribute(x)=0",
+        "-D__has_warning(x)=0",
+        "-D__has_constexpr_builtin(x)=0",
+        "-D__DYNAMITE_SECOND(_0,_1,...)=_1",
+        "-D__DYNAMITE_PROBE(...)=__DYNAMITE_SECOND(__VA_ARGS__,0,0)",
+        "-D__has_builtin(x)=__DYNAMITE_PROBE(__DYNAMITE_BUILTIN_##x)",
+        "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
+    ]);
+    for name in [
+        "__builtin_bswap16",
+        "__builtin_bswap32",
+        "__builtin_bswap64",
+        "__builtin_expect",
+        "__builtin_object_size",
+        "__builtin_offsetof",
+        "__builtin_add_overflow",
+        "__builtin_fabsf",
+        "__builtin_fabs",
+        "__builtin_inff",
+        "__builtin_inf",
+        "__builtin_huge_valf",
+        "__builtin_huge_val",
+        "__builtin_va_start",
+        "__builtin_va_end",
+        "__builtin_va_arg",
+        "__builtin_va_copy",
+        "__builtin___memcpy_chk",
+        "__builtin___memmove_chk",
+        "__builtin___memset_chk",
+        "__builtin___sprintf_chk",
+        "__builtin___snprintf_chk",
+        "__builtin___strlcpy_chk",
+        "__builtin___strlcat_chk",
+    ] {
+        command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
+    }
+    if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+        for name in ["__builtin_fabsl", "__builtin_infl", "__builtin_huge_vall"] {
+            command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
+        }
+    }
+    for name in crate::ast::METADATA_ATTRIBUTES
+        .iter()
+        .copied()
+        .chain(["aligned", "packed"])
+    {
+        for spelling in [name.to_string(), format!("__{name}__")] {
+            command.arg(format!("-D__DYNAMITE_ATTRIBUTE_{spelling}=~,1"));
+        }
+    }
+}
+
 struct IncludeDirectory(std::path::PathBuf);
 
 impl IncludeDirectory {
@@ -196,6 +264,7 @@ pub fn preprocess_with_options(
     };
     let mut command = Command::new("clang");
     command.args(["-E", "-x", "c", "-fno-blocks", "-"]);
+    compiler_macros(&mut command);
     if let Some(includes) = &includes {
         command.arg("-nostdinc").arg("-I").arg(&includes.0);
     }
@@ -393,6 +462,53 @@ mod option_tests {
             let source = preprocess_with_options(code, None, &options).unwrap();
             assert!(source.code.contains("int value = 7;"));
         }
+    }
+
+    #[test]
+    fn compiler_capabilities_do_not_inherit_clang_features() {
+        let code = r"
+#if defined(__clang__) || defined(__clang_major__) || defined(__llvm__)
+#error Incorrect compiler identity
+#endif
+#if !__DYNAMITE__ || __STDC_VERSION__ != 199901L
+#error Incorrect language profile
+#endif
+#if __has_feature(blocks) || __has_extension(c_atomic) || __has_c_attribute(nodiscard)
+#error Unsupported language feature
+#endif
+#if !__has_builtin(__builtin_bswap32) || !__has_attribute(__packed__)
+#error Supported operation missing
+#endif
+#if __has_builtin(__builtin_rotateleft32) || __has_builtin(__is_target_os)
+#error Unsupported builtin
+#endif
+#if __has_attribute(vector_size) || __has_attribute(weak_import)
+#error Unsupported attribute
+#endif
+int values[]={__has_builtin(unknown),__has_builtin(__builtin_expect),__has_attribute(unused)};
+";
+        for system_headers in [false, true] {
+            let options = PreprocessorOptions {
+                system_headers,
+                ..Default::default()
+            };
+            let source = preprocess_with_options(code, None, &options).unwrap();
+            assert!(source.code.contains("int values[]={0,1,1};"));
+        }
+    }
+
+    #[test]
+    fn explicit_macro_options_override_the_compiler_profile() {
+        let options = PreprocessorOptions {
+            definitions: vec!["__DYNAMITE__=9".into(), "__has_feature(x)=7".into()],
+            undefinitions: vec!["__GNUC__".into()],
+            ..Default::default()
+        };
+        let source = preprocess_with_options(
+            "#ifdef __GNUC__\n#error macro override failed\n#endif\nint values[]={__DYNAMITE__,__has_feature(custom)};",
+            None, &options,
+        ).unwrap();
+        assert!(source.code.contains("int values[]={9,7};"));
     }
 
     #[test]
