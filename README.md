@@ -584,3 +584,13 @@ reuse the shared packed-record paths across all three backends. GNU packed
 records with bit-fields, packing attributes on individual members or typedefs,
 and packing attributes on incomplete tag references remain unsupported and are
 diagnosed rather than ignored.
+
+## Floating absolute-value builtins
+
+`__builtin_fabsf` and `__builtin_fabs` convert one argument to `float` or `double`
+and return its absolute value with the corresponding type. Each operand is
+evaluated once. All backends clear the IEEE sign bit directly, preserving NaN
+payloads and producing positive zero from negative zero, without an external
+math-library call. Floating static initializers can evaluate these operations.
+`__builtin_fabsl` follows the same rules on the supported binary64 long-double
+target (macOS AArch64); other long-double ABIs remain unsupported.

@@ -2538,6 +2538,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         let value = match node.nt {
             NodeType::Num => ty.float_value(node.value.unwrap()),
+            NodeType::FloatAbs => self.eval_float_as(node.lhs.as_ref().unwrap(), &ty).abs(),
             NodeType::Cast => self.eval_float(node.lhs.as_ref().unwrap()),
             NodeType::Add => {
                 self.eval_float_as(node.lhs.as_ref().unwrap(), &ty)
@@ -4775,6 +4776,27 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn floating_abs_builtin(&mut self, token: Token) -> Node {
+        let ty = match token.s_value.as_str() {
+            "__builtin_fabsf" => Type::Float(32),
+            "__builtin_fabs" => Type::Float(64),
+            "__builtin_fabsl" => self.long_double_type(&token),
+            _ => unreachable!(),
+        };
+        self.expect_reserved("(");
+        let mut argument = self.assign();
+        self.expect_reserved(")");
+        self.expect_conversion(&ty, &argument);
+        Self::cast_integer(&mut argument, &ty);
+        Node {
+            nt: NodeType::FloatAbs,
+            token: Some(token),
+            cty: Some(ty),
+            lhs: Some(Box::new(argument)),
+            ..Node::default()
+        }
+    }
+
     fn checked_memory_builtin(&mut self, token: Token) -> Node {
         let pointer = Type::Ptr(Box::new(Type::Void));
         let const_pointer = Type::Ptr(Box::new(Type::Qualified(
@@ -5005,6 +5027,12 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
+            if matches!(
+                t.s_value.as_str(),
+                "__builtin_fabsf" | "__builtin_fabs" | "__builtin_fabsl"
+            ) {
+                return self.floating_abs_builtin(t);
+            }
             if let Some(bits) = match t.s_value.as_str() {
                 "__builtin_bswap16" => Some(16),
                 "__builtin_bswap32" => Some(32),

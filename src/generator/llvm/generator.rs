@@ -1474,6 +1474,25 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
 
+            NodeType::FloatAbs => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let value = options.register_queue.pop().unwrap();
+                let ty = node.resolve_type().unwrap();
+                let bits = ty.float_bits().unwrap();
+                let float = Self::gen_type(ty);
+                let raw = options.new_register();
+                options.register_queue.pop();
+                let masked = options.new_register();
+                options.register_queue.pop();
+                let result = options.new_register();
+                let mask = (1u64 << (bits - 1)) - 1;
+                lines.extend([
+                    format!("  %{raw} = bitcast {float} {value} to i{bits}"),
+                    format!("  %{masked} = and i{bits} %{raw}, {mask}"),
+                    format!("  %{result} = bitcast i{bits} %{masked} to {float}"),
+                ]);
+                return lines;
+            }
             NodeType::Cast => {
                 let operand = node.lhs.as_ref().unwrap();
                 let mut lines = self.gen_node(operand, options);
