@@ -604,6 +604,28 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                     continue;
                 }
+                if name.s_value.trim_matches('_') == "visibility" {
+                    self.cur += 1;
+                    self.expect_reserved("(");
+                    let visibility = self.attempt(TokenType::Str).unwrap_or_else(|| {
+                        self.error_logger
+                            .print_error_position(name.pos, "visibility requires a string literal");
+                        unreachable!()
+                    });
+                    if visibility.string_encoding.unit_size() != 1
+                        || visibility.string_bytes != b"default"
+                    {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "only default symbol visibility is supported",
+                        );
+                    }
+                    self.expect_reserved(")");
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
+                }
                 let supported = METADATA_ATTRIBUTES.contains(&name.s_value.trim_matches('_'));
                 if name.s_value.trim_matches('_') == "packed" {
                     if let Some(packed) = packed.as_deref_mut() {

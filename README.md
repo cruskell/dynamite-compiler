@@ -844,3 +844,12 @@ Shared AST lowering represents the exact difference with an unsigned low word
 and a signed high word, correcting sign extension with the low-word borrow.
 This uses the same representation as checked addition across all three backends
 and does not require 128-bit integer value operations.
+
+## Default visibility annotations
+
+GNU `visibility("default")` and `__visibility__("default")` declaration attributes
+are accepted as an explicit request for the existing default symbol visibility.
+They preserve external linkage and do not export static functions or objects.
+Concatenated narrow string literals and combined attribute lists are supported.
+Hidden, protected and internal visibility requests remain diagnosed rather than
+being ignored. Native assembly and LLVM output retain their existing linkage.
