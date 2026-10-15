@@ -159,8 +159,13 @@ impl<'a> IrGenerator<'a> {
                 Self::gen_type(gv.ty.clone())
             };
             return format!(
-                "{} = external {}global {}, align {}",
+                "{} = {} {}global {}, align {}",
                 self.symbol_name(name),
+                if gv.weak_import {
+                    "extern_weak"
+                } else {
+                    "external"
+                },
                 if gv.thread_local { "thread_local " } else { "" },
                 ty,
                 Self::align(&gv.ty).max(gv.alignment).max(1)
@@ -723,7 +728,8 @@ impl<'a> IrGenerator<'a> {
         }
         if func.body.is_none() || func.inline_only() {
             return format!(
-                "declare {return_abi} {}({})",
+                "declare {}{return_abi} {}({})",
+                if func.weak_import { "extern_weak " } else { "" },
                 self.symbol_name(name),
                 parameters.join(", ")
             );
@@ -1102,7 +1108,8 @@ impl<'a> IrGenerator<'a> {
                 arguments.push("...".to_string());
             }
             return format!(
-                "declare {} {}({})",
+                "declare {}{} {}({})",
+                if func.weak_import { "extern_weak " } else { "" },
                 Self::abi_result_type(result),
                 self.symbol_name(name),
                 arguments.join(", ")

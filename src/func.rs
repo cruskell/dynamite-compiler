@@ -8,6 +8,7 @@ pub struct Func {
     pub internal: bool,
     pub inline_definition: bool,
     pub gnu_inline: bool,
+    pub weak_import: bool,
     pub external_definition: bool,
     pub mutable_static: Option<Token>,
     pub return_pointer: Option<usize>,

@@ -1825,6 +1825,95 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn weak_import_declarations_preserve_optional_linkage(output_option: &str, optimization: &str) {
+    let code = r#"
+extern int absent(void) __attribute__((weak_import));
+extern int missing __attribute__((weak_import));
+__attribute__((weak_import)) extern int missing_first, missing_second;
+extern int present(int) __attribute__((__weak_import__));
+extern int present(int);
+extern int available __attribute__((weak_import));
+extern int available;
+extern signed char narrow(signed char) __attribute__((weak_import));
+struct Pair{long x;long y;};
+extern struct Pair pair(struct Pair) __attribute__((weak_import));
+extern int renamed(void) __asm__("weak_present_alias") __attribute__((weak_import));
+extern int absent_alias(void) __asm__("weak_absent_alias") __attribute__((weak_import));
+int (*saved_absent)(void)=absent;
+int (*saved_present)(int)=present;
+int *saved_missing=&missing,*saved_available=&available;
+int main(void){
+    if(absent || &missing || &missing_first || &missing_second || absent_alias)return 1;
+    if(saved_absent || saved_missing || !present || !&available)return 2;
+    if(present(3)!=7 || available!=11 || saved_present(5)!=9 || *saved_available!=11)return 3;
+    if(narrow(-3)!=-7 || renamed()!=17)return 4;
+    struct Pair value={19,23};value=pair(value);return value.x!=23 || value.y!=19;
+}"#;
+    let companion = "int available=11;int present(int n){return n+4;}signed char narrow(signed char n){return n-4;}int provided_alias(void) __asm__(\"weak_present_alias\");int provided_alias(void){return 17;}struct Pair{long x;long y;};struct Pair pair(struct Pair p){struct Pair r={p.y,p.x};return r;}";
+    let mut flags = vec![optimization];
+    if cfg!(target_os = "macos") {
+        flags.push("-Wl,-undefined,dynamic_lookup");
+    }
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &flags)
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn weak_import_declarations_can_remain_unused(output_option: &str) {
+    let code = "extern int missing __attribute__((weak_import));int absent(void) __attribute__((weak_import));int main(){return 0;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn weak_import_attributes_do_not_leak_between_declarators() {
+    let ir = dynamite_compiler::generate(
+        "extern int first __attribute__((weak_import)),second;int main(){return &first!=0;}",
+        "llvm",
+        false,
+    );
+    assert!(
+        ir.lines()
+            .any(|line| line.starts_with("@first = extern_weak global"))
+    );
+    assert!(
+        ir.lines()
+            .any(|line| line.starts_with("@second = external global"))
+    );
+}
+
+#[test_matrix([
+    "int value __attribute__((weak_import));",
+    "extern int value __attribute__((weak_import))=1;",
+    "extern _Thread_local int value __attribute__((weak_import));",
+    "static int f(void) __attribute__((weak_import));",
+    "int f(void) __attribute__((weak_import)){return 0;}",
+    "int f(void){return 0;}int f(void) __attribute__((weak_import));",
+    "int f(void) __attribute__((weak_import));int f(void){return 0;}",
+    "int value;extern int value __attribute__((weak_import));",
+    "extern int value __attribute__((weak_import));int value;",
+    "extern int invalid_argument __attribute__((weak_import(1)));",
+    "struct S{int member __attribute__((weak_import));};",
+    "int f(int parameter __attribute__((weak_import)));",
+    "int main(){extern int object __attribute__((weak_import));return 0;}",
+    "typedef int Alias __attribute__((weak_import));",
+], ["asm", "llvm"])]
+fn invalid_weak_import_declarations_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["_Thread_local", "__thread"], ["-O0", "-O2"])]
 fn thread_local_storage_is_private_and_interoperates_with_clang(keyword: &str, optimization: &str) {
     let code = format!(

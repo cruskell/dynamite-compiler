@@ -94,9 +94,10 @@ impl Declarator {
     }
 }
 
-#[derive(Default)]
-struct FunctionAttributes {
+#[derive(Clone, Default)]
+struct DeclarationAttributes {
     gnu_inline: bool,
+    weak_import: bool,
 }
 
 pub struct AstBuilderImpl<'a> {
@@ -117,7 +118,7 @@ pub struct AstBuilderImpl<'a> {
     variadic_last: Option<usize>,
     pending_bounds: Vec<Node>,
     parameter_depth: usize,
-    function_attributes: Option<FunctionAttributes>,
+    declaration_attributes_state: Option<DeclarationAttributes>,
     dynamic_objects: Vec<Node>,
     vla_active: Vec<usize>,
     jump_depths: Vec<usize>,
@@ -330,7 +331,7 @@ impl<'a> AstBuilderImpl<'a> {
             variadic_last: None,
             pending_bounds: vec![],
             parameter_depth: 0,
-            function_attributes: None,
+            declaration_attributes_state: None,
             dynamic_objects: vec![],
             vla_active: vec![],
             jump_depths: vec![],
@@ -562,7 +563,7 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(name.pos, "attribute name expected");
                 }
                 if name.s_value.trim_matches('_') == "gnu_inline" {
-                    if self.parameter_depth != 0 || self.function_attributes.is_none() {
+                    if self.parameter_depth != 0 || self.declaration_attributes_state.is_none() {
                         self.error_logger.print_error_position(
                             name.pos,
                             "gnu_inline requires a file-scope inline function declaration",
@@ -573,7 +574,31 @@ impl<'a> AstBuilderImpl<'a> {
                         self.error_logger
                             .print_error_position(name.pos, "gnu_inline does not take arguments");
                     }
-                    self.function_attributes.as_mut().unwrap().gnu_inline = true;
+                    self.declaration_attributes_state
+                        .as_mut()
+                        .unwrap()
+                        .gnu_inline = true;
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
+                }
+                if name.s_value.trim_matches('_') == "weak_import" {
+                    if self.parameter_depth != 0 || self.declaration_attributes_state.is_none() {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "weak_import requires a file-scope declaration",
+                        );
+                    }
+                    self.cur += 1;
+                    if self.tokens[self.cur].s_value == "(" {
+                        self.error_logger
+                            .print_error_position(name.pos, "weak_import does not take arguments");
+                    }
+                    self.declaration_attributes_state
+                        .as_mut()
+                        .unwrap()
+                        .weak_import = true;
                     if self.tokens[self.cur].s_value != ")" {
                         self.expect_reserved(",");
                     }
@@ -1654,9 +1679,9 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn struct_type(&mut self, token: Token) -> Type {
-        let attributes = self.function_attributes.take();
+        let attributes = self.declaration_attributes_state.take();
         let result = self.struct_type_body(token);
-        self.function_attributes = attributes;
+        self.declaration_attributes_state = attributes;
         result
     }
 
@@ -2113,7 +2138,7 @@ impl<'a> AstBuilderImpl<'a> {
             return;
         }
         // Attribute collection belongs to this declaration header, not its body or parameters.
-        self.function_attributes = Some(FunctionAttributes::default());
+        self.declaration_attributes_state = Some(DeclarationAttributes::default());
         self.offset_size = 0;
         self.pending_bounds.clear();
         self.vla_active.clear();
@@ -2163,13 +2188,13 @@ impl<'a> AstBuilderImpl<'a> {
         let external = storage.as_ref().is_some_and(|s| s.s_value == "extern");
         if self.attempt_reserved("typedef").is_some() {
             if self
-                .function_attributes
+                .declaration_attributes_state
                 .take()
-                .is_some_and(|a| a.gnu_inline)
+                .is_some_and(|a| a.gnu_inline || a.weak_import)
             {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
-                    "gnu_inline cannot be applied to a typedef",
+                    "declaration linkage attributes cannot be applied to a typedef",
                 );
             }
             if thread_local {
@@ -2210,13 +2235,13 @@ impl<'a> AstBuilderImpl<'a> {
                 );
             }
             if self
-                .function_attributes
+                .declaration_attributes_state
                 .take()
-                .is_some_and(|a| a.gnu_inline)
+                .is_some_and(|a| a.gnu_inline || a.weak_import)
             {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
-                    "gnu_inline requires an inline function declaration",
+                    "declaration attributes require a declarator",
                 );
             }
             if thread_local {
@@ -2233,7 +2258,9 @@ impl<'a> AstBuilderImpl<'a> {
             }
             return;
         }
+        let inherited_attributes = self.declaration_attributes_state.take().unwrap_or_default();
         loop {
+            self.declaration_attributes_state = Some(inherited_attributes.clone());
             let mut alignments = vec![alignment];
             let (name, mut ty, parameters, parameter_scope, stars) = self
                 .declarator_with_alignment(Some(&mut alignments))
@@ -2245,7 +2272,7 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             self.assembler_label(&token);
-            let attributes = self.function_attributes.take().unwrap_or_default();
+            let attributes = self.declaration_attributes_state.take().unwrap_or_default();
             if attributes.gnu_inline && (!inline || ty.function_signature().is_none()) {
                 self.error_logger.print_error_position(
                     token.pos,
@@ -2331,6 +2358,10 @@ impl<'a> AstBuilderImpl<'a> {
                 let gnu_inline = attributes.gnu_inline || previous.gnu_inline;
                 let replaceable_inline_body = previous.gnu_inline && previous.inline_only();
                 let definition = self.tokens[self.cur].s_value == "{";
+                let weak_import = attributes.weak_import || previous.weak_import;
+                if weak_import && (internal || definition || previous.body.is_some()) {
+                    self.error_logger.print_error_position(token.pos, "weak_import requires an external function declaration without a definition");
+                }
                 let external_definition = if gnu_inline {
                     if !definition && previous.body.is_some() {
                         previous.external_definition
@@ -2411,6 +2442,7 @@ impl<'a> AstBuilderImpl<'a> {
                     Func {
                         inline_definition: inline && body.is_some(),
                         gnu_inline,
+                        weak_import,
                         external_definition,
                         mutable_static: self.mutable_static.take(),
                         body,
@@ -2432,6 +2464,23 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 None
             };
+            let weak_import = attributes.weak_import
+                || self
+                    .global_variables
+                    .get(&token.s_value)
+                    .is_some_and(|object| object.weak_import);
+            if weak_import
+                && (!external
+                    || internal
+                    || thread_local
+                    || data.is_some()
+                    || self
+                        .global_variables
+                        .get(&token.s_value)
+                        .is_some_and(|object| !object.declaration_only))
+            {
+                self.error_logger.print_error_position(token.pos, "weak_import requires an external non-TLS object declaration without a definition");
+            }
             let count = if let Some(GlobalVariableData::Arr(elements)) = &data {
                 elements.len()
             } else {
@@ -2463,6 +2512,7 @@ impl<'a> AstBuilderImpl<'a> {
                     existing.ty = ty.clone();
                 }
                 existing.alignment = existing.alignment.max(alignment);
+                existing.weak_import = weak_import;
                 if existing.thread_local != thread_local {
                     self.error_logger
                         .print_error_position(token.pos, "conflicting thread storage duration");
@@ -2485,6 +2535,7 @@ impl<'a> AstBuilderImpl<'a> {
                         ty,
                         alignment,
                         thread_local,
+                        weak_import,
                         declaration_only: external && data.is_none(),
                         internal,
                         data,
@@ -3959,6 +4010,7 @@ impl<'a> AstBuilderImpl<'a> {
                         thread_local,
                         data,
                         internal: !external,
+                        weak_import: false,
                         declaration_only: external,
                     },
                 );
@@ -4757,6 +4809,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 thread_local: false,
                                 data: Some(data),
                                 internal: true,
+                                weak_import: false,
                                 declaration_only: false,
                             },
                         );
@@ -5075,6 +5128,7 @@ impl<'a> AstBuilderImpl<'a> {
                 alignment: 1,
                 thread_local: false,
                 internal: true,
+                weak_import: false,
                 declaration_only: false,
                 data: Some(GlobalVariableData::Arr(
                     function
@@ -6276,6 +6330,7 @@ mod tests {
                     alignment: 0,
                     thread_local: false,
                     internal: false,
+                    weak_import: false,
                     declaration_only: false,
                     ty: Type::I32,
                     data: Some(GlobalVariableData::Elem("42".to_string())),

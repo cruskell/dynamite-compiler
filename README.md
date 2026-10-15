@@ -809,3 +809,24 @@ conditions, logical operators, implicit or explicit `_Bool` conversions and
 explicit pointer-sized integer casts. Both native assembly and LLVM output
 preserve these conversions. Function designators cannot be cast directly to
 floating types, matching the restriction on ordinary pointer casts.
+
+## Weak imports
+
+File-scope external function and non-TLS object declarations accept GNU
+`__attribute__((weak_import))`, including the `__weak_import__` spelling.
+With linker settings that allow unresolved weak references, imported symbols
+have null addresses; when a definition is linked,
+ordinary calls and object accesses use that definition. Symbol aliases and
+static address initializers preserve weak linkage. Redeclarations retain it,
+prefix attributes apply to all object declarators, and postfix attributes apply
+only to the annotated declarator.
+
+Native output uses Mach-O `.weak_reference` or ELF `.weak`; LLVM uses
+`extern_weak` declarations. Definitions of imported symbols in the same
+translation unit, internal declarations, TLS imports and block-scope attributes
+remain diagnosed. Weak symbol definitions and GNU `weak` are separate features
+and remain unsupported.
+
+On macOS, completely undefined weak symbols require an appropriate weak-linked
+library or an explicit linker policy such as `-undefined dynamic_lookup`, as with
+Clang. Linux permits undefined weak symbols with the default ELF link policy.

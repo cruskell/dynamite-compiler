@@ -107,12 +107,12 @@ fn compiler_macros(command: &mut Command) {
             command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
         }
     }
-    for name in
-        crate::ast::METADATA_ATTRIBUTES
-            .iter()
-            .copied()
-            .chain(["aligned", "packed", "gnu_inline"])
-    {
+    for name in crate::ast::METADATA_ATTRIBUTES.iter().copied().chain([
+        "aligned",
+        "packed",
+        "gnu_inline",
+        "weak_import",
+    ]) {
         for spelling in [name.to_string(), format!("__{name}__")] {
             command.arg(format!("-D__DYNAMITE_ATTRIBUTE_{spelling}=~,1"));
         }
@@ -519,6 +519,9 @@ mod option_tests {
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing
 #endif
+#if !__has_attribute(weak_import) || !__has_attribute(__weak_import__)
+#error missing weak import attribute
+#endif
 #if !__has_builtin(__builtin_nan) || !__has_builtin(__builtin_nanf)
 #error missing NaN builtin
 #endif
@@ -537,7 +540,7 @@ mod option_tests {
 #if __has_builtin(__builtin_rotateleft32) || __has_builtin(__is_target_os)
 #error Unsupported builtin
 #endif
-#if __has_attribute(vector_size) || __has_attribute(weak_import)
+#if __has_attribute(vector_size) || __has_attribute(weak)
 #error Unsupported attribute
 #endif
 int values[]={__has_builtin(unknown),__has_builtin(__builtin_expect),__has_attribute(unused)};

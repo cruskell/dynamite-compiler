@@ -139,9 +139,21 @@ impl<'a> AsmGenerator<'a> {
         .into()
     }
 
+    fn weak_reference(&self, name: &str) -> Assembly {
+        let directive = match self.target_os {
+            Os::MacOS => ".weak_reference",
+            Os::Linux => ".weak",
+        };
+        format!("{directive} {}", self.with_prefix(name)).into()
+    }
+
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> Assembly {
         if gv.declaration_only {
-            return vec![].into();
+            return if gv.weak_import {
+                self.weak_reference(name)
+            } else {
+                vec![].into()
+            };
         }
         vec![
             if let Os::MacOS = self.target_os {
@@ -318,7 +330,11 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_func(&self, name: &str, func: &Func, offset: usize) -> Assembly {
         if func.body.is_none() || func.inline_only() {
-            return vec![].into();
+            return if func.weak_import {
+                self.weak_reference(name)
+            } else {
+                vec![].into()
+            };
         }
         if func.cty.function_signature().unwrap().2
             || matches!(func.cty.function_signature().unwrap().1, Type::Struct(_))

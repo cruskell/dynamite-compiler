@@ -5,6 +5,7 @@ pub struct GlobalVariable {
     pub ty: Type,
     pub alignment: usize,
     pub thread_local: bool,
+    pub weak_import: bool,
     pub internal: bool,
     pub declaration_only: bool,
     pub data: Option<GlobalVariableData>,
