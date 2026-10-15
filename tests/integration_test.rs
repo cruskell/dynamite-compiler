@@ -2097,6 +2097,71 @@ fn invalid_record_alignment_is_diagnosed(code: &str, output_option: &str) {
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r"
+struct Box{long value;};
+struct Tiny{signed char value;};
+int foreign(signed char,unsigned char,short,unsigned short,_Bool);
+int foreign_variadic(signed char,int,...);
+int foreign_mixed(signed char,struct Box,...);
+int callbacks(int (*)(signed char,unsigned char,short,unsigned short,_Bool),signed char (*)(signed char),unsigned short (*)(unsigned short),signed char (*)(struct Box,signed char),struct Box (*)(signed char),struct Tiny (*)(struct Tiny),_Bool (*)(_Bool));
+int own(signed char a,unsigned char b,short c,unsigned short d,_Bool e){return a!=-7 || b!=250 || c!=-12345 || d!=60000 || e!=1;}
+signed char byte(signed char value){return value;}
+unsigned short word(unsigned short value){return value;}
+signed char mixed(struct Box value,signed char extra){return value.value+extra;}
+struct Box record(signed char value){struct Box result={value};return result;}
+struct Tiny tiny(struct Tiny value){return value;}
+_Bool truth(_Bool value){return value;}
+int main(){
+    signed char a=-7;unsigned char b=250;short c=-12345;unsigned short d=60000;
+    if(foreign(a,b,c,d,1))return 1;
+    int (*indirect)(signed char,unsigned char,short,unsigned short,_Bool)=foreign;
+    if(indirect(a,b,c,d,1))return 2;
+    if(callbacks(own,byte,word,mixed,record,tiny,truth))return 3;
+    if(foreign_variadic(a,0,(signed char)-9,(unsigned short)60000))return 4;
+    struct Box box={11};
+    if(foreign_mixed(a,box,(signed char)-9))return 5;
+    return 0;
+}
+";
+    let companion = r"
+#include <stdarg.h>
+struct Box{long value;};
+struct Tiny{signed char value;};
+int foreign(signed char a,unsigned char b,short c,unsigned short d,_Bool e){return a!=-7 || b!=250 || c!=-12345 || d!=60000 || e!=1;}
+int foreign_variadic(signed char a,int n,...){va_list ap;va_start(ap,n);int b=va_arg(ap,int);int c=va_arg(ap,int);va_end(ap);return a!=-7 || b!=-9 || c!=60000;}
+int foreign_mixed(signed char a,struct Box box,...){va_list ap;va_start(ap,box);int b=va_arg(ap,int);va_end(ap);return a!=-7 || box.value!=11 || b!=-9;}
+int callbacks(int (*check)(signed char,unsigned char,short,unsigned short,_Bool),signed char (*byte)(signed char),unsigned short (*word)(unsigned short),signed char (*mixed)(struct Box,signed char),struct Box (*record)(signed char),struct Tiny (*tiny)(struct Tiny),_Bool (*truth)(_Bool)){
+    struct Box box={11};struct Box result=record(-7);struct Tiny small={-13};
+    return check(-7,250,-12345,60000,1) || byte(-7)!=-7 || word(60000)!=60000 || mixed(box,-18)!=-7 || result.value!=-7 || tiny(small).value!=-13 || truth(0)!=0 || truth(1)!=1;
+}
+";
+    if output_option == "llvm" {
+        let ir = dynamite_compiler::generate(code, output_option, false);
+        if cfg!(any(
+            target_arch = "x86_64",
+            all(target_arch = "aarch64", target_os = "macos")
+        )) {
+            assert!(ir.contains("define signext i8 @byte(i8 signext noundef"));
+            assert!(ir.contains("define zeroext i8 @truth(i8 zeroext noundef"));
+            assert!(ir.contains("define signext i8 @mixed("));
+        } else {
+            assert!(ir.contains("define i8 @byte(i8 noundef"));
+            assert!(!ir.contains("signext") && !ir.contains("zeroext"));
+        }
+    }
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn byte_swap_builtins_preserve_widths_constants_and_single_evaluation(output_option: &str) {
     let code = r#"
