@@ -195,7 +195,7 @@ pub fn preprocess_with_options(
         Some(IncludeDirectory::new()?)
     };
     let mut command = Command::new("clang");
-    command.args(["-E", "-x", "c", "-"]);
+    command.args(["-E", "-x", "c", "-fno-blocks", "-"]);
     if let Some(includes) = &includes {
         command.arg("-nostdinc").arg("-I").arg(&includes.0);
     }
@@ -383,19 +383,33 @@ mod option_tests {
         assert!(result.code.contains("int value=7;"));
     }
     #[test]
+    fn blocks_extension_is_disabled_in_both_header_modes() {
+        let code = "#if defined(__BLOCKS__) || __has_extension(blocks)\n#error Blocks are not supported\n#endif\nint value = 7;\n";
+        for system_headers in [false, true] {
+            let options = PreprocessorOptions {
+                system_headers,
+                ..Default::default()
+            };
+            let source = preprocess_with_options(code, None, &options).unwrap();
+            assert!(source.code.contains("int value = 7;"));
+        }
+    }
+
+    #[test]
     fn system_headers_are_an_explicit_preprocessing_option() {
         let options = PreprocessorOptions {
             system_headers: true,
             ..PreprocessorOptions::default()
         };
         let source = preprocess_with_options(
-            "#include <unistd.h>\n#include <stdio.h>\nFILE *stream;\n",
+            "#include <unistd.h>\n#include <stdio.h>\n#include <stdlib.h>\nFILE *stream;\n",
             None,
             &options,
         )
         .unwrap();
         assert!(source.code.contains("getpid"));
         assert!(source.code.contains("FILE *stream"));
+        assert!(!source.code.contains("atexit_b("));
         assert!(source.sources.len() > 2);
         assert!(!PreprocessorOptions::default().system_headers);
     }
