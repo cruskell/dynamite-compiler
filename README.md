@@ -549,3 +549,12 @@ same tag completes the shared type. Object definitions, record assignments and
 `sizeof` still require a complete type. LLVM represents an external record
 whose layout remains unknown with a byte declaration and opaque pointers;
 this declaration does not allocate storage or assume the object's actual size.
+
+## Attribute version tokens
+
+Ignored declaration metadata can contain underscore-separated version tokens,
+including `availability(macosx, introduced=10_0, deprecated=12_3_4)`. The tokenizer
+preserves their spelling as opaque version tokens. They are not numeric constants
+and cannot be used in C expressions, array bounds, enumerators or alignment
+expressions. Availability annotations remain metadata and do not add deployment
+target diagnostics or runtime checks.
