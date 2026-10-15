@@ -21,21 +21,27 @@ pub enum AtomicOperation {
     CompareExchange(bool),
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum InlineAsmPart {
-    Text(String),
-    Output,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct InlineAssembly {
-    pub parts: Vec<InlineAsmPart>,
-    pub volatile: bool,
+/// Substitute the validated GNU output placeholder without target-specific syntax.
+pub(crate) fn render_inline_assembly(template: &str, output: &str) -> Option<String> {
+    let mut rendered = String::new();
+    let mut chars = template.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            rendered.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('%') => rendered.push('%'),
+            Some('0') => rendered.push_str(output),
+            _ => return None,
+        }
+    }
+    Some(rendered)
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
-    InlineAsm(Box<InlineAssembly>),
+    InlineAsm(bool),
     Atomic(AtomicOperation),
     VaStart,
     VaEnd,
@@ -120,7 +126,7 @@ pub struct Node {
     pub children: Vec<Node>,
     // flag of global variables
     pub global_name: String,
-    // flag of string literal
+    /// String symbol name, or the validated source template for inline assembly.
     pub dest: String,
     // for calling function
     pub args: Vec<Node>,
