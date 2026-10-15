@@ -99,14 +99,14 @@ impl<'a> IrGenerator<'a> {
                     let (args, result, variadic) = ty.function_signature().unwrap();
                     let mut args = args
                         .iter()
-                        .map(|ty| Self::gen_type(ty.clone()))
+                        .map(|ty| Self::abi_parameter_type(ty.clone()))
                         .collect::<Vec<_>>();
                     if variadic {
                         args.push("...".to_string());
                     }
                     Some(format!(
                         "declare {} {}({})",
-                        Self::gen_type(result.clone()),
+                        Self::abi_result_type(result.clone()),
                         generator.symbol_name(name),
                         args.join(", ")
                     ))
@@ -281,6 +281,36 @@ impl<'a> IrGenerator<'a> {
             .unwrap_or(1);
         let alignment = ty.definition().borrow().align;
         (alignment > natural).then(|| format!("[0 x {}]", Self::alignment_type(alignment)))
+    }
+
+    fn abi_extension(ty: &Type) -> Option<&'static str> {
+        if !cfg!(any(
+            target_arch = "x86_64",
+            all(target_arch = "aarch64", target_os = "macos")
+        )) {
+            return None;
+        }
+        ty.integer_info().and_then(|(bits, signed)| {
+            (bits < 32).then_some(if signed { "signext" } else { "zeroext" })
+        })
+    }
+
+    fn abi_parameter_type(ty: Type) -> String {
+        let extension = Self::abi_extension(&ty);
+        let ty = Self::gen_type(ty);
+        match extension {
+            Some(extension) => format!("{ty} {extension}"),
+            None => ty,
+        }
+    }
+
+    fn abi_result_type(ty: Type) -> String {
+        let extension = Self::abi_extension(&ty);
+        let ty = Self::gen_type(ty);
+        match extension {
+            Some(extension) => format!("{extension} {ty}"),
+            None => ty,
+        }
     }
 
     fn gen_type(ty: Type) -> String {
@@ -669,6 +699,11 @@ impl<'a> IrGenerator<'a> {
         } else {
             Self::gen_type(result.clone())
         };
+        let return_abi = if matches!(result, Type::Struct(_)) {
+            return_type.clone()
+        } else {
+            Self::abi_result_type(result.clone())
+        };
         let mut parameters = vec![];
         if signature.indirect_result {
             parameters.push(format!(
@@ -682,6 +717,10 @@ impl<'a> IrGenerator<'a> {
                 .into_iter()
                 .enumerate()
             {
+                let ty = match Self::abi_extension(&types[index]) {
+                    Some(extension) => format!("{ty} {extension}"),
+                    None => ty,
+                };
                 parameters.push(if func.body.is_some() {
                     format!("{ty} %abi.arg.{index}.{part}")
                 } else {
@@ -694,7 +733,7 @@ impl<'a> IrGenerator<'a> {
         }
         if func.body.is_none() || func.inline_only() {
             return format!(
-                "declare {return_type} {}({})",
+                "declare {return_abi} {}({})",
                 self.symbol_name(name),
                 parameters.join(", ")
             );
@@ -715,7 +754,7 @@ impl<'a> IrGenerator<'a> {
             argument_slots: HashMap::new(),
         };
         let mut lines = vec![format!(
-            "define {}{return_type} {}({}) {{",
+            "define {}{return_abi} {}({}) {{",
             if func.internal { "internal " } else { "" },
             self.symbol_name(name),
             parameters.join(", ")
@@ -892,12 +931,15 @@ impl<'a> IrGenerator<'a> {
                     }
                     arguments.push(format!("{} {group}", parameter_types[0]));
                 } else {
-                    arguments.extend(
-                        parameter_types
-                            .into_iter()
-                            .zip(values)
-                            .map(|(ty, value)| format!("{ty} {value}")),
-                    );
+                    arguments.extend(parameter_types.into_iter().zip(values).map(
+                        |(part_type, value)| {
+                            let parameter_type = match Self::abi_extension(ty) {
+                                Some(extension) => format!("{part_type} {extension}"),
+                                None => part_type,
+                            };
+                            format!("{parameter_type} {value}")
+                        },
+                    ));
                 }
             }
         }
@@ -919,6 +961,11 @@ impl<'a> IrGenerator<'a> {
             Self::aggregate_result_type(&result)
         } else {
             Self::gen_type(result.clone())
+        };
+        let return_abi = if matches!(result, Type::Struct(_)) {
+            return_type.clone()
+        } else {
+            Self::abi_result_type(result.clone())
         };
         let variadic_signature = if node.variadic {
             let fixed = Self::aggregate_signature(
@@ -953,7 +1000,7 @@ impl<'a> IrGenerator<'a> {
             let register = options.new_register();
             options.register_queue.pop();
             lines.push(format!(
-                "  %{register} = call {return_type}{variadic_signature} {callee}({})",
+                "  %{register} = call {return_abi}{variadic_signature} {callee}({})",
                 arguments.join(", ")
             ));
             format!("%{register}")
@@ -1059,14 +1106,14 @@ impl<'a> IrGenerator<'a> {
             let (args, result, variadic) = func.cty.function_signature().unwrap();
             let mut arguments = args
                 .iter()
-                .map(|ty| Self::gen_type(ty.clone()))
+                .map(|ty| Self::abi_parameter_type(ty.clone()))
                 .collect::<Vec<_>>();
             if variadic {
                 arguments.push("...".to_string());
             }
             return format!(
                 "declare {} {}({})",
-                Self::gen_type(result),
+                Self::abi_result_type(result),
                 self.symbol_name(name),
                 arguments.join(", ")
             );
@@ -1089,14 +1136,14 @@ impl<'a> IrGenerator<'a> {
             vec![format!(
                 "define {}{} {}({}) {{",
                 if func.internal { "internal " } else { "" },
-                Self::gen_type(*return_ty.clone()),
+                Self::abi_result_type(*return_ty.clone()),
                 self.symbol_name(name),
                 func.args
                     .iter()
                     .enumerate()
                     .map(|(i, arg)| format!(
                         "{} noundef %{}",
-                        Self::gen_type(arg.resolve_type().unwrap()),
+                        Self::abi_parameter_type(arg.resolve_type().unwrap()),
                         i
                     ))
                     .chain(variadic.then_some("...".to_string()))
@@ -1585,7 +1632,7 @@ impl<'a> IrGenerator<'a> {
                             }
                         });
                     let value = Self::convert_integer(value, &source, &ty, options, &mut lines);
-                    arguments.push(format!("{} {}", Self::gen_type(ty), value));
+                    arguments.push(format!("{} {}", Self::abi_parameter_type(ty), value));
                 }
                 arguments.reverse();
                 let signature = if variadic {
@@ -1613,7 +1660,7 @@ impl<'a> IrGenerator<'a> {
                 lines.push(format!(
                     "  %{} = call {}{} {}({})",
                     options.new_register(),
-                    Self::gen_type(result),
+                    Self::abi_result_type(result),
                     signature,
                     callee,
                     arguments.join(", ")

@@ -667,3 +667,12 @@ operands are unevaluated. Variably modified types retain captured bounds and
 evaluate the required operand and bound expressions in their enclosing context;
 `sizeof` and `_Alignof` preserve their own evaluation rules. Bit-field operands
 and named declarators in type names are diagnosed.
+
+## Narrow scalar ABI in LLVM output
+
+LLVM function declarations, definitions and call sites carry `signext` or
+`zeroext` for integer parameters and results narrower than 32 bits on x86_64 and
+macOS ARM64. Linux ARM64 follows AAPCS64 without these extension attributes.
+This applies to direct and indirect calls, fixed variadic parameters and scalar
+parameters/results alongside records. Aggregate coercion types and LLVM function
+types remain unadorned; unnamed variadic arguments retain default promotions.
