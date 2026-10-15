@@ -1906,6 +1906,7 @@ fn common_attribute_keeps_declarator_ownership_and_redeclarations(output_option:
             "{generated}"
         );
     } else {
+        let generated = generated.replace('"', "");
         let prefix = if cfg!(target_os = "macos") { "_" } else { "" };
         for name in ["first", "second", "third"] {
             assert!(
