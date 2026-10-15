@@ -1398,6 +1398,24 @@ impl<'a> AstBuilderImpl<'a> {
         }
         None
     }
+    fn enum_integer_type(&self, minimum: i128, maximum: i128, token: &Token) -> Type {
+        if minimum >= i128::from(i32::MIN) && maximum <= i128::from(i32::MAX) {
+            Type::I32
+        } else if minimum >= 0 && maximum <= i128::from(u32::MAX) {
+            Type::integer(32, false)
+        } else if minimum >= i128::from(i64::MIN) && maximum <= i128::from(i64::MAX) {
+            Type::integer(64, minimum < 0)
+        } else if minimum >= 0 && maximum <= i128::from(u64::MAX) {
+            Type::integer(64, false)
+        } else {
+            self.error_logger.print_error_position(
+                token.pos,
+                "enumerator range exceeds supported integer types",
+            );
+            unreachable!()
+        }
+    }
+
     fn enum_type(&mut self, token: Token) -> Type {
         self.declaration_annotations();
         let name = self.attempt_ident();
@@ -1461,9 +1479,9 @@ impl<'a> AstBuilderImpl<'a> {
                 );
             }
         }
-        if let Some(key) = key {
+        if let Some(key) = &key {
             self.scope_stack.last_mut().unwrap().insert(
-                key,
+                key.clone(),
                 Identifier::EnumTag {
                     ty: ty.clone(),
                     fixed,
@@ -1476,7 +1494,9 @@ impl<'a> AstBuilderImpl<'a> {
         }
         self.expect_reserved("{");
         let (bits, signed) = ty.integer_info().unwrap();
-        let (minimum, maximum) = if ty == Type::Bool {
+        let (minimum, maximum) = if !fixed {
+            (i128::from(i64::MIN), i128::from(u64::MAX))
+        } else if ty == Type::Bool {
             (0, 1)
         } else if signed {
             (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
@@ -1484,6 +1504,9 @@ impl<'a> AstBuilderImpl<'a> {
             (0, (1i128 << bits) - 1)
         };
         let mut value = 0i128;
+        let mut smallest = i128::MAX;
+        let mut largest = i128::MIN;
+        let mut enumerators = vec![];
         loop {
             let name = self.attempt_ident().unwrap_or_else(|| {
                 self.error_logger
@@ -1521,10 +1544,18 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(name.pos, "duplicate enumerator");
             }
-            self.scope_stack
-                .last_mut()
-                .unwrap()
-                .insert(name.s_value, Identifier::Constant(value as i64, ty.clone()));
+            smallest = smallest.min(value);
+            largest = largest.max(value);
+            let constant_type = if fixed {
+                ty.clone()
+            } else {
+                self.enum_integer_type(value, value, &name)
+            };
+            enumerators.push((name.s_value.clone(), value as i64));
+            self.scope_stack.last_mut().unwrap().insert(
+                name.s_value,
+                Identifier::Constant(value as i64, constant_type),
+            );
             value += 1;
             if self.attempt_reserved("}").is_some() {
                 break;
@@ -1533,6 +1564,24 @@ impl<'a> AstBuilderImpl<'a> {
             if self.attempt_reserved("}").is_some() {
                 break;
             }
+        }
+        if fixed {
+            return ty;
+        }
+        let ty = self.enum_integer_type(smallest, largest, &token);
+        let scope = self.scope_stack.last_mut().unwrap();
+        for (name, value) in enumerators {
+            scope.insert(name, Identifier::Constant(value, ty.clone()));
+        }
+        if let Some(key) = key {
+            scope.insert(
+                key,
+                Identifier::EnumTag {
+                    ty: ty.clone(),
+                    fixed: false,
+                    defined: true,
+                },
+            );
         }
         ty
     }
