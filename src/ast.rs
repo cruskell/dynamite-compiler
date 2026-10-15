@@ -4700,10 +4700,6 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn checked_memory_builtin(&mut self, token: Token) -> Node {
-        if self.tokens[self.cur].s_value != "(" {
-            self.error_logger
-                .print_error_position(token.pos, "checked-memory builtin must be called directly");
-        }
         let pointer = Type::Ptr(Box::new(Type::Void));
         let const_pointer = Type::Ptr(Box::new(Type::Qualified(
             Box::new(Type::Void),
@@ -4723,6 +4719,39 @@ impl<'a> AstBuilderImpl<'a> {
             vec![pointer.clone(), second, size.clone(), size],
             Box::new(pointer),
         );
+        self.checked_runtime_builtin(token, name, ty)
+    }
+
+    fn checked_format_builtin(&mut self, token: Token) -> Node {
+        let pointer = Type::Ptr(Box::new(Type::I8));
+        let format = Type::Ptr(Box::new(Type::Qualified(
+            Box::new(Type::I8),
+            Qualifiers {
+                constant: true,
+                ..Qualifiers::default()
+            },
+        )));
+        let size = Type::integer(64, false);
+        let (name, parameters) = match token.s_value.as_str() {
+            "__builtin___sprintf_chk" => ("__sprintf_chk", vec![pointer, Type::I32, size, format]),
+            "__builtin___snprintf_chk" => (
+                "__snprintf_chk",
+                vec![pointer, size.clone(), Type::I32, size, format],
+            ),
+            _ => unreachable!(),
+        };
+        self.checked_runtime_builtin(
+            token,
+            name,
+            Type::VariadicFunc(parameters, Box::new(Type::I32)),
+        )
+    }
+
+    fn checked_runtime_builtin(&mut self, token: Token, name: &str, ty: Type) -> Node {
+        if self.tokens[self.cur].s_value != "(" {
+            self.error_logger
+                .print_error_position(token.pos, "checked runtime builtin must be called directly");
+        }
         if self.global_variables.contains_key(name)
             || self.scope_stack[0]
                 .get(name)
@@ -4730,15 +4759,13 @@ impl<'a> AstBuilderImpl<'a> {
         {
             self.error_logger.print_error_position(
                 token.pos,
-                "checked-memory runtime symbol conflicts with an identifier",
+                "checked runtime symbol conflicts with an identifier",
             );
         }
         if let Some(function) = self.functions.get(name) {
             if !function.cty.compatible(&ty) {
-                self.error_logger.print_error_position(
-                    token.pos,
-                    "incompatible checked-memory runtime declaration",
-                );
+                self.error_logger
+                    .print_error_position(token.pos, "incompatible checked runtime declaration");
             }
         }
         self.functions.entry(name.into()).or_insert_with(|| Func {
@@ -4884,6 +4911,12 @@ impl<'a> AstBuilderImpl<'a> {
                 _ => None,
             } {
                 return self.byte_swap_builtin(t, bits);
+            }
+            if matches!(
+                t.s_value.as_str(),
+                "__builtin___sprintf_chk" | "__builtin___snprintf_chk"
+            ) {
+                return self.checked_format_builtin(t);
             }
             if t.s_value == "__builtin_add_overflow" {
                 return self.add_overflow_builtin(t);

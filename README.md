@@ -458,6 +458,15 @@ The x86_64 backend quotes C linkage names in assembly definitions and operands.
 Names such as `flags`, `rax`, or `offset` therefore remain symbols when used in
 calls, address calculations, GOT references, and static initializer relocations.
 
+## Checked formatted output
+
+`__builtin___sprintf_chk` and `__builtin___snprintf_chk` call the matching
+checked runtime functions with their capacity, flags, format, and variadic
+arguments preserved. They return `int` character counts and retain standard
+`snprintf` truncation and zero-length query behavior. Calls that violate the
+supplied capacity retain the runtime's failure behavior. These builtins require
+the corresponding checked libc functions.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their
