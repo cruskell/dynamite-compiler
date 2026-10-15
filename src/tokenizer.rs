@@ -145,6 +145,33 @@ fn decode_literal(value: &str, byte_characters: bool) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
+fn decode_prefixed_character(value: &str, encoding: StringEncoding) -> Option<usize> {
+    let scalar = if let Some(digits) = value.strip_prefix("\\x") {
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        u32::from_str_radix(digits, 16).ok()?
+    } else if let Some(digits) = value.strip_prefix('\\').filter(|digits| {
+        (1..=3).contains(&digits.len()) && digits.bytes().all(|byte| matches!(byte, b'0'..=b'7'))
+    }) {
+        u32::from_str_radix(digits, 8).ok()?
+    } else {
+        let decoded = String::from_utf8(decode_literal(value, false)?).ok()?;
+        let mut chars = decoded.chars();
+        let scalar = chars.next()? as u32;
+        if chars.next().is_some() {
+            return None;
+        }
+        scalar
+    };
+    match encoding {
+        StringEncoding::Utf16 if scalar <= 0xffff => Some(scalar as usize),
+        StringEncoding::Utf32 => Some(scalar as usize),
+        StringEncoding::Wide => Some((scalar as i32 as isize) as usize),
+        _ => None,
+    }
+}
+
 fn encode_string_literal(value: &str, encoding: StringEncoding) -> Vec<u8> {
     let utf8 = decode_string_literal(value).unwrap_or_default();
     if encoding == StringEncoding::Narrow || encoding == StringEncoding::Utf8 {
@@ -505,7 +532,8 @@ impl Tokenizer {
             }
             let (string_encoding, prefix_size) = if code[pos..].starts_with("u8\"") {
                 (StringEncoding::Utf8, 2)
-            } else if matches!(bytes[pos], b'L' | b'u' | b'U') && bytes.get(pos + 1) == Some(&b'\"')
+            } else if matches!(bytes[pos], b'L' | b'u' | b'U')
+                && matches!(bytes.get(pos + 1), Some(b'\"' | b'\''))
             {
                 (
                     match bytes[pos] {
@@ -628,6 +656,14 @@ impl Tokenizer {
                     let literal_start = start + prefix_size;
                     let value_start = literal_start + 1;
                     let value = &code[value_start..pos];
+                    if quote == b'\'' && string_encoding != StringEncoding::Narrow {
+                        let value = decode_prefixed_character(value, string_encoding).ok_or_else(|| error::SyntaxError::new(start, "prefixed character constant requires one representable code unit"))?;
+                        let mut token = Self::num_token(start, value);
+                        token.string_encoding = string_encoding;
+                        tokens.push(token);
+                        pos += 1;
+                        continue;
+                    }
                     let decoded = decode_literal(value, quote == b'\'').ok_or_else(|| {
                         error::SyntaxError::new(
                             start,
@@ -755,6 +791,39 @@ mod tests {
         assert_eq!(tokens[4].i_value, 16);
         for code in ["10__0", "10_", "10_0u", "10_0abc"] {
             assert!(Tokenizer::tokenize(code, false).is_err(), "{code}");
+        }
+    }
+
+    #[test]
+    fn prefixed_character_constants_decode_one_code_unit() {
+        for (source, value, encoding) in [
+            (r"L'\0'", 0, StringEncoding::Wide),
+            (r"L'\xffffffff'", usize::MAX, StringEncoding::Wide),
+            ("L'Ω'", 937, StringEncoding::Wide),
+            (r"u'\u03a9'", 937, StringEncoding::Utf16),
+            (r"u'\xffff'", 65535, StringEncoding::Utf16),
+            (r"U'\U0001f600'", 128512, StringEncoding::Utf32),
+            (r"U'\xffffffff'", 4294967295, StringEncoding::Utf32),
+        ] {
+            let tokens = Tokenizer::tokenize(source, false).unwrap();
+            assert_eq!(tokens[0].tt, TokenType::Num);
+            assert_eq!(tokens[0].pos, 0);
+            assert_eq!(tokens[0].i_value, value, "{source}");
+            assert_eq!(tokens[0].string_encoding, encoding);
+        }
+        for source in [
+            "L''",
+            "L'ab'",
+            r"u'\U0001f600'",
+            r"u'\x10000'",
+            r"U'\x100000000'",
+            r"L'\uD800'",
+            r"L'\x'",
+            r"L'\x+1'",
+            r"L'\7777'",
+            "u'😀'",
+        ] {
+            assert!(Tokenizer::tokenize(source, false).is_err(), "{source}");
         }
     }
 

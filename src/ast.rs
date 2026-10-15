@@ -5956,10 +5956,15 @@ impl<'a> AstBuilderImpl<'a> {
                 token: Some(t.clone()),
                 nt: NodeType::Num,
                 value: Some(t.i_value),
-                cty: Some(Type::integer(
-                    if t.s_value.contains('l') { 64 } else { 32 },
-                    !t.s_value.contains('u'),
-                )),
+                cty: Some(match t.string_encoding {
+                    crate::token::StringEncoding::Utf16 => Type::integer(16, false),
+                    crate::token::StringEncoding::Utf32 => Type::integer(32, false),
+                    crate::token::StringEncoding::Wide => Type::I32,
+                    _ => Type::integer(
+                        if t.s_value.contains('l') { 64 } else { 32 },
+                        !t.s_value.contains('u'),
+                    ),
+                }),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
