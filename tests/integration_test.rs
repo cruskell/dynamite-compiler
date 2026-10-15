@@ -1627,6 +1627,69 @@ fn unsupported_long_double_formats_are_diagnosed(code: &str, output_option: &str
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn float16_objects_preserve_layout_and_pointer_interop(output_option: &str, optimization: &str) {
+    let code = r"
+typedef _Float16 Half;
+Half unused_api(Half);
+struct Packet{char tag;Half value;char end;};
+Half zeros[3]={};
+struct Packet storage={};
+void fill(Half *value);
+int check(struct Packet *value,Half *array);
+int main(){
+    Half local;
+    struct Packet packet;
+    packet.tag=7;packet.end=9;
+    fill(&local);
+    unsigned char *from=(unsigned char*)&local;
+    unsigned char *to=(unsigned char*)&packet.value;
+    to[0]=from[0];to[1]=from[1];
+    storage=packet;
+    unsigned char *bytes=(unsigned char*)zeros;
+    int i=0;while(i<6){if(bytes[i])return 1;i++;}
+    return check(&storage,zeros)+(sizeof(Half)!=2)+(_Alignof(Half)!=2)
+        +(sizeof(zeros)!=6)+(sizeof(packet)!=6)
+        +((char*)&packet.value-(char*)&packet!=2)
+        +((char*)&packet.end-(char*)&packet!=4)
+        +((char*)&zeros[1]-(char*)zeros!=2)
+        +_Generic(local,Half:0,float:1,default:2);
+}";
+    let companion = r"
+struct Packet{char tag;_Float16 value;char end;};
+void fill(_Float16 *value){*value=1.5f;}
+int check(struct Packet *value,_Float16 *array){
+    return value->tag!=7 || value->end!=9 || value->value!=1.5f || array[2]!=0;
+}";
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test_matrix([
+    "_Float16 x=1;",
+    "int main(){_Float16 x;x;return 0;}",
+    "int main(){_Float16 x;x=x;return 0;}",
+    "int main(){_Float16 x;return (int)x;}",
+    "double x=(double)(_Float16)1;",
+    "_Float16 f(void){}",
+    "void f(_Float16 x){}",
+    "_Float16 f(void);int main(){f();return 0;}",
+    "struct S{_Float16 x;};void f(struct S);",
+    "struct S{_Float16 x[2];};struct S f(void);",
+    "union U{_Float16 x;int y;};void f(union U);",
+    "struct S;void f(struct S);struct S{_Float16 x;};",
+    "struct S;struct S (*p)(void);struct S{_Float16 x;};int main(){p();return 0;}",
+    "struct S{_Float16 x;};void f(int,...);int main(){struct S s;f(0,s);return 0;}",
+    "struct S{_Float16 x;};void f(int n,...){__builtin_va_list ap;__builtin_va_start(ap,n);__builtin_va_arg(ap,struct S);}",
+], ["asm", "llvm"])]
+fn unsupported_float16_values_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn extended_integer_object_layout_interoperates_with_clang(output_option: &str) {
     let code = r#"

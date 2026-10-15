@@ -196,6 +196,12 @@ impl AstBuilderImpl<'_> {
                         "va_arg requires a type after default argument promotions",
                     );
                 }
+                if ty.contains_float16() {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "va_arg for types containing _Float16 is not supported",
+                    );
+                }
                 self.va_argument(ap, ty, &token)
             }
             "__builtin_va_copy" => {

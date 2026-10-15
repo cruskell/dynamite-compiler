@@ -126,6 +126,7 @@ pub enum Type {
         signed: bool,
     },
     Bool,
+    Float16,
     Float(u8),
     LongDouble(u8),
     Ptr(Box<Type>),
@@ -353,6 +354,7 @@ impl Type {
             Type::Struct(ty) => ty.definition().borrow().size,
             Type::I8 => 1,
             Type::I32 => 4,
+            Type::Float16 => 2,
             Type::Integer128 { .. } => 16,
             Type::Integer { bits, .. } => (*bits as usize) / 8,
             Type::Bool => 1,
@@ -363,6 +365,18 @@ impl Type {
             Type::Func(..) | Type::VariadicFunc(..) => 1,
         }
     }
+    pub fn contains_float16(&self) -> bool {
+        match self.unqualified() {
+            Self::Float16 => true,
+            Self::Arr(child, _) | Self::Vla(child, _) => child.contains_float16(),
+            Self::Struct(ty) => ty
+                .members()
+                .iter()
+                .any(|member| member.ty.contains_float16()),
+            _ => false,
+        }
+    }
+
     pub fn natural_align_of(&self) -> usize {
         if let Self::Struct(ty) = self.unqualified() {
             let definition = ty.definition();
