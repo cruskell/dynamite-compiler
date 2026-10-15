@@ -155,6 +155,20 @@ impl<'a> AsmGenerator<'a> {
                 vec![].into()
             };
         }
+        if gv.common && !gv.internal && !gv.thread_local && gv.data.is_none() {
+            let alignment = gv.ty.align_of().max(gv.alignment).max(1);
+            let alignment = match self.target_os {
+                Os::MacOS => alignment.trailing_zeros() as usize,
+                Os::Linux => alignment,
+            };
+            return format!(
+                ".comm {},{},{}",
+                self.with_prefix(name),
+                gv.ty.size_of(),
+                alignment
+            )
+            .into();
+        }
         vec![
             if let Os::MacOS = self.target_os {
                 ".section __DATA,__data".into()

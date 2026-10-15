@@ -869,3 +869,20 @@ Explicit vector-containing initializers, vector values, lane access and vector
 or vector-containing record arguments/results are diagnosed. General object
 vector attributes and vector arithmetic are not implemented, so the compiler
 conservatively keeps `__has_attribute(vector_size)` false.
+
+## Common object linkage
+
+GNU `common` and `__common__` attributes on file-scope object declarations mark
+uninitialized external definitions as common symbols. Matching symbols from
+multiple translation units share storage, and initialized strong definitions
+supply the storage when present. Types and requested alignment are retained.
+An explicit initializer always produces a strong definition, even if its value
+is zero; ordinary objects without this attribute retain their existing linkage.
+
+The attribute persists across redeclarations. Prefix attributes apply to each
+object in the declaration; postfix attributes belong to their own declarator.
+Extern-only declarations remain references. Static objects and thread-local
+objects keep their normal internal or TLS linkage, as with Clang. Functions,
+block-scope objects, parameters, typedefs, arguments to the attribute and
+combinations with `weak_import` are diagnosed. Both native backends emit the
+platform common-symbol directive, and LLVM output uses common global linkage.

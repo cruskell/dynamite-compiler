@@ -174,7 +174,13 @@ impl<'a> IrGenerator<'a> {
         format!(
             "{} = {}{}global {}, align {}",
             self.symbol_name(name),
-            if gv.internal { "internal " } else { "" },
+            if gv.internal {
+                "internal "
+            } else if gv.common && !gv.thread_local && gv.data.is_none() {
+                "common "
+            } else {
+                ""
+            },
             if gv.thread_local { "thread_local " } else { "" },
             if Self::contains_packed_record(&gv.ty) {
                 self.packed_global_initializer(&gv.ty, gv.data.as_ref())

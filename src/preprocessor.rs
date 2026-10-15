@@ -113,6 +113,7 @@ fn compiler_macros(command: &mut Command) {
         "packed",
         "gnu_inline",
         "weak_import",
+        "common",
         "visibility",
     ]) {
         for spelling in [name.to_string(), format!("__{name}__")] {
@@ -520,6 +521,9 @@ mod option_tests {
 #endif
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing
+#endif
+#if !__has_attribute(common) || !__has_attribute(__common__)
+#error missing common attribute
 #endif
 #if !__has_attribute(visibility) || !__has_attribute(__visibility__)
 #error missing default visibility attribute
