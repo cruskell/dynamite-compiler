@@ -1082,11 +1082,12 @@ impl<'a> AstBuilderImpl<'a> {
         self.validate_type_layout(&ty, &token);
         (token, ty)
     }
-    fn new_local_variable(&mut self, ty: Type, alignment: usize) -> Node {
+    fn new_local_variable(&mut self, ty: Type, alignment: usize) -> (Node, bool) {
         let mut alignments = vec![alignment];
         let (t, ty) = self.expect_ident_with_type(ty, Some(&mut alignments));
         let alignment = alignments.into_iter().max().unwrap_or(0);
-        let ty = if matches!(ty, Type::Arr(_, None)) {
+        let inferred = matches!(ty, Type::Arr(_, None));
+        let ty = if inferred {
             let saved = self.cur;
             self.expect_reserved("=");
             let count = self.initializer_count(&ty);
@@ -1095,7 +1096,10 @@ impl<'a> AstBuilderImpl<'a> {
         } else {
             ty
         };
-        self.register_local_variable_aligned(t, ty, alignment)
+        (
+            self.register_local_variable_aligned(t, ty, alignment),
+            inferred,
+        )
     }
 
     fn infer_array_size(&self, ty: Type, count: usize, token: &Token) -> Type {
@@ -2935,6 +2939,26 @@ impl<'a> AstBuilderImpl<'a> {
             _ => None,
         }
     }
+    fn initializer_subobject(ty: &Type, path: &[usize]) -> Option<Type> {
+        path.iter()
+            .try_fold(ty.clone(), |ty, index| Self::aggregate_type(&ty, *index))
+    }
+
+    fn next_initializer_path(ty: &Type, mut path: Vec<usize>) -> Option<Vec<usize>> {
+        while let Some(index) = path.pop() {
+            let parent = Self::initializer_subobject(ty, &path).unwrap();
+            if matches!(parent.unqualified(), Type::Struct(st) if st.definition().borrow().is_union)
+            {
+                continue;
+            }
+            if Self::aggregate_type(&parent, index + 1).is_some() {
+                path.push(index + 1);
+                return Some(path);
+            }
+        }
+        None
+    }
+
     fn designation(&mut self, ty: &Type) -> Vec<usize> {
         let mut current = ty.clone();
         let mut path = vec![];
@@ -3060,20 +3084,24 @@ impl<'a> AstBuilderImpl<'a> {
             && self.attempt_reserved("{").is_some()
         {
             let mut data = GlobalVariableData::Arr(vec![]);
-            let mut cursor = 0;
+            let mut cursor = Some(vec![0]);
             if self.attempt_reserved("}").is_none() {
                 loop {
                     let mut path = self.designation(ty);
                     if path.is_empty() {
-                        if cursor > 0
-                            && matches!(ty.unqualified(), Type::Struct(st) if st.definition().borrow().is_union)
-                        {
+                        path = cursor.clone().unwrap_or_else(|| {
                             self.error_logger.print_error_position(
                                 self.tokens[self.cur].pos,
-                                "too many union initializer elements",
+                                match ty.unqualified() {
+                                    Type::Struct(st) if st.definition().borrow().is_union => {
+                                        "too many union initializer elements"
+                                    }
+                                    Type::Struct(_) => "too many struct initializer elements",
+                                    _ => "too many array initializer elements",
+                                },
                             );
-                        }
-                        path.push(cursor);
+                            unreachable!()
+                        });
                     }
                     let mut child = ty.clone();
                     for index in &path {
@@ -3089,8 +3117,17 @@ impl<'a> AstBuilderImpl<'a> {
                             unreachable!()
                         });
                     }
+                    if self.tokens[self.cur].s_value != "{" {
+                        while self.string_initializer_index(&child).is_none() {
+                            let Some(first) = Self::aggregate_type(&child, 0) else {
+                                break;
+                            };
+                            path.push(0);
+                            child = first;
+                        }
+                    }
                     let value = self.global_initializer(&child);
-                    cursor = path[0] + 1;
+                    cursor = Self::next_initializer_path(ty, path.clone());
                     Self::set_global_element(ty, &mut data, &path, value);
                     if self.attempt_reserved(",").is_none() {
                         self.expect_reserved("}");
@@ -4354,7 +4391,7 @@ impl<'a> AstBuilderImpl<'a> {
     ) -> Node {
         let mut vec = Vec::new();
         loop {
-            let mut node = self.new_local_variable(ty.clone(), alignment);
+            let (mut node, inferred) = self.new_local_variable(ty.clone(), alignment);
             if storage != AutomaticStorage::Default
                 && node.resolve_type().unwrap().function_signature().is_some()
             {
@@ -4378,7 +4415,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             if let Some(token) = self.attempt_reserved("=") {
                 // if initializer element exists, push into AST
-                vec.push(self.local_variable_initialization(&node, &token));
+                vec.push(self.local_variable_initialization_with_elision(&node, &token, !inferred));
             }
             if self.attempt_reserved(",").is_none() {
                 break;
@@ -4508,6 +4545,23 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
+        self.local_variable_initialization_with_elision(node, assign_token, true)
+    }
+
+    fn local_expression_initializer(&mut self, node: &Node, rhs: Node, token: &Token) -> Node {
+        if matches!(node.resolve_type(), Some(Type::Struct(_))) {
+            self.struct_assignment(node.clone(), rhs, token.clone())
+        } else {
+            Node::new_with_op(Some(token.clone()), NodeType::Assign, node.clone(), rhs)
+        }
+    }
+
+    fn local_variable_initialization_with_elision(
+        &mut self,
+        node: &Node,
+        assign_token: &Token,
+        allow_elision: bool,
+    ) -> Node {
         if node.resolve_type().is_some_and(|ty| ty.contains_vector()) {
             self.error_logger.print_error_position(
                 assign_token.pos,
@@ -4562,22 +4616,53 @@ impl<'a> AstBuilderImpl<'a> {
             }
             let mut children = vec![Self::zero_initializer(node, assign_token)];
             let mut selected_unions = HashMap::new();
-            let mut cursor = 0;
+            let ty = node.resolve_type().unwrap();
+            let mut cursor = Some(vec![0]);
             if self.attempt_reserved("}").is_none() {
                 loop {
                     let mut path = self.designation(&node.resolve_type().unwrap());
                     if path.is_empty() {
-                        if cursor > 0
-                            && matches!(node.resolve_type(), Some(Type::Struct(st)) if st.definition().borrow().is_union)
-                        {
+                        if !allow_elision && cursor.as_ref().is_some_and(|path| path.len() > 1) {
+                            self.error_logger.print_error_position(token.pos, "brace elision for inferred-bound automatic arrays is not supported");
+                        }
+                        path = cursor.clone().unwrap_or_else(|| {
                             self.error_logger.print_error_position(
                                 token.pos,
-                                "too many union initializer elements",
+                                "too many aggregate initializer elements",
                             );
-                        }
-                        path.push(cursor);
+                            unreachable!()
+                        });
                     }
-                    cursor = path[0] + 1;
+                    let mut child = Self::initializer_subobject(&ty, &path).unwrap_or_else(|| {
+                        self.error_logger.print_error_position(
+                            token.pos,
+                            "too many aggregate initializer elements",
+                        );
+                        unreachable!()
+                    });
+                    let rhs = if self.tokens[self.cur].s_value == "{"
+                        || self.string_initializer_index(&child).is_some()
+                    {
+                        None
+                    } else {
+                        let rhs = self.assign();
+                        while !(matches!(child.unqualified(), Type::Struct(_))
+                            && rhs
+                                .resolve_type()
+                                .is_some_and(|source| child.compatible(&source)))
+                        {
+                            let Some(first) = Self::aggregate_type(&child, 0) else {
+                                break;
+                            };
+                            if !allow_elision {
+                                self.error_logger.print_error_position(token.pos, "brace elision for inferred-bound automatic arrays is not supported");
+                            }
+                            path.push(0);
+                            child = first;
+                        }
+                        Some(rhs)
+                    };
+                    cursor = Self::next_initializer_path(&ty, path.clone());
                     let mut target = node.clone();
                     let mut prefix = vec![];
                     for index in path {
@@ -4595,7 +4680,11 @@ impl<'a> AstBuilderImpl<'a> {
                         }
                         prefix.push(index);
                     }
-                    children.push(self.local_variable_initialization(&target, assign_token));
+                    children.push(if let Some(rhs) = rhs {
+                        self.local_expression_initializer(&target, rhs, assign_token)
+                    } else {
+                        self.local_variable_initialization(&target, assign_token)
+                    });
                     if self.attempt_reserved(",").is_none() {
                         self.expect_reserved("}");
                         break;
@@ -4613,16 +4702,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
         } else {
             let rhs = self.assign();
-            if matches!(node.resolve_type(), Some(Type::Struct(_))) {
-                self.struct_assignment(node.clone(), rhs, assign_token.clone())
-            } else {
-                Node::new_with_op(
-                    Some(assign_token.clone()),
-                    NodeType::Assign,
-                    node.clone(),
-                    rhs,
-                )
-            }
+            self.local_expression_initializer(node, rhs, assign_token)
         }
     }
 
@@ -5096,7 +5176,8 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 self.expect_reserved(")");
                 if self.tokens[self.cur].s_value == "{" {
-                    if matches!(ty, Type::Arr(_, None)) {
+                    let inferred = matches!(ty, Type::Arr(_, None));
+                    if inferred && self.return_type.is_some() {
                         let saved = self.cur;
                         let count = self.initializer_count(&ty);
                         self.cur = saved;
@@ -5108,7 +5189,8 @@ impl<'a> AstBuilderImpl<'a> {
                     };
                     let literal = if self.return_type.is_some() {
                         let object = self.register_local_variable(name, ty);
-                        let initializer = self.local_variable_initialization(&object, &token);
+                        let initializer = self
+                            .local_variable_initialization_with_elision(&object, &token, !inferred);
                         let mut children = vec![];
                         Self::initializer_expressions(initializer, &mut children);
                         children.push(object);
@@ -5120,8 +5202,14 @@ impl<'a> AstBuilderImpl<'a> {
                             ..Node::default()
                         }
                     } else {
-                        self.expect_object_type(&ty, &token);
                         let data = self.global_initializer(&ty);
+                        let count = if let GlobalVariableData::Arr(elements) = &data {
+                            elements.len()
+                        } else {
+                            0
+                        };
+                        ty = self.infer_array_size(ty, count, &token);
+                        self.expect_object_type(&ty, &token);
                         self.validate_global_initializer(&ty, &data, &token);
                         self.global_variables.insert(
                             name.s_value.clone(),

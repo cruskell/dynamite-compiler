@@ -6640,3 +6640,38 @@ fn thread_local_self_size_initializers_remain_constant() {
     let code = "_Thread_local long size=sizeof(size);int main(){static _Thread_local int local=sizeof(local);return size!=sizeof(long)||local!=sizeof(int);}";
     assert_eq!(compile_and_run(code, "llvm").status.code(), Some(0));
 }
+
+#[test_matrix([
+    "static int a[][2]={1,2,3,4,5};int evaluate(void){return sizeof(a)+a[0][0]+a[1][1]+a[2][0]+a[2][1];}",
+    "static unsigned long count=sizeof((int[][2]){1,2,3,4,5});static int (*p)[2]=(int[][2]){2,3,4};int evaluate(void){return count+p[0][1]+p[1][0]+p[1][1];}",
+    "struct Pair{int x,y;};struct Box{struct Pair p[2];int tail;};int evaluate(void){struct Box b={1,2,3,4,5};struct Box z={0};return b.p[0].x+3*b.p[0].y+5*b.p[1].x+7*b.p[1].y+11*b.tail+z.p[1].y;}",
+    "struct Box{int a[3];int tail;};static struct Box g={.a[1]=4,5,6};int evaluate(void){int a[2][3]={[0][1]=4,5,6};struct Box b={.a[1]=4,5,6};return a[0][0]+a[0][1]+3*a[0][2]+5*a[1][0]+7*b.a[2]+11*b.tail+13*g.tail;}",
+    "struct Pair{int x,y;};int evaluate(void){struct Pair first={3,5};struct Pair a[2]={first,7,9};return a[0].x+3*a[0].y+5*a[1].x+7*a[1].y;}",
+    "union U{struct{unsigned a:3,b:4;}pair;long raw;};static union U g={3,7};int evaluate(void){union U a[2]={1,2,3,4};return g.pair.a+3*g.pair.b+5*a[0].pair.a+7*a[0].pair.b+11*a[1].pair.a+13*a[1].pair.b;}",
+    "static char words[][4]={\"a\",\"bc\"};struct S{char text[4];int n;};int evaluate(void){struct S s={\"ab\",7};char local[2][4]={\"c\",\"de\"};return sizeof(words)+words[1][1]+local[1][1]+s.text[1]+s.n;}",
+    "struct S{int a[2];int b;};int evaluate(void){int n=0;struct S s={++n,++n,++n};struct S t={{4},5};return n+3*s.a[0]+5*s.a[1]+7*s.b+11*t.a[0]+13*t.a[1]+17*t.b;}",
+], ["asm", "llvm"], ["-O0", "-O2"])]
+fn aggregate_brace_elision_matches_clang(body: &str, output_option: &str, optimization: &str) {
+    let companion = body.replace("int evaluate(void)", "int reference(void)");
+    let code =
+        format!("{body}\nint reference(void);int main(void){{return evaluate()!=reference();}}");
+    let output =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    "int a[1][2]={1,2,3};int main(){return 0;}",
+    "int main(){int a[1][2]={1,2,3};return 0;}",
+    "union U{int x;long y;};union U u={1,2};int main(){return 0;}",
+    "int main(){int a[][2]={1,2,3,4};return 0;}",
+    "int main(){return sizeof((int[][2]){1,2,3,4});}",
+    "struct S{int x,y;};int main(){struct S a[]={1,2};return 0;}",
+    "struct S{int x,y;};int main(){struct S a[]={[0].x=1,2};return 0;}",
+], ["asm", "llvm"])]
+fn invalid_or_unsupported_brace_elision_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
