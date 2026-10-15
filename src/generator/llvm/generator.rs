@@ -2593,14 +2593,14 @@ impl<'a> IrGenerator<'a> {
             _ => {}
         }
 
-        let lhs = self.gen_node(
-            node.rhs.as_ref().unwrap_or_else(|| panic!("{:?}", node)),
-            options,
-        );
-        let rhs = self.gen_node(
-            node.lhs.as_ref().unwrap_or_else(|| panic!("{:?}", node)),
-            options,
-        );
+        let left_first = node.nt.left_operand_first();
+        let (first, second) = if left_first {
+            (node.lhs.as_ref().unwrap(), node.rhs.as_ref().unwrap())
+        } else {
+            (node.rhs.as_ref().unwrap(), node.lhs.as_ref().unwrap())
+        };
+        let lhs = self.gen_node(first, options);
+        let rhs = self.gen_node(second, options);
 
         let operation = match node.nt {
             NodeType::Add => "add nsw",
@@ -2621,6 +2621,9 @@ impl<'a> IrGenerator<'a> {
         };
         let mut rhs_register = options.register_queue.pop().unwrap();
         let mut lhs_register = options.register_queue.pop().unwrap();
+        if left_first {
+            std::mem::swap(&mut lhs_register, &mut rhs_register);
+        }
         let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
         let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
         let operand_ty = if left_ty.is_arithmetic() && right_ty.is_arithmetic() {

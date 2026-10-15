@@ -115,6 +115,13 @@ pub enum NodeType {
     SuffixDecr,
 }
 
+impl NodeType {
+    /// Evaluation policy for ordinary binary value operations handled by the backends.
+    pub(crate) fn left_operand_first(&self) -> bool {
+        matches!(self, Self::BitAnd | Self::BitXor | Self::BitOr)
+    }
+}
+
 impl Default for NodeType {
     fn default() -> Self {
         Self::Num
