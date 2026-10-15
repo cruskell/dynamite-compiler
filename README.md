@@ -109,6 +109,12 @@ emitting an external definition. Taking their address still refers to the extern
 function. Reachable bodies are currently emitted as private helpers, so native
 output does not promise instruction-level inlining.
 
+File-scope function declarations support `__attribute__((noinline))` and its
+underscored spelling. The attribute survives redeclarations and GNU inline body
+lowering. LLVM output preserves the prohibition on inlining; native assembly
+already emits function calls. Block-scope uses and attributes on objects,
+typedefs, or parameters are diagnosed.
+
 ## Preprocessing
 
 Sources with directives or predefined macro names are preprocessed using `clang`

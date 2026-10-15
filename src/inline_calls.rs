@@ -75,6 +75,7 @@ impl AstBuilderImpl<'_> {
             let local_function = Func {
                 body: function.body.take(),
                 internal: true,
+                noinline: function.noinline,
                 external_definition: true,
                 cty: function.cty.clone(),
                 args: std::mem::take(&mut function.args),

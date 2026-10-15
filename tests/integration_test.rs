@@ -1285,6 +1285,86 @@ fn invalid_gnu_inline_spellings_are_diagnosed(
     );
 }
 
+#[test_matrix([false, true], ["-O0", "-O2"])]
+fn noinline_functions_remain_in_runtime_backtraces(aggregate: bool, optimization: &str) {
+    let code = if aggregate {
+        "struct Pair{long a,b;};int capture(void);struct Pair compiler_frame(struct Pair) __attribute__((__noinline__));struct Pair compiler_frame(struct Pair p){p.a+=capture();return p;}int main(){struct Pair p={2,9};p=compiler_frame(p);return p.a-2;}"
+    } else {
+        "int capture(void);__attribute__((noinline)) int compiler_frame(void);int compiler_frame(void){return capture()+1;}int main(){return compiler_frame()-1;}"
+    };
+    let companion = String::from(
+        r#"
+#include <execinfo.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+int capture(void){void *frames[32];int count=backtrace(frames,32);char **names=backtrace_symbols(frames,count);int found=0;
+if(names){for(int i=0;i<count;i++){fprintf(stderr,"%s\n",names[i]);if(strstr(names[i],"compiler_frame"))found=1;}free(names);}return found?0:100;}
+"#,
+    );
+    let generated = dynamite_compiler::generate(code, "llvm", false);
+    assert!(
+        generated.lines().any(|line| line.starts_with("define ")
+            && line.contains("@compiler_frame(")
+            && line.contains(" noinline")),
+        "{generated}"
+    );
+    let mut flags = vec![optimization, "-fno-omit-frame-pointer"];
+    if cfg!(target_os = "linux") {
+        flags.push("-rdynamic");
+    }
+    let result = compile_and_run_with_c_flags(code, "llvm", Some(&companion), &flags);
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn noinline_attributes_preserve_external_declarations_and_redeclarations() {
+    let code = "int external(void) __attribute__((noinline));struct Pair{long a,b;};struct Pair aggregate(struct Pair) __attribute__((__noinline__));int later(void){return external();}int later(void) __attribute__((noinline));int main(){return 0;}";
+    let generated = dynamite_compiler::generate(code, "llvm", false);
+    for name in ["external", "aggregate", "later"] {
+        assert!(
+            generated
+                .lines()
+                .any(|line| line.contains(&format!("@{name}(")) && line.contains(" noinline")),
+            "{generated}"
+        );
+    }
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn noinline_attributes_follow_gnu_inline_local_bodies(output_option: &str) {
+    let code = "extern inline __attribute__((gnu_inline,noinline)) int value(void){return 7;}int main(){return value()-7;}";
+    let generated = dynamite_compiler::generate(code, output_option, false);
+    if output_option == "llvm" {
+        assert!(
+            generated
+                .lines()
+                .any(|line| line.contains("@.inline.value(") && line.contains(" noinline")),
+            "{generated}"
+        );
+    }
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int value __attribute__((noinline));",
+    "int value(void) __attribute__((noinline(1)));",
+    "typedef int value __attribute__((noinline));",
+    "int value(int p __attribute__((noinline)));",
+    "int main(){extern int value(void) __attribute__((noinline));return 0;}",
+], ["asm", "llvm"])]
+fn invalid_noinline_attributes_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn gnu_inline_direct_calls_use_local_bodies(output_option: &str, optimization: &str) {
     let code = r"

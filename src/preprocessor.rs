@@ -155,6 +155,7 @@ fn compiler_macros(command: &mut Command) {
         "aligned",
         "packed",
         "gnu_inline",
+        "noinline",
         "weak_import",
         "common",
         "visibility",
