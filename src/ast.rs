@@ -1665,7 +1665,7 @@ impl<'a> AstBuilderImpl<'a> {
         let packing = token.packing;
         let (mut requested_record_alignment, mut packed) = self.record_attributes();
         let name = self.attempt_ident();
-        self.declaration_annotations();
+        self.declaration_attributes(false, None, true);
         let key = format!(
             ".struct.{}",
             name.as_ref()
