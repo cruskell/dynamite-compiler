@@ -184,6 +184,7 @@ pub(crate) const METADATA_ATTRIBUTES: &[&str] = &[
     "alloc_size",
     "alloc_align",
     "noreturn",
+    "nothrow",
     "noescape",
     "always_inline",
     "const",

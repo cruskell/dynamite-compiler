@@ -199,7 +199,9 @@ uses C99 mode with Blocks disabled in both bundled-header and system-header mode
 The compiler defines `__DYNAMITE__` and removes Clang/LLVM frontend identity macros.
 Host target, ABI and GNU compatibility macros remain available for system headers.
 `__has_builtin` reports implemented operations, and `__has_attribute` reports
-accepted metadata plus record alignment/packing attributes. Unknown queries return
+accepted metadata plus record alignment/packing attributes. `nothrow` and
+`__nothrow__` declaration attributes are accepted conservatively without adding
+exception-related optimizer assumptions. Unknown queries return
 zero, including in ordinary C expressions. Language/extension feature queries
 conservatively return zero rather than inheriting Clang capabilities. This does
 not disable directly written supported syntax. `-D` and `-U` can explicitly
