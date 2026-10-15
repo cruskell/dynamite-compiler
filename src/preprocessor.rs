@@ -84,6 +84,7 @@ fn compiler_macros(command: &mut Command) {
     }
     for name in [
         "__builtin_bzero",
+        "__builtin_prefetch",
         "__atomic_exchange_n",
         "__atomic_fetch_add",
         "__atomic_add_fetch",
@@ -612,6 +613,9 @@ int selected_scalar_path;
 #endif
 #if !__has_attribute(may_alias) || !__has_attribute(__may_alias__)
 #error missing alias annotation
+#endif
+#if !__has_builtin(__builtin_prefetch)
+#error missing prefetch builtin
 #endif
 #if !__has_builtin(__builtin_bzero)
 #error missing memory zero builtin

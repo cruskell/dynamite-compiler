@@ -1,6 +1,10 @@
 use crate::generator::Os;
 
 pub enum InstOperator {
+    PREFETCHNTA,
+    PREFETCHT0,
+    PREFETCHT1,
+    PREFETCHT2,
     InlineAsm,
     CMPXCHG,
     MFENCE,
@@ -70,6 +74,10 @@ impl InstOperator {
         //     return "movzb";
         // }
         match self {
+            PREFETCHNTA => "prefetchnta",
+            PREFETCHT0 => "prefetcht0",
+            PREFETCHT1 => "prefetcht1",
+            PREFETCHT2 => "prefetcht2",
             InlineAsm => "",
             CMPXCHG => "lock cmpxchg",
             MFENCE => "mfence",

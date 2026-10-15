@@ -986,3 +986,15 @@ source diagnostics. Native output reserves separate caller-saved input registers
 LLVM uses numbered register constraints and target operand modifiers. Normal GNU
 assembly rules still apply: templates must respect their declared register effects
 and write their output after reading any input that can share its register.
+
+## Data-prefetch builtin
+
+`__builtin_prefetch(address[, write[, locality]])` evaluates its pointer argument
+once and produces a void data-cache hint. The optional integer constant hints
+accept write intent 0/1 and locality 0 through 3, defaulting to read intent and
+locality 3. Invalid arguments are diagnosed and the capability probe advertises it.
+
+AArch64 output selects PRFM load/store and locality hints. Baseline x86_64 uses
+read-prefetch hints for either access intent; LLVM output uses llvm.prefetch.
+Hints do not read or modify C object values, and invalid target addresses do not
+fault, although computing the address must itself be a valid C expression.

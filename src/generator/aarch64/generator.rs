@@ -1155,6 +1155,22 @@ impl<'a> AsmGenerator<'a> {
         lines.into()
     }
 
+    fn gen_prefetch(&self, node: &Node, write: bool, locality: u8, options: Options) -> Assembly {
+        let level = [1, 3, 2, 1][locality as usize];
+        let hint = format!(
+            "{}l{level}{}",
+            if write { "pst" } else { "pld" },
+            if locality == 0 { "strm" } else { "keep" }
+        );
+        vec![
+            self.gen_node(node.lhs.as_ref().unwrap(), options),
+            Self::pop(X8),
+            Assembly::inst2(PRFM, hint, Ptr(X8, 8)),
+            Self::push(0),
+        ]
+        .into()
+    }
+
     fn gen_inline_assembly(&self, node: &Node, options: Options) -> Assembly {
         let ty = node.resolve_type().unwrap();
         let registers = [X8, X9, X10, X11, X12, X13, X14];
@@ -1212,6 +1228,9 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
+            NodeType::Prefetch(write, locality) => {
+                return self.gen_prefetch(node, write, locality, options);
+            }
             NodeType::InlineAsm(_) => return self.gen_inline_assembly(node, options),
             NodeType::Atomic(operation) => {
                 return self.gen_atomic(node, operation, options);
