@@ -143,6 +143,11 @@ pub enum Type {
 }
 
 impl Type {
+    /// The supported target ABI's wchar_t scalar type.
+    pub fn wide_character() -> Self {
+        Self::integer(32, !cfg!(all(target_arch = "aarch64", target_os = "linux")))
+    }
+
     pub fn compatible(&self, other: &Self) -> bool {
         match (self.unqualified(), other.unqualified()) {
             (Self::Vla(left, _), Self::Vla(right, _) | Self::Arr(right, _))

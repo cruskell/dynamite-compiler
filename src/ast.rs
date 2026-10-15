@@ -5926,9 +5926,8 @@ impl<'a> AstBuilderImpl<'a> {
                     Type::I8
                 }
                 crate::token::StringEncoding::Utf16 => Type::integer(16, false),
-                crate::token::StringEncoding::Utf32 | crate::token::StringEncoding::Wide => {
-                    Type::integer(32, false)
-                }
+                crate::token::StringEncoding::Utf32 => Type::integer(32, false),
+                crate::token::StringEncoding::Wide => Type::wide_character(),
             };
             let count = t.encoded_string().len() / t.string_encoding.unit_size();
             Node {
@@ -5951,15 +5950,25 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt(TokenType::Num) {
-            // Number literal
-            Node {
-                token: Some(t.clone()),
-                nt: NodeType::Num,
-                value: Some(t.i_value),
-                cty: Some(Type::integer(
+            let ty = match t.string_encoding {
+                crate::token::StringEncoding::Utf16 => Type::integer(16, false),
+                crate::token::StringEncoding::Utf32 => Type::integer(32, false),
+                crate::token::StringEncoding::Wide => Type::wide_character(),
+                _ => Type::integer(
                     if t.s_value.contains('l') { 64 } else { 32 },
                     !t.s_value.contains('u'),
-                )),
+                ),
+            };
+            let value = if t.string_encoding == crate::token::StringEncoding::Wide {
+                ty.convert_constant(t.i_value as i64) as usize
+            } else {
+                t.i_value
+            };
+            Node {
+                token: Some(t),
+                nt: NodeType::Num,
+                value: Some(value),
+                cty: Some(ty),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {

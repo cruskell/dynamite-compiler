@@ -1638,7 +1638,8 @@ fn string_literals_retain_array_type(output_option: &str) {
 
 #[test_matrix(["asm", "llvm"])]
 fn prefixed_string_literal_code_units(output_option: &str) {
-    let code = r#"int main(){unsigned short *u=u"😀";unsigned int *v=U"😀";unsigned int *w=L"ab";return (u[0]!=55357)+(u[1]!=56832)+u[2]+(v[0]!=128512)+v[1]+(w[0]!=97)+(w[1]!=98)+w[2]+("a\0b"[2]!=98);}"#;
+    let code = r#"#include <stddef.h>
+int main(){unsigned short *u=u"😀";unsigned int *v=U"😀";wchar_t *w=L"ab";return (u[0]!=55357)+(u[1]!=56832)+u[2]+(v[0]!=128512)+v[1]+(w[0]!=97)+(w[1]!=98)+w[2]+("a\0b"[2]!=98);}"#;
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
@@ -1822,6 +1823,30 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
     assert!(
         std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
             .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn prefixed_character_constants_preserve_values_and_types(output_option: &str, optimization: &str) {
+    let code = r#"
+#include <stddef.h>
+int wide=L'\0';unsigned short utf16=u'\u03a9';unsigned int utf32=U'\U0001f600';
+long reference_wide(void);unsigned long reference_utf32(void);
+int main(){
+ if(wide || L'A'!=65 || L'\n'!=10 || L'Ω'!=937 || L'\U0001f600'!=128512)return 1;
+ if(utf16!=937 || u'\xffff'!=65535 || u'\377'!=255 || u'Ω'!=937)return 2;
+ if(utf32!=128512 || U'\xffffffff'!=4294967295U || U'😀'!=128512)return 3;
+ if(L'\xffffffff'!=-1 || (long)L'\xffffffff'!=reference_wide() || U'\xffffffff'!=reference_utf32())return 4;
+ if(sizeof(L'A')!=4 || sizeof(u'A')!=2 || sizeof(U'A')!=4)return 5;
+ if(_Generic(L'A',wchar_t:0,default:1) || _Generic(u'A',unsigned short:0,default:1) || _Generic(U'A',unsigned int:0,default:1))return 6;
+ switch(L'A'){case L'\x41':return 0;default:return 7;}
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(r"long reference_wide(void){return L'\xffffffff';}unsigned long reference_utf32(void){return U'\xffffffff';}"), &[optimization])
+            .status
+            .code(),
+        Some(0)
     );
 }
 
