@@ -402,6 +402,10 @@ Object representations can be accessed through character pointers, and records
 containing these members can be copied. Scalar value operations, explicit value
 initializers, and scalar function parameters/results are diagnosed as unsupported;
 they are never lowered to truncated 64-bit operations.
+The preprocessing profile withholds the host's `__SIZEOF_INT128__` capability
+macro while arithmetic is unsupported, so portable sources can select their
+ordinary-integer alternative. Explicit storage and size queries remain available.
+
 
 ## Record alignment attributes
 

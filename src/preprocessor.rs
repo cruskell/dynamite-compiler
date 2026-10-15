@@ -28,6 +28,8 @@ fn compiler_macros(command: &mut Command) {
         "-U__clang_patchlevel__",
         "-U__clang_version__",
         "-U__llvm__",
+        // Layout-only support must not select code requiring integer arithmetic.
+        "-U__SIZEOF_INT128__",
         "-D__DYNAMITE__=1",
         "-D__has_feature(x)=0",
         "-D__has_extension(x)=0",
@@ -478,6 +480,24 @@ mod tests {
 #[cfg(test)]
 mod option_tests {
     use super::*;
+
+    #[test]
+    fn storage_only_integer128_is_not_advertised_as_an_arithmetic_extension() {
+        let code = "#ifdef __SIZEOF_INT128__\n#error unsupported integer arithmetic advertised\n#endif\n#if !defined(__GNUC__) || __SIZEOF_POINTER__ != 8\n#error missing host ABI compatibility macros\n#endif\nint selected_portable_path;\n";
+        for system_headers in [false, true] {
+            let expanded = preprocess_with_options(
+                code,
+                None,
+                &PreprocessorOptions {
+                    system_headers,
+                    ..PreprocessorOptions::default()
+                },
+            )
+            .unwrap();
+            assert!(expanded.code.contains("int selected_portable_path;"));
+        }
+    }
+
     #[test]
     fn command_line_macros_apply_without_directives() {
         let options = PreprocessorOptions {
