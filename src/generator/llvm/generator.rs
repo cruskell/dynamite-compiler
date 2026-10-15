@@ -161,12 +161,19 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_global_variable(&self, name: &str, gv: &GlobalVariable) -> String {
         if gv.declaration_only {
+            // Opaque pointers can reference an external record before its layout is known.
+            let incomplete_record = matches!(gv.ty.unqualified(), Type::Struct(record) if !record.definition().borrow().complete);
+            let ty = if incomplete_record {
+                "i8".into()
+            } else {
+                Self::gen_type(gv.ty.clone())
+            };
             return format!(
                 "{} = external {}global {}, align {}",
                 self.symbol_name(name),
                 if gv.thread_local { "thread_local " } else { "" },
-                Self::gen_type(gv.ty.clone()),
-                Self::align(&gv.ty).max(gv.alignment)
+                ty,
+                Self::align(&gv.ty).max(gv.alignment).max(1)
             );
         }
         format!(

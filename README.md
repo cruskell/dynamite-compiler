@@ -533,3 +533,13 @@ underlying integer type in this compiler.
 
 Empty file-scope declarations (extra semicolons) are accepted, including after
 macros that expand to nothing.
+
+## Incomplete external records
+
+An `extern` declaration without an initializer may name an incomplete struct or
+union at file or block scope. Its address can be taken, stored and passed to
+other functions without knowing the record layout. A later definition of the
+same tag completes the shared type. Object definitions, record assignments and
+`sizeof` still require a complete type. LLVM represents an external record
+whose layout remains unknown with a byte declaration and opaque pointers;
+this declaration does not allocate storage or assume the object's actual size.

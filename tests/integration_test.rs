@@ -3075,3 +3075,57 @@ fn invalid_checked_bsd_string_output_is_diagnosed(code: &str, output_option: &st
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn incomplete_external_records_allow_address_uses(output_option: &str, optimization: &str) {
+    let code = r#"
+struct Opaque;union Variant;typedef struct Hidden Hidden;
+extern struct Opaque object;extern union Variant variant;extern const Hidden hidden;
+struct Opaque *saved=&object;union Variant *saved_union=&variant;const Hidden *saved_const=&hidden;
+int check(const void*,const void*,const void*,const void*);
+struct Block;
+int block(){extern struct Block block_object;return check(saved,saved_union,saved_const,&block_object);}
+int main(){return saved!=&object || saved_union!=&variant || saved_const!=&hidden || block();}
+"#;
+    let companion = r#"
+struct Opaque{long values[3];};union Variant{long number;double real;};
+struct Hidden{int value;};struct Block{char bytes[5];};
+struct Opaque object={{1,2,3}};union Variant variant={4};
+const struct Hidden hidden={5};struct Block block_object={{6}};
+int check(const void *a,const void *b,const void *c,const void *d){return a!=&object || b!=&variant || c!=&hidden || d!=&block_object;}
+"#;
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn incomplete_external_records_observe_later_completion(output_option: &str, optimization: &str) {
+    let code = r#"
+extern struct Later later;struct Later *saved=&later;
+extern union Choice choice;union Choice *saved_union=&choice;
+struct Later{long value;char tail;};union Choice{long number;double real;};
+extern struct Later later;struct Later later={23,7};union Choice choice={31};
+int main(){struct Later copy=later;return saved->value!=23 || saved->tail!=7 || copy.value!=23 || sizeof(later)!=16 || saved_union->number!=31 || sizeof(choice)!=8;}
+"#;
+    let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "extern void object;",
+    "extern struct S array[2];",
+    "extern struct S object;struct S object;",
+    "int main(){static struct S object;return 0;}",
+    "extern struct S object;int main(){return sizeof(object);}",
+    "extern union U object;int main(){return object.missing;}",
+    "extern struct S left,right;int main(){left=right;return 0;}",
+    "extern struct S object;void consume(struct S);int main(){consume(object);return 0;}",
+    "extern union U object;void consume(int,...);int main(){consume(0,object);return 0;}",
+], ["asm", "llvm"])]
+fn invalid_incomplete_external_record_uses_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
