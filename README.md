@@ -577,11 +577,10 @@ records are covered by cross-compiler variadic tests.
 ## Natural-alignment typedef annotations
 
 Postfix `aligned(N)` attributes on complete object typedef declarations are
-accepted when every requested alignment equals the underlying type's natural
-alignment. This includes scalar, pointer, array, and record aliases. Each
-attribute is checked; typedef attributes that would increase or decrease
-alignment remain diagnosed as unsupported. Type identity, size, and layout are
-unchanged for accepted annotations.
+accepted when the greatest requested alignment equals the underlying type's natural
+alignment. This includes scalar, pointer, array, and record aliases. Scalar
+alignment reductions are supported as described below; other non-natural requests
+remain diagnosed. Type identity and size are unchanged.
 
 ## Fixed underlying enum types
 
@@ -930,3 +929,19 @@ numeric escapes are supported. Numeric escapes may fill the complete destination
 code unit; ordinary narrow multi-character constants retain their existing rules.
 Prefixed constants require exactly one representable code unit, so multi-character
 constants, invalid universal names and supplementary UTF-16 characters are diagnosed.
+
+## Reduced scalar typedef alignment
+
+GNU `aligned(N)` before a typedef's base type or after its declarator can reduce
+an ordinary integer, float or pointer alias's object alignment. The byte size and
+underlying C type identity are unchanged. Prefix attributes apply to each alias;
+postfix attributes stay local, and combined requests use the greatest alignment.
+Natural-alignment requests remain supported for other complete object typedefs.
+
+The requested alignment is preserved in globals, locals, arrays, VLAs and record
+members, including initialized storage and indirect unaligned accesses. Native
+and LLVM output retain the layout, with conservative LLVM load/store alignment.
+Scalar calls keep their normal ABI. Increasing alignment beyond the underlying
+natural alignment, reducing record or extended storage-only scalar alignment,
+conflicting typedef redeclarations and passing/returning records containing these
+aliases by value are diagnosed. Pointer-based record interoperation is supported.

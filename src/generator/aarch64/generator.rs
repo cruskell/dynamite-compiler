@@ -198,6 +198,7 @@ impl<'a> AsmGenerator<'a> {
             data
         };
         match ty {
+            Type::Aligned(child, _) => self.gen_initializer_element(child, data),
             Type::Struct(struct_type)
                 if struct_type.has_bit_fields() || struct_type.definition().borrow().is_union =>
             {
@@ -352,7 +353,11 @@ impl<'a> AsmGenerator<'a> {
             }
             let compact = matches!(self.target_os, Os::MacOS) && i < fixed;
             let size = if compact { ty.size_of() } else { 8 };
-            let align = if compact { ty.align_of() } else { 8 };
+            let align = if compact {
+                ty.unqualified().align_of()
+            } else {
+                8
+            };
             offset = offset.div_ceil(align) * align;
             slots.push((i, offset, size));
             offset += size;

@@ -215,10 +215,12 @@ pub fn stack_argument_alignment(ty: &Type, arch: &Arch, os: Os, variadic: bool) 
             return parts[0].ty.align_of();
         }
     }
+    // Scalar typedef storage alignment does not change its by-value ABI alignment.
+    let alignment = ty.unqualified().align_of();
     if matches!((arch, os), (Arch::Aarch64, Os::MacOS)) && !variadic {
-        ty.align_of()
+        alignment
     } else {
-        ty.align_of().max(8)
+        alignment.max(8)
     }
 }
 

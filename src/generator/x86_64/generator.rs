@@ -198,6 +198,7 @@ impl<'a> AsmGenerator<'a> {
             data
         };
         match ty {
+            Type::Aligned(child, _) => self.gen_initializer_element(child, data),
             Type::Struct(struct_type)
                 if struct_type.has_bit_fields() || struct_type.definition().borrow().is_union =>
             {

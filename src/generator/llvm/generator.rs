@@ -195,6 +195,7 @@ impl<'a> IrGenerator<'a> {
         match ty.unqualified() {
             Type::Struct(record) => {
                 record.definition().borrow().packing.is_some()
+                    || ty.contains_reduced_alignment()
                     || record
                         .members()
                         .iter()
@@ -258,7 +259,9 @@ impl<'a> IrGenerator<'a> {
         if matches!(node.nt, NodeType::Deref) {
             1
         } else {
-            node.resolve_type().unwrap().align_of()
+            node.object_type()
+                .unwrap_or_else(|| node.resolve_type().unwrap())
+                .align_of()
         }
     }
 
@@ -316,7 +319,7 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_type(ty: Type) -> String {
         match ty {
-            Type::Qualified(child, _) => Self::gen_type(*child),
+            Type::Qualified(child, _) | Type::Aligned(child, _) => Self::gen_type(*child),
             Type::Void => "void".to_string(),
             // LLVM 15 gives i128 only 8-byte alignment on some targets.
             Type::Integer128 { .. } => "<2 x i64>".to_string(),
@@ -328,7 +331,8 @@ impl<'a> IrGenerator<'a> {
             Type::Struct(ty)
                 if ty.definition().borrow().is_union
                     || ty.has_bit_fields()
-                    || ty.definition().borrow().packing.is_some() =>
+                    || ty.definition().borrow().packing.is_some()
+                    || Type::Struct(ty.clone()).contains_reduced_alignment() =>
             {
                 let ty = Type::Struct(ty);
                 let width = ty.align_of().min(8);
@@ -406,6 +410,7 @@ impl<'a> IrGenerator<'a> {
             data
         };
         match ty {
+            Type::Aligned(child, _) => self.gen_initializer_element(child, data),
             Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
             Type::Integer128 { .. } => "<2 x i64> zeroinitializer".into(),
             Type::Float16 => "half zeroinitializer".into(),
