@@ -411,6 +411,15 @@ The result can be used in constant expressions. Dynamic object-size queries are
 not implemented. See the [GCC object-size documentation](https://gcc.gnu.org/onlinedocs/gcc/Object-Size-Checking.html)
 for the mode definitions.
 
+## Checked memory builtins
+
+`__builtin___memcpy_chk`, `__builtin___memmove_chk`, and
+`__builtin___memset_chk` use the corresponding checked C runtime operations.
+The final argument supplies the destination's capacity, commonly from
+`__builtin_object_size`. Capacity checks are preserved, arguments are evaluated
+once, and the result is the destination as `void *`. The operations require a
+compatible checked runtime, as provided by the tested macOS and Linux libcs.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their
