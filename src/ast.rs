@@ -2038,7 +2038,7 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 0
             };
-            let ty = if external && data.is_none() && Self::incomplete_external_array(&ty) {
+            let ty = if external && data.is_none() && Self::incomplete_external_object(&ty) {
                 ty
             } else {
                 let ty = self.infer_array_size(ty, count, &token);
@@ -2098,8 +2098,12 @@ impl<'a> AstBuilderImpl<'a> {
         }
         self.expect_reserved(";");
     }
-    fn incomplete_external_array(ty: &Type) -> bool {
-        matches!(ty.unqualified(), Type::Arr(child, 0) if child.size_of() != 0)
+    fn incomplete_external_object(ty: &Type) -> bool {
+        match ty.unqualified() {
+            Type::Arr(child, 0) => child.size_of() != 0,
+            Type::Struct(record) => !record.definition().borrow().complete,
+            _ => false,
+        }
     }
 
     fn composite_object_declaration(&self, previous: &Type, declared: Type, token: &Token) -> Type {
@@ -3473,7 +3477,7 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 0
             };
-            if !(external && data.is_none() && Self::incomplete_external_array(&ty)) {
+            if !(external && data.is_none() && Self::incomplete_external_object(&ty)) {
                 ty = self.infer_array_size(ty, count, &token);
                 self.expect_object_type(&ty, &token);
             }
@@ -3813,6 +3817,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn struct_assignment(&mut self, lhs: Node, rhs: Node, token: Token) -> Node {
         let ty = lhs.resolve_type().unwrap();
+        self.expect_object_type(&ty, &token);
         if rhs.resolve_type() != Some(ty.clone()) {
             self.error_logger
                 .print_error_position(token.pos, "incompatible struct assignment");
