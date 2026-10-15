@@ -64,10 +64,17 @@ const RESERVED_SYMBOLS: [&str; 51] = [
 ];
 
 pub(crate) fn decode_string_literal(value: &str) -> Option<Vec<u8>> {
+    decode_literal(value, false)
+}
+
+fn decode_literal(value: &str, byte_characters: bool) -> Option<Vec<u8>> {
     let mut chars = value.chars().peekable();
     let mut decoded = vec![];
     while let Some(character) = chars.next() {
         if character != '\\' {
+            if byte_characters && !character.is_ascii() {
+                return None;
+            }
             let mut encoded = [0; 4];
             decoded.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
             continue;
@@ -119,6 +126,9 @@ pub(crate) fn decode_string_literal(value: &str) -> Option<Vec<u8>> {
                         .checked_add(chars.next()?.to_digit(16)?)?;
                 }
                 let character = char::from_u32(value)?;
+                if byte_characters && !character.is_ascii() {
+                    return None;
+                }
                 let mut encoded = [0; 4];
                 decoded.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
             }
@@ -611,8 +621,12 @@ impl Tokenizer {
                     let literal_start = start + prefix_size;
                     let value_start = literal_start + 1;
                     let value = &code[value_start..pos];
-                    let decoded = decode_string_literal(value)
-                        .ok_or_else(|| error::SyntaxError::new(start, "invalid escape sequence"))?;
+                    let decoded = decode_literal(value, quote == b'\'').ok_or_else(|| {
+                        error::SyntaxError::new(
+                            start,
+                            "invalid literal character or escape sequence",
+                        )
+                    })?;
                     let encoded = if quote == b'"' {
                         encode_string_literal(value, string_encoding)
                     } else {
@@ -620,13 +634,19 @@ impl Tokenizer {
                     };
                     pos += 1;
                     if quote == b'\'' {
-                        if encoded.len() != 1 {
-                            return Err(error::SyntaxError::new(
-                                start,
-                                "character constant must contain one byte",
-                            ));
+                        if encoded.is_empty() {
+                            return Err(error::SyntaxError::new(start, "empty character constant"));
                         }
-                        tokens.push(Self::num_token(start, encoded[0] as usize));
+                        let value = if encoded.len() == 1 {
+                            usize::from(encoded[0])
+                        } else {
+                            // Pack bytes in source order, retaining the low 32 bits.
+                            let packed = encoded
+                                .iter()
+                                .fold(0u32, |value, byte| (value << 8) | u32::from(*byte));
+                            (packed as i32 as isize) as usize
+                        };
+                        tokens.push(Self::num_token(start, value));
                     } else {
                         tokens.push(Token {
                             tt: TokenType::Str,
@@ -728,6 +748,24 @@ mod tests {
         assert_eq!(tokens[4].i_value, 16);
         for code in ["10__0", "10_", "10_0u", "10_0abc"] {
             assert!(Tokenizer::tokenize(code, false).is_err(), "{code}");
+        }
+    }
+
+    #[test]
+    fn multi_character_constants_pack_bytes_as_signed_ints() {
+        for (code, expected) in [
+            ("'ab'", 0x6162i32),
+            ("'drag'", 0x64726167),
+            (r"'A\0B'", 0x410042),
+            (r"'\377ABC'", -12500413),
+            (r"'\xff\xff\xff\xff'", -1),
+            ("'abcdef'", 0x63646566),
+            (r"'\\u'", 0x5c75),
+        ] {
+            let tokens = Tokenizer::tokenize(code, false).unwrap();
+            assert_eq!(tokens[0].tt, TokenType::Num);
+            assert_eq!(tokens[0].i_value as isize, expected as isize, "{code}");
+            assert_eq!(tokens[0].s_value, "");
         }
     }
 
@@ -858,7 +896,8 @@ mod tests {
             "\"abc\\",
             "/* unfinished",
             "''",
-            "'ab'",
+            "'あ'",
+            "'\\u00e9'",
             "\"\\q\"",
             "99999999999999999999999999",
         ] {

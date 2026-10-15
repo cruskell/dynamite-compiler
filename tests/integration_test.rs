@@ -3197,3 +3197,28 @@ fn attribute_versions_are_not_c_numeric_constants(code: &str, output_option: &st
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn multi_character_constants_match_clang_integer_values(output_option: &str, optimization: &str) {
+    let code = r#"
+int reference(int);
+int values[9]={'ab','abc','drag','A\0B','\377\377','\xff\xff\xff\xff','\377ABC','abcdef','\\u'};
+enum Codes{DRAG='drag',NEGATIVE='\377ABC'};
+_Static_assert('ABCD'==0x41424344,"byte order");
+_Static_assert('\xff\xff\xff\xff'==-1,"signed int");
+int main(){for(int i=0;i<9;i++)if(values[i]!=reference(i))return i+1;
+if(DRAG!=values[2] || NEGATIVE!=values[6] || sizeof('ab')!=sizeof(int) || 'Q'!=81)return 10;
+switch(DRAG){case 'drag':break;default:return 11;}
+return _Generic('ab',int:0,default:1);}
+"#;
+    let companion = r#"
+int reference(int index){static int values[9]={'ab','abc','drag','A\0B','\377\377','\xff\xff\xff\xff','\377ABC','abcdef','\\u'};return values[index];}
+"#;
+    let result = compile_and_run_with_c_flags(
+        code,
+        output_option,
+        Some(companion),
+        &[optimization, "-Wno-multichar", "-Wno-four-char-constants"],
+    );
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}

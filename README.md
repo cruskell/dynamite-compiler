@@ -558,3 +558,14 @@ preserves their spelling as opaque version tokens. They are not numeric constant
 and cannot be used in C expressions, array bounds, enumerators or alignment
 expressions. Availability annotations remain metadata and do not add deployment
 target diagnostics or runtime checks.
+
+## Multi-character constants
+
+Ordinary multi-character constants such as `'drag'` have type `int`. Decoded
+bytes are packed in source order into a signed 32-bit value, independent of the
+target's memory byte order. Constants longer than four bytes retain their final
+four bytes. This implementation-defined convention matches Clang on the supported
+targets. Byte escape sequences are supported; raw non-ASCII characters and
+universal escapes requiring multiple UTF-8 bytes remain unsupported in ordinary
+character constants. These constants work in expressions and integer constant
+contexts, including enumerators, static initializers and case labels.
