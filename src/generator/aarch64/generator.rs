@@ -1254,7 +1254,7 @@ impl<'a> AsmGenerator<'a> {
             NodeType::Prefetch(write, locality) => {
                 return self.gen_prefetch(node, write, locality, options);
             }
-            NodeType::InlineAsm(_) => return self.gen_inline_assembly(node, options),
+            NodeType::InlineAsm(_, _) => return self.gen_inline_assembly(node, options),
             NodeType::Atomic(operation) => {
                 return self.gen_atomic(node, operation, options);
             }

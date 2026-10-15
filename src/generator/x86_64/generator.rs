@@ -1297,7 +1297,7 @@ impl<'a> AsmGenerator<'a> {
             NodeType::Prefetch(_, locality) => {
                 return self.gen_prefetch(node, locality, offset, breakable_branch_num);
             }
-            NodeType::InlineAsm(_) => {
+            NodeType::InlineAsm(_, _) => {
                 return self.gen_inline_assembly(node, offset, breakable_branch_num);
             }
             NodeType::Atomic(operation) => {

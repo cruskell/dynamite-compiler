@@ -1016,9 +1016,14 @@ syntax; AArch64 templates use its normal assembler syntax. LLVM output preserves
 side effects for volatile assembly and emits conservative condition-code clobbers.
 Assembly text remains target-specific and must obey the declared register effects.
 
-Named outputs and non-register input constraints,
-explicit clobbers, unsupported register modifiers, basic assembly and asm-goto are not yet
-supported and are diagnosed. Empty input and clobber sections are accepted.
+Output-free extended assembly is supported and is implicitly volatile. The
+`"memory"` clobber prevents LLVM from moving memory accesses across the assembly;
+native output preserves source memory access order. This includes compiler
+barriers such as `asm volatile("" ::: "memory")`, which emit no machine fence.
+
+Named outputs, non-register input constraints, register clobbers, unsupported
+register modifiers, basic assembly and asm-goto are not yet supported and are
+diagnosed. Empty output, input, and clobber sections are accepted.
 Narrow ASCII templates are supported, including concatenation and escaped
 newlines; embedded nulls and wide strings are rejected.
 

@@ -2572,7 +2572,7 @@ fn register_output_inline_assembly_preserves_volatile_ir() {
     "int main(){int memory;asm(\"nop\" : \"+m\"(memory));}",
     "int main(){int x;asm(\"nop\" : \"=m\"(x));}",
     "int main(){int x;asm(\"nop\" : \"=r\"(x) : \"m\"(1));}",
-    "int main(){int x;asm(\"nop\" : \"=r\"(x) : : \"memory\");}",
+    "int main(){asm(\"\" : : : \"unsupported_register\");}",
     "int main(){const int x=0;asm(\"nop\" : \"=r\"(x));}",
     "int main(){asm(\"nop\" : \"=r\"(1));}",
     "int main(){double x;asm(\"nop\" : \"=r\"(x));}",
@@ -7178,4 +7178,50 @@ int main(void){{unsigned high=4000000000U;unsigned (*callback)(unsigned)=ours;
     let output =
         compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn memory_clobber_inline_assembly_preserves_memory_effects(
+    output_option: &str,
+    optimization: &str,
+) {
+    let store = if cfg!(target_arch = "aarch64") {
+        "str %w1, [%0]"
+    } else {
+        "movl %1, (%0)"
+    };
+    let code = format!(
+        r#"
+int calls;int value(void){{calls++;return 19;}}
+int read(void){{int local=3;
+    asm("{store}" : : "r"(&local), "r"(value()) : "memory");
+    return local;
+}}
+int main(void){{
+    asm volatile("" ::: "memory");
+    __asm__ __volatile__("" : : : "memory", "memory");
+    asm("nop" :);asm("" : :);asm("" : : :);
+    long same=7;asm("" : "+r"(same) : : "memory");
+    int result=read();int expression=5+({{asm("" ::: "memory");3;}});
+    return result!=19 || calls!=1 || same!=7 || expression!=8;
+}}
+"#
+    );
+    let output = compile_and_run_with_c_flags(&code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test]
+fn memory_clobber_inline_assembly_emits_llvm_barriers() {
+    let generated = dynamite_compiler::generate(
+        "int value;void barrier(void){value=3;asm(\"\" ::: \"memory\");value=7;}",
+        "llvm",
+        false,
+    );
+    assert!(
+        generated.contains("call void asm sideeffect"),
+        "{generated}"
+    );
+    assert!(generated.contains("~{memory}"), "{generated}");
+    assert!(!generated.contains("call {  } asm"), "{generated}");
 }
