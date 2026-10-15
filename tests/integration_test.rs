@@ -1440,6 +1440,37 @@ fn builtin_va_list_interoperates_with_system_c(output_option: &str) {
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn compiler_capabilities_select_portable_fallbacks(output_option: &str, optimization: &str) {
+    let code = r"
+#if defined(__clang__) || __has_builtin(__builtin_rotateleft32)
+#error Unsupported frontend advertised
+#endif
+#if __has_attribute(vector_size)
+typedef int Vector __attribute__((vector_size(16)));
+#else
+typedef int Vector;
+#endif
+unsigned rotate(unsigned value,int n){return (value<<n)|(value>>(32-n));}
+unsigned swap(unsigned value){
+#if __has_builtin(__builtin_bswap32)
+    return __builtin_bswap32(value);
+#else
+#error Implemented builtin not advertised
+#endif
+}
+int main(){Vector value=7;return value-7+(rotate(0x12345678u,8)!=0x34567812u)
+    +(swap(0x12345678u)!=0x78563412u)+(__has_builtin(unknown)!=0)
+    +(__has_builtin(__builtin_expect)!=1);}
+";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn declaration_metadata_attributes_preserve_execution(output_option: &str) {
     let code = r#"__attribute__((unused)) static int calls;int add(int n __attribute__((unused))) __attribute__((__warn_unused_result__, availability(macos,introduced=10.10)));__attribute__((noinline)) int add(int n){calls++;return n+1;}typedef int scalar __attribute__((deprecated("message with ) parentheses")));struct __attribute__((deprecated)) Pair{int a;int b;};enum __attribute__((flag_enum,enum_extensibility(open))) Flags{Flag=1};int main(){__attribute__((unused)) static int local=Flag;scalar n=3;int (*p)(int) __attribute__((unused))=add;struct Pair pair={1,2};int result=p(n);return result+calls+pair.a+pair.b+local-9;}"#;

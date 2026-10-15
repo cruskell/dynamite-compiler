@@ -110,8 +110,15 @@ conditional compilation, token pasting, stringification, and predefined macros.
 Quoted includes in CLI input are resolved relative to the input file; library
 callers may use `generate_with_path` to supply that location. Ordinary source
 without directives or predefined macros does not invoke Clang. Preprocessing
-uses C mode with the unsupported Blocks extension disabled, including its feature
-macros, in both bundled-header and system-header modes.
+uses C99 mode with Blocks disabled in both bundled-header and system-header modes.
+The compiler defines `__DYNAMITE__` and removes Clang/LLVM frontend identity macros.
+Host target, ABI and GNU compatibility macros remain available for system headers.
+`__has_builtin` reports implemented operations, and `__has_attribute` reports
+accepted metadata plus record alignment/packing attributes. Unknown queries return
+zero, including in ordinary C expressions. Language/extension feature queries
+conservatively return zero rather than inheriting Clang capabilities. This does
+not disable directly written supported syntax. `-D` and `-U` can explicitly
+override the profile; no source-file or project-specific conditions are applied.
 
 Compiler diagnostics retain source file names and original line numbers,
 including included files. Columns within macro-expanded lines are approximate.

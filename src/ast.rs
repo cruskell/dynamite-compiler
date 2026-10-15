@@ -144,6 +144,45 @@ pub enum Identifier {
     Static(Type),
 }
 
+pub(crate) const METADATA_ATTRIBUTES: &[&str] = &[
+    "availability",
+    "deprecated",
+    "unavailable",
+    "unused",
+    "warn_unused_result",
+    "format",
+    "format_arg",
+    "nonnull",
+    "returns_nonnull",
+    "malloc",
+    "alloc_size",
+    "alloc_align",
+    "noreturn",
+    "noescape",
+    "always_inline",
+    "noinline",
+    "const",
+    "pure",
+    "cold",
+    "hot",
+    "not_tail_called",
+    "disable_tail_calls",
+    "swift_attr",
+    "swift_name",
+    "swift_private",
+    "swift_wrapper",
+    "objc_bridge",
+    "objc_bridge_mutable",
+    "objc_boxable",
+    "cf_consumed",
+    "cf_returns_retained",
+    "cf_returns_not_retained",
+    "enum_extensibility",
+    "flag_enum",
+    "sentinel",
+    "diagnose_if",
+];
+
 pub trait AstBuilder {
     fn build(&mut self, is_debug: bool) -> ProgramAst;
 }
@@ -478,45 +517,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(name.pos, "attribute name expected");
                 }
-                let supported = matches!(
-                    name.s_value.trim_matches('_'),
-                    "availability"
-                        | "deprecated"
-                        | "unavailable"
-                        | "unused"
-                        | "warn_unused_result"
-                        | "format"
-                        | "format_arg"
-                        | "nonnull"
-                        | "returns_nonnull"
-                        | "malloc"
-                        | "alloc_size"
-                        | "alloc_align"
-                        | "noreturn"
-                        | "noescape"
-                        | "always_inline"
-                        | "noinline"
-                        | "const"
-                        | "pure"
-                        | "cold"
-                        | "hot"
-                        | "not_tail_called"
-                        | "disable_tail_calls"
-                        | "swift_attr"
-                        | "swift_name"
-                        | "swift_private"
-                        | "swift_wrapper"
-                        | "objc_bridge"
-                        | "objc_bridge_mutable"
-                        | "objc_boxable"
-                        | "cf_consumed"
-                        | "cf_returns_retained"
-                        | "cf_returns_not_retained"
-                        | "enum_extensibility"
-                        | "flag_enum"
-                        | "sentinel"
-                        | "diagnose_if"
-                );
+                let supported = METADATA_ATTRIBUTES.contains(&name.s_value.trim_matches('_'));
                 if name.s_value.trim_matches('_') == "packed" {
                     if let Some(packed) = packed.as_deref_mut() {
                         self.cur += 1;
