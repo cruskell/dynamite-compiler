@@ -7018,3 +7018,164 @@ fn unsupported_multiple_asm_outputs_are_diagnosed(code: &str, output_option: &st
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn transparent_union_pointers_interoperate_with_clang(output_option: &str, optimization: &str) {
+    let definitions = r#"
+typedef union __attribute__((transparent_union)) Handle{int *integer;char *text;void *any;}Handle;
+typedef union __attribute__((transparent_union)) Other{int *integer;char *text;void *any;}Other;
+typedef int HandleFunction(Handle);typedef int IntegerFunction(int*);
+typedef int TextFunction(char*);typedef int FloatFunction(float*);typedef int OtherFunction(Other);
+"#;
+    let code=[definitions,r#"
+#if !__has_attribute(transparent_union) || !__has_attribute(__transparent_union__)
+#error missing transparent union attribute
+#endif
+_Static_assert(!__builtin_types_compatible_p(Handle,void*),"union identity");
+_Static_assert(__builtin_types_compatible_p(HandleFunction,IntegerFunction),"member function compatibility");
+_Static_assert(__builtin_types_compatible_p(HandleFunction,TextFunction),"other member function compatibility");
+_Static_assert(!__builtin_types_compatible_p(HandleFunction,FloatFunction),"nonmember function type");
+_Static_assert(!__builtin_types_compatible_p(HandleFunction,OtherFunction),"distinct union parameters");
+int calls;int object=7;int *next(void){calls++;return &object;}
+void *identity(Handle h){Handle local=h;return local.any;}
+Handle roundtrip(Handle h){return h;}
+int read_handle(Handle h){return h.any!=0;}
+void *foreign(Handle);
+Handle foreign_roundtrip(Handle);
+int foreign_object(Handle*);
+int invoke(int(*)(int*),int*);
+int addressable(Handle h){return foreign_object(&h);}
+int main(void){char text[2]="a";void *any=&object;Handle stored={.integer=&object};
+    if(identity(next())!=&object || calls!=1 || identity(text)!=text || identity(any)!=any)return 1;
+    if(identity(0)!=0 || identity(0UL)!=0 || identity(1-1)!=0 || identity((void*)0)!=0)return 2;
+    if(identity(stored)!=&object || foreign(text)!=text || foreign_roundtrip(&object).any!=&object)return 3;
+    if(roundtrip(text).any!=text || !addressable(&object))return 4;
+    int (*callback)(int*)=read_handle;
+    return !callback(&object) || !invoke(read_handle,&object);}
+"#].concat();
+    let companion = [
+        definitions,
+        r#"
+extern int object;
+void *foreign(Handle h){return h.any;}
+Handle foreign_roundtrip(Handle h){return h;}
+int foreign_object(Handle *h){return h->any==&object;}
+int invoke(int(*call)(int*),int *p){return call(p);}
+"#,
+    ]
+    .concat();
+    let output =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    ("signed char","-7"), ("unsigned char","250"),
+    ("signed short","-20000"), ("unsigned short","60000"),
+    ("int","-123456"), ("unsigned int","4000000000U"),
+    ("long","-5000000000L"), ("long long","-6000000000LL"),
+    ("unsigned long long","18446744073709551615ULL"),
+    ("float","1.5f"), ("double","2.25"),
+], ["asm", "llvm"], ["-O0", "-O2"])]
+fn transparent_union_scalar_abi_matches_clang(
+    case: (&str, &str),
+    output_option: &str,
+    optimization: &str,
+) {
+    let (ty, value) = case;
+    let definition =
+        format!("typedef union U{{{ty} first;{ty} second;}}U __attribute__((transparent_union));");
+    let code = format!(
+        r#"{definition}
+{ty} ours(U value){{return value.first;}}
+{ty} foreign(U);
+int main(void){{{ty} value={value};U explicit={{.second=value}};
+    {ty} (*callback)({ty})=ours;
+    return ours(value)!=value || ours(explicit)!=value || foreign(value)!=value || callback(value)!=value;}}
+"#
+    );
+    let companion = format!("{definition}\n{ty} foreign(U value){{return value.first;}}");
+    let output =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn transparent_union_callback_types_can_refer_to_the_union(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+union Recursive;
+typedef union Recursive{int (*call)(union Recursive);}Recursive __attribute__((transparent_union));
+int terminal(Recursive value){return value.call!=0;}
+int invoke(Recursive value){return value.call(terminal);}
+int main(void){return invoke(terminal)!=1;}
+"#;
+    let output = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn transparent_union_attribute_forms_and_variadic_calls(output_option: &str, optimization: &str) {
+    let code = r#"
+typedef __attribute__((transparent_union)) union Prefix{int *p;char *q;}Prefix;
+union Trailing{int *p;char *q;} __attribute__((__transparent_union__));
+union Original{const int *p;const char *q;};
+typedef union Original Alias __attribute__((transparent_union));
+int prefix(Prefix value){return value.p!=0;}
+int trailing(union Trailing value){return value.p!=0;}
+int alias(Alias value){return value.p!=0;}
+int sum(Prefix first,...){__builtin_va_list ap;__builtin_va_start(ap,first);
+    int n=__builtin_va_arg(ap,int);__builtin_va_end(ap);return (first.p!=0)+n;}
+int main(void){int n=3;const int immutable=7;
+    return !prefix(&n) || !trailing(&n) || !alias(&immutable) || sum(&n,7)!=8;}
+"#;
+    let output = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    "typedef int Scalar __attribute__((transparent_union));",
+    "struct __attribute__((transparent_union)) S{int value;};",
+    "union __attribute__((transparent_union)) U{int integer;double real;};",
+    "union __attribute__((transparent_union)) U{int integer;long wide;};",
+    "union __attribute__((transparent_union)) U{int *pointer;long integer;};",
+    "union __attribute__((transparent_union)) U{_Bool value;unsigned char byte;};",
+    "union __attribute__((transparent_union)) U{signed char first;unsigned char second;};",
+    "union __attribute__((transparent_union)) U{int bits:3;int integer;};",
+    "union __attribute__((transparent_union)) U{int array[2];};",
+    "union __attribute__((transparent_union)) U;",
+    "typedef union U{int *p;}U __attribute__((transparent_union(1)));",
+    "typedef union U{int *p;}U __attribute__((transparent_union));int accept(U v){return 0;}int main(){double x;return accept(&x);}",
+    "typedef union U{int *p;}U __attribute__((transparent_union));int accept(U v){return 0;}int main(){const int x=3;return accept(&x);}",
+    "typedef union U{int *p;}U __attribute__((transparent_union));int main(){int x;U value;value=&x;return 0;}",
+], ["asm", "llvm"])]
+fn invalid_or_unsupported_transparent_unions_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn transparent_union_integer_members_preserve_bit_patterns(
+    output_option: &str,
+    optimization: &str,
+) {
+    let definition = "typedef union __attribute__((transparent_union)) Bits{int signed_value;unsigned unsigned_value;}Bits;";
+    let code = format!(
+        r#"{definition}
+unsigned ours(Bits value){{return value.unsigned_value;}}
+unsigned foreign(Bits);
+int main(void){{unsigned high=4000000000U;unsigned (*callback)(unsigned)=ours;
+    return ours(high)!=high || foreign(high)!=high || callback(high)!=high;}}
+"#
+    );
+    let companion = format!(
+        "{definition}\nunsigned ours(Bits);unsigned foreign(Bits value){{return ours(value);}}"
+    );
+    let output =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}

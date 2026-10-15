@@ -160,6 +160,7 @@ fn compiler_macros(command: &mut Command) {
         "weak_import",
         "common",
         "visibility",
+        "transparent_union",
     ]) {
         for spelling in [name.to_string(), format!("__{name}__")] {
             command.arg(format!("-D__DYNAMITE_ATTRIBUTE_{spelling}=~,1"));

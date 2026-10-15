@@ -1151,3 +1151,18 @@ markers are accepted before declarations, statements, and expressions.
 Labels, goto, return, and break/continue that escape the statement expression are
 currently diagnosed. GNU statement expressions are not integer constant
 expressions and cannot appear at file scope.
+
+## GNU transparent unions
+
+`__attribute__((transparent_union))` is supported on complete unions and union
+typedefs with matching scalar calling representations and layout. Fixed function
+parameters accept a member value, compatible pointers, or null pointer constants
+and use the first member's calling convention. Ordinary union objects and return
+values retain their union representation. Function parameter compatibility follows
+the member types; distinct union types remain distinct.
+
+Supported members are pointers, 8/16/32/64-bit integers, and float/double. Members
+must share a calling representation, size, and alignment; narrow integers must
+also share signedness. Boolean, aggregate, vector, mixed pointer/integer, mixed
+integer/floating, and layout-changing attributes are diagnosed. Transparent union
+conversion does not apply to variadic arguments.

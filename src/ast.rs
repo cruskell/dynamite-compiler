@@ -23,6 +23,8 @@ mod overflow;
 mod prefetch;
 #[path = "statement_expression.rs"]
 mod statement_expression;
+#[path = "transparent_union.rs"]
+mod transparent_union;
 #[path = "type_query.rs"]
 mod type_query;
 #[path = "varargs.rs"]
@@ -113,6 +115,7 @@ struct DeclarationAttributes {
     weak_import: bool,
     common: bool,
     typedef_declarator: bool,
+    transparent_union: bool,
     vector_size: Option<usize>,
 }
 
@@ -244,6 +247,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
             function.cty = function.cty.lowered_for_codegen();
             for arg in &mut function.args {
                 Self::lower_source_types(arg);
+                arg.cty = arg.cty.as_ref().map(Type::parameter_for_codegen);
             }
             if let Some(body) = &mut function.body {
                 Self::lower_source_types(body);
@@ -257,9 +261,12 @@ impl AstBuilder for AstBuilderImpl<'_> {
             global.ty = global.ty.lowered_for_codegen();
         }
         for definition in &self.struct_definitions {
-            for member in &mut definition.borrow_mut().members {
+            // Parameter normalization may inspect this record through a callback type.
+            let mut members = definition.borrow().members.clone();
+            for member in &mut members {
                 member.ty = member.ty.lowered_for_codegen();
             }
+            definition.borrow_mut().members = members;
         }
         self.lower_gnu_inline_calls();
         if is_debug {
@@ -692,6 +699,33 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                     continue;
                 }
+                if name.s_value.trim_matches('_') == "transparent_union" {
+                    if packed.is_none()
+                        && !self
+                            .declaration_attributes_state
+                            .as_ref()
+                            .is_some_and(|attributes| attributes.typedef_declarator)
+                    {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "transparent_union requires a union type or typedef",
+                        );
+                    }
+                    self.cur += 1;
+                    if self.tokens[self.cur].s_value == "(" {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "transparent_union does not take arguments",
+                        );
+                    }
+                    self.declaration_attributes_state
+                        .get_or_insert_with(DeclarationAttributes::default)
+                        .transparent_union = true;
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
+                }
                 if name.s_value.trim_matches('_') == "common" {
                     if self.parameter_depth != 0
                         || !self
@@ -856,14 +890,18 @@ impl<'a> AstBuilderImpl<'a> {
         alignment
     }
 
-    fn record_attributes(&mut self) -> (usize, bool) {
+    fn record_attributes(&mut self) -> (usize, bool, bool) {
         let mut packed = false;
         let alignment = self
             .declaration_attributes(true, Some(&mut packed), false)
             .into_iter()
             .max()
             .unwrap_or(0);
-        (alignment, packed)
+        let transparent = self
+            .declaration_attributes_state
+            .as_mut()
+            .is_some_and(|attributes| std::mem::take(&mut attributes.transparent_union));
+        (alignment, packed, transparent)
     }
 
     fn declarator(&mut self) -> Declarator {
@@ -1925,7 +1963,8 @@ impl<'a> AstBuilderImpl<'a> {
     fn struct_type_body(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
         let packing = token.packing;
-        let (mut requested_record_alignment, mut packed) = self.record_attributes();
+        let (mut requested_record_alignment, mut packed, mut transparent) =
+            self.record_attributes();
         let name = self.attempt_ident();
         self.declaration_attributes(false, None, true);
         let key = format!(
@@ -2194,6 +2233,7 @@ impl<'a> AstBuilderImpl<'a> {
             *ty.definition().borrow_mut() = StructDefinition {
                 members,
                 is_union,
+                transparent_union: false,
                 has_bit_fields,
                 has_flexible_array,
                 size: size.div_ceil(align) * align,
@@ -2204,7 +2244,8 @@ impl<'a> AstBuilderImpl<'a> {
             };
         }
         if defining {
-            let (alignment, trailing_packed) = self.record_attributes();
+            let (alignment, trailing_packed, trailing_transparent) = self.record_attributes();
+            transparent |= trailing_transparent;
             requested_record_alignment = requested_record_alignment.max(alignment);
             packed |= trailing_packed;
         } else {
@@ -2252,7 +2293,11 @@ impl<'a> AstBuilderImpl<'a> {
             definition.align = definition.align.max(requested_record_alignment);
             definition.size = definition.size.div_ceil(definition.align) * definition.align;
         }
-        Type::Struct(ty)
+        let ty = Type::Struct(ty);
+        if transparent {
+            self.apply_transparent_union(&ty, &token);
+        }
+        ty
     }
 
     fn expect_object_type(&self, ty: &Type, token: &Token) {
@@ -2275,13 +2320,15 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn typedef_definition(&mut self) {
         let saved_attributes = self.declaration_attributes_state.take();
+        self.declaration_attributes_state = Some(DeclarationAttributes {
+            typedef_declarator: true,
+            ..DeclarationAttributes::default()
+        });
         let prefix_alignments = self.declaration_attributes(true, None, false);
+        let prefix_attributes = self.declaration_attributes_state.take().unwrap();
         let base = self.expect_type();
         loop {
-            self.declaration_attributes_state = Some(DeclarationAttributes {
-                typedef_declarator: true,
-                ..DeclarationAttributes::default()
-            });
+            self.declaration_attributes_state = Some(prefix_attributes.clone());
             let mut alignments = prefix_alignments.clone();
             let (name, mut ty, _, _, _) = self
                 .declarator_with_alignment(Some(&mut alignments))
@@ -2292,6 +2339,9 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             let attributes = self.declaration_attributes_state.take().unwrap();
+            if attributes.transparent_union {
+                self.apply_transparent_union(&ty, &token);
+            }
             if let Some(size) = attributes.vector_size {
                 let element = ty.unqualified();
                 if !(element.integer_info().is_some() && *element != Type::Bool
@@ -3495,6 +3545,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn lower_source_types(node: &mut Node) {
+        Self::lower_transparent_call(node);
         node.volatile_access |= node
             .object_type()
             .is_some_and(|ty| ty.qualifiers().volatile);
@@ -3504,7 +3555,7 @@ impl<'a> AstBuilderImpl<'a> {
         node.parameter_types = node
             .parameter_types
             .iter()
-            .map(Type::lowered_for_codegen)
+            .map(Type::parameter_for_codegen)
             .collect();
         for child in [
             &mut node.lhs,
@@ -3632,9 +3683,9 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn expect_conversion(&self, expected: &Type, operand: &Node) {
+    fn can_convert(expected: &Type, operand: &Node) -> bool {
         let actual = operand.resolve_type();
-        let compatible = match (
+        match (
             expected.unqualified(),
             actual.as_ref().map(Type::unqualified),
         ) {
@@ -3658,10 +3709,13 @@ impl<'a> AstBuilderImpl<'a> {
             }
             (target, Some(source)) => target == source,
             _ => false,
-        };
-        if !compatible {
+        }
+    }
+
+    fn expect_conversion(&self, expected: &Type, operand: &Node) {
+        if !Self::can_convert(expected, operand) {
             self.error_logger.print_error_position(
-                operand.token.as_ref().map_or(0, |t| t.pos),
+                operand.token.as_ref().map_or(0, |token| token.pos),
                 "incompatible value type",
             );
         }
@@ -6595,6 +6649,9 @@ impl<'a> AstBuilderImpl<'a> {
                         t.pos,
                         "argument count does not match function declaration",
                     );
+                }
+                for (argument, parameter) in args.iter_mut().rev().zip(&parameter_types) {
+                    self.convert_transparent_argument(parameter, argument, &t);
                 }
                 for argument in &mut args {
                     if matches!(argument.resolve_type(), Some(Type::Struct(_))) {
