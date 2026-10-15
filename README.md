@@ -104,6 +104,11 @@ Integer bit-fields support
 signed and unsigned values, unnamed padding, zero-width separators, initialization,
 and assignment. Address-taking and `sizeof` on a bit-field are diagnosed.
 
+GNU `extern inline` definitions provide local bodies for direct calls without
+emitting an external definition. Taking their address still refers to the external
+function. Reachable bodies are currently emitted as private helpers, so native
+output does not promise instruction-level inlining.
+
 ## Preprocessing
 
 Sources with directives or predefined macro names are preprocessed using `clang`

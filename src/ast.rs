@@ -11,6 +11,8 @@ use std::{cell::RefCell, rc::Rc};
 mod atomic;
 #[path = "inline_asm.rs"]
 mod inline_asm;
+#[path = "inline_calls.rs"]
+mod inline_calls;
 #[path = "object_size.rs"]
 mod object_size;
 #[path = "overflow.rs"]
@@ -250,6 +252,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
                 member.ty = member.ty.without_qualifiers();
             }
         }
+        self.lower_gnu_inline_calls();
         if is_debug {
             self.print_functions();
         }
