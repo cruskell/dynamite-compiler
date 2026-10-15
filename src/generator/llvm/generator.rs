@@ -185,7 +185,9 @@ impl<'a> IrGenerator<'a> {
         match ty {
             Type::Qualified(child, _) => Self::gen_type(*child),
             Type::Void => "void".to_string(),
-            Type::Float(bits) => if bits == 32 { "float" } else { "double" }.to_string(),
+            Type::Float(bits) | Type::LongDouble(bits) => {
+                if bits == 32 { "float" } else { "double" }.to_string()
+            }
             Type::Struct(ty) if ty.definition().borrow().is_union || ty.has_bit_fields() => {
                 let ty = Type::Struct(ty);
                 format!(
@@ -254,7 +256,7 @@ impl<'a> IrGenerator<'a> {
         };
         match ty {
             Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
-            Type::Float(_) => {
+            Type::Float(_) | Type::LongDouble(_) => {
                 let bits = if let Some(GlobalVariableData::Elem(value)) = data {
                     value.parse::<i64>().unwrap() as usize
                 } else {
@@ -972,7 +974,9 @@ impl<'a> IrGenerator<'a> {
         options: &mut Options,
         lines: &mut Vec<String>,
     ) -> String {
-        if source == target {
+        if source == target
+            || (source.float_bits().is_some() && source.float_bits() == target.float_bits())
+        {
             return value;
         }
         if source.float_bits().is_some() || target.float_bits().is_some() {

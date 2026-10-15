@@ -1549,3 +1549,70 @@ fn invalid_incomplete_array_declarations_are_diagnosed(code: &str, output_option
             .is_err()
     );
 }
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[test_matrix(["asm", "llvm"])]
+fn binary64_long_double_preserves_language_type(output_option: &str) {
+    let code = r#"
+long double value=1.25L;
+double long other=0x1.8p1l;
+long double add(long double x,float y){return x+y;}
+int main(){
+    long double x=add(value,2.5f);
+    double y=x;
+    float z=x;
+    x=y;
+    x++;
+    long double array[2]={value,other};
+    return (sizeof(x)!=8)+(_Alignof(long double)!=8)+(x!=4.75L)+(z!=3.75f)
+        +(array[1]!=3.0L)+_Generic(x,long double:0,double:1,default:2)
+        +_Generic(value+1.0,long double:0,default:1)
+        +_Generic(y,double:0,long double:1,default:2);
+}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[test_matrix(["asm", "llvm"])]
+fn binary64_long_double_interoperates_with_clang(output_option: &str) {
+    let code = r#"
+#include <stdio.h>
+struct Mixed{double x;long double y;};
+struct Mixed foreign(struct Mixed value,long double delta);
+long double local(long double x,double y){return x+y;}
+struct Mixed local_record(struct Mixed x){x.y+=2.0L;return x;}
+int main(){
+    struct Mixed x={1.25,2.5L};
+    struct Mixed y=foreign(x,3.0L);
+    char text[32];
+    sprintf(text,"%.2Lf",y.y);
+    return (y.x!=1.25)+(y.y!=8.75L)+(text[0]!='8')+(text[2]!='7')+(text[3]!='5');
+}"#;
+    let companion = r#"
+struct Mixed{double x;long double y;};
+long double local(long double,double);
+struct Mixed local_record(struct Mixed);
+struct Mixed foreign(struct Mixed value,long double delta){
+    value=local_record(value);
+    value.y=local(value.y,delta+value.x);
+    return value;
+}"#;
+    assert_eq!(
+        compile_and_run_with_c(code, output_option, Some(companion))
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[test_matrix([
+    "long double value;",
+    "int main(){return 1.0L==1.0;}",
+], ["asm", "llvm"])]
+fn unsupported_long_double_formats_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

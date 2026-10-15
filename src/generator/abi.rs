@@ -30,10 +30,10 @@ pub struct Signature {
 
 fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {
     match ty.unqualified() {
-        Type::Float(_) => {
+        Type::Float(_) | Type::LongDouble(_) => {
             members.push(Part {
                 offset,
-                ty: ty.clone(),
+                ty: Type::Float(ty.float_bits().unwrap()),
             });
             true
         }
@@ -65,7 +65,7 @@ fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {
 }
 fn integer_slots(ty: &Type, offset: usize, slots: &mut [bool]) {
     match ty.unqualified() {
-        Type::Float(_) => {}
+        Type::Float(_) | Type::LongDouble(_) => {}
         Type::Struct(st) if st.members().is_empty() && st.has_bit_fields() => slots.fill(true),
         Type::Struct(st) => {
             for member in st.members() {
