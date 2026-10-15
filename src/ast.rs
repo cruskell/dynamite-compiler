@@ -2297,7 +2297,7 @@ impl<'a> AstBuilderImpl<'a> {
                         && !ty.is_variably_modified()
                         && previous.qualifiers() == ty.qualifiers()
                         && previous.align_of() == ty.align_of()
-                        && previous.compatible(&ty));
+                        && previous.identical(&ty));
                 if !valid {
                     self.error_logger
                         .print_error_position(token.pos, "incompatible typedef redeclaration");

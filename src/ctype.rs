@@ -190,7 +190,32 @@ impl Type {
                         .iter()
                         .zip(other_args)
                         .all(|(left, right)| left.compatible(right))
+                    && result.qualifiers() == other_result.qualifiers()
                     && result.compatible(other_result)
+            }
+            (left, right) => left == right,
+        }
+    }
+
+    /// Typedef redeclarations require identical types, not merely compatible array bounds or enums.
+    pub fn identical(&self, other: &Self) -> bool {
+        self.qualifiers() == other.qualifiers() && self.identical_unqualified(other)
+    }
+
+    fn identical_unqualified(&self, other: &Self) -> bool {
+        match (self.unqualified(), other.unqualified()) {
+            (Self::Ptr(left), Self::Ptr(right)) => left.identical(right),
+            (Self::Arr(left, count), Self::Arr(right, other_count)) => {
+                count == other_count && left.identical(right)
+            }
+            (Self::Func(args, result), Self::Func(other_args, other_result))
+            | (Self::VariadicFunc(args, result), Self::VariadicFunc(other_args, other_result)) => {
+                args.len() == other_args.len()
+                    && args
+                        .iter()
+                        .zip(other_args)
+                        .all(|(left, right)| left.identical_unqualified(right))
+                    && result.identical(other_result)
             }
             (left, right) => left == right,
         }

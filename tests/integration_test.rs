@@ -4402,6 +4402,10 @@ int main(){
     "typedef int T[2][3];typedef const int T[2][3];",
     "typedef int T[2];typedef int T[3];",
     "typedef int T[];typedef int T[3];",
+    "typedef int (*ArrayPointer)[];typedef int (*ArrayPointer)[3];",
+    "typedef void T(int(*)[]);typedef void T(int(*)[3]);",
+    "typedef const int T(void);typedef int T(void);",
+    "enum E{VALUE=-1};typedef enum E T;typedef int T;",
     "int value;typedef int value;",
     "int main(){int n=3;typedef int T[n];typedef int T[n];return 0;}",
     "int main(){int n=3;typedef int T[n];typedef int T[3];return 0;}",
@@ -4538,6 +4542,8 @@ fn builtin_types_compatible_queries_match_clang(output_option: &str, optimizatio
     let definitions = r"
 typedef const int Const;typedef int Plain;
 typedef int Fn(int);typedef int QualifiedFn(const int);
+typedef const int QualifiedResult(void);typedef int PlainResult(void);
+typedef int Adjusted(const int);typedef int Adjusted(int);
 typedef int OtherFn(long);typedef int VariadicFn(int,...);
 typedef int ArrayFn(int[3]);typedef int PointerFn(int*);
 enum First:int{FIRST=3};enum Second:int{SECOND=5};
@@ -4566,6 +4572,8 @@ union Mixed{int x;float y;};
         ("int[2][3]", "int[][3]", 1),
         ("int[2][3]", "int[][4]", 0),
         ("Fn", "QualifiedFn", 1),
+        ("QualifiedResult", "PlainResult", 0),
+        ("Adjusted", "Fn", 1),
         ("Fn", "OtherFn", 0),
         ("Fn", "VariadicFn", 0),
         ("ArrayFn", "PointerFn", 1),
