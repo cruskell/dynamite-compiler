@@ -1235,6 +1235,7 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(self.tokens[self.cur].pos, "enumerator expected");
                     unreachable!()
                 });
+                self.declaration_annotations();
                 if self.attempt_reserved("=").is_some() {
                     let expression = self.ternary();
                     value = self.eval(&expression);

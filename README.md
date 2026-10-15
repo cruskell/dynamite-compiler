@@ -324,7 +324,8 @@ Integer type identity follows this compiler's existing width/signedness model:
 
 GNU `__attribute__((...))` syntax accepts common diagnostic, availability,
 format-checking, and optimization annotations without changing execution.
-Both plain and double-underscore attribute names are accepted. These annotations
+Both plain and double-underscore attribute names are accepted, including
+annotations after enum constant names. These annotations
 do not enable additional diagnostics or optimizations. Attributes that require
 unsupported layout, linkage, or calling-convention behavior are diagnosed rather
 than silently discarded.
