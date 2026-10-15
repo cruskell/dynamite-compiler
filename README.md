@@ -394,3 +394,15 @@ alignment. This includes scalar, pointer, array, and record aliases. Each
 attribute is checked; typedef attributes that would increase or decrease
 alignment remain diagnosed as unsupported. Type identity, size, and layout are
 unchanged for accepted annotations.
+
+## Fixed underlying enum types
+
+Enums accept an explicit underlying type from the existing 8-, 16-, 32-, and
+64-bit integers or `_Bool`, for example
+`enum Flags : unsigned int { FLAG = 0x80000000U };`. Named fixed enums can be
+forward-declared and later defined with the same underlying type. Enumerators
+retain that integer type, including width and signedness, and values must fit
+its range. Conflicting declarations, noninteger underlying types, and implicit
+increments beyond the range are diagnosed. Unspecified underlying types retain
+the existing signed-int model; enum representation and compatibility use the
+underlying integer type in this compiler.
