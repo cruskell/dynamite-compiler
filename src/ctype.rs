@@ -129,6 +129,8 @@ pub enum Type {
     },
     Bool,
     Float16,
+    /// Vector element type and lane count; value operations are not yet supported.
+    Vector(Box<Type>, usize),
     Float(u8),
     LongDouble(u8),
     Ptr(Box<Type>),
@@ -374,6 +376,7 @@ impl Type {
             Type::I8 => 1,
             Type::I32 => 4,
             Type::Float16 => 2,
+            Type::Vector(element, lanes) => element.size_of() * lanes,
             Type::Integer128 { .. } => 16,
             Type::Integer { bits, .. } => (*bits as usize) / 8,
             Type::Bool => 1,
@@ -384,6 +387,18 @@ impl Type {
             Type::Func(..) | Type::VariadicFunc(..) => 1,
         }
     }
+    pub fn contains_vector(&self) -> bool {
+        match self.unqualified() {
+            Self::Vector(..) => true,
+            Self::Arr(child, _) | Self::Vla(child, _) => child.contains_vector(),
+            Self::Struct(record) => record
+                .members()
+                .iter()
+                .any(|member| member.ty.contains_vector()),
+            _ => false,
+        }
+    }
+
     pub fn contains_float16(&self) -> bool {
         match self.unqualified() {
             Self::Float16 => true,

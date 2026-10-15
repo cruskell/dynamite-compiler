@@ -98,6 +98,8 @@ impl Declarator {
 struct DeclarationAttributes {
     gnu_inline: bool,
     weak_import: bool,
+    typedef_declarator: bool,
+    vector_size: Option<usize>,
 }
 
 pub struct AstBuilderImpl<'a> {
@@ -439,6 +441,9 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(token.pos, "invalid function result type");
                 }
                 for ty in args.iter().chain(std::iter::once(result.as_ref())) {
+                    if ty.contains_vector() {
+                        self.error_logger.print_error_position(token.pos, "vectors and records containing vectors cannot be passed or returned by value");
+                    }
                     if matches!(ty.unqualified(), Type::Integer128 { .. }) {
                         self.error_logger.print_error_position(
                             token.pos,
@@ -563,7 +568,13 @@ impl<'a> AstBuilderImpl<'a> {
                         .print_error_position(name.pos, "attribute name expected");
                 }
                 if name.s_value.trim_matches('_') == "gnu_inline" {
-                    if self.parameter_depth != 0 || self.declaration_attributes_state.is_none() {
+                    if self.parameter_depth != 0
+                        || self.declaration_attributes_state.is_none()
+                        || self
+                            .declaration_attributes_state
+                            .as_ref()
+                            .is_some_and(|attributes| attributes.typedef_declarator)
+                    {
                         self.error_logger.print_error_position(
                             name.pos,
                             "gnu_inline requires a file-scope inline function declaration",
@@ -584,7 +595,13 @@ impl<'a> AstBuilderImpl<'a> {
                     continue;
                 }
                 if name.s_value.trim_matches('_') == "weak_import" {
-                    if self.parameter_depth != 0 || self.declaration_attributes_state.is_none() {
+                    if self.parameter_depth != 0
+                        || self.declaration_attributes_state.is_none()
+                        || self
+                            .declaration_attributes_state
+                            .as_ref()
+                            .is_some_and(|attributes| attributes.typedef_declarator)
+                    {
                         self.error_logger.print_error_position(
                             name.pos,
                             "weak_import requires a file-scope declaration",
@@ -621,6 +638,47 @@ impl<'a> AstBuilderImpl<'a> {
                         );
                     }
                     self.expect_reserved(")");
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
+                }
+                if name.s_value.trim_matches('_') == "vector_size" {
+                    if self.parameter_depth != 0
+                        || !self
+                            .declaration_attributes_state
+                            .as_ref()
+                            .is_some_and(|attributes| attributes.typedef_declarator)
+                    {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "vector_size is supported only on scalar typedef declarators",
+                        );
+                    }
+                    self.cur += 1;
+                    self.expect_reserved("(");
+                    let mut attributes = self.declaration_attributes_state.take().unwrap();
+                    let size = self.ternary();
+                    if !Self::integer_constant(&size) {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "vector size requires an integer constant expression",
+                        );
+                    }
+                    let size = self.eval(&size);
+                    if size <= 0 || size > 16 || !(size as usize).is_power_of_two() {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "supported vector sizes are powers of two through 16 bytes",
+                        );
+                    }
+                    self.expect_reserved(")");
+                    let previous = attributes.vector_size.replace(size as usize);
+                    self.declaration_attributes_state = Some(attributes);
+                    if previous.is_some_and(|previous| previous != size as usize) {
+                        self.error_logger
+                            .print_error_position(name.pos, "conflicting vector sizes");
+                    }
                     if self.tokens[self.cur].s_value != ")" {
                         self.expect_reserved(",");
                     }
@@ -2059,10 +2117,15 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn typedef_definition(&mut self) {
+        let saved_attributes = self.declaration_attributes_state.take();
         let base = self.expect_type();
         loop {
+            self.declaration_attributes_state = Some(DeclarationAttributes {
+                typedef_declarator: true,
+                ..DeclarationAttributes::default()
+            });
             let mut alignments = vec![];
-            let (name, ty, _, _, _) = self
+            let (name, mut ty, _, _, _) = self
                 .declarator_with_alignment(Some(&mut alignments))
                 .resolve(base.clone());
             let token = name.unwrap_or_else(|| {
@@ -2070,6 +2133,23 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(self.tokens[self.cur].pos, "ident expected");
                 unreachable!()
             });
+            let attributes = self.declaration_attributes_state.take().unwrap();
+            if let Some(size) = attributes.vector_size {
+                let element = ty.unqualified();
+                if !(element.integer_info().is_some() && *element != Type::Bool
+                    || matches!(element, Type::Float(32 | 64)))
+                    || size % element.size_of().max(1) != 0
+                {
+                    self.error_logger.print_error_position(token.pos, "vector_size requires an ordinary integer or float scalar typedef with a matching element size");
+                }
+                let qualifiers = ty.qualifiers();
+                let vector = Type::Vector(Box::new(element.clone()), size / element.size_of());
+                ty = if qualifiers == Qualifiers::default() {
+                    vector
+                } else {
+                    Type::Qualified(Box::new(vector), qualifiers)
+                };
+            }
             self.validate_type_layout(&ty, &token);
             if !alignments.is_empty()
                 && (!ty.is_complete_object()
@@ -2108,6 +2188,7 @@ impl<'a> AstBuilderImpl<'a> {
                 break;
             }
         }
+        self.declaration_attributes_state = saved_attributes;
     }
 
     fn attempt_static_assert(&mut self) -> bool {
@@ -2777,6 +2858,12 @@ impl<'a> AstBuilderImpl<'a> {
         Self::set_global_element(&child, &mut elements[path[0]], &path[1..], value);
     }
     fn global_initializer(&mut self, ty: &Type) -> GlobalVariableData {
+        if ty.contains_vector() {
+            self.error_logger.print_error_position(
+                self.tokens[self.cur].pos,
+                "explicit vector and vector-containing aggregate initializers are not supported",
+            );
+        }
         if let Some(token) = self.attempt_string_initializer(ty) {
             let mut bytes = token.string_bytes.clone();
             let unit_size = token.string_encoding.unit_size();
@@ -3369,12 +3456,26 @@ impl<'a> AstBuilderImpl<'a> {
                 "records aligned above 16 bytes cannot be passed or returned by value",
             );
         }
+        if node.nt == NodeType::CallFunc
+            && node
+                .args
+                .iter()
+                .filter_map(Node::resolve_type)
+                .chain(node.resolve_type())
+                .any(|ty| ty.decayed().contains_vector())
+        {
+            self.error_logger.print_error_position(
+                node.token.as_ref().map_or(0, |token| token.pos),
+                "vectors and records containing vectors cannot be passed or returned by value",
+            );
+        }
         if !address_only {
             let message = match node.resolve_type().as_ref().map(Type::unqualified) {
                 Some(Type::Integer128 { .. }) => {
                     Some("128-bit integer value operations are not supported")
                 }
                 Some(Type::Float16) => Some("_Float16 value operations are not supported"),
+                Some(Type::Vector(..)) => Some("vector value operations are not supported"),
                 _ => None,
             };
             if let Some(message) = message {
@@ -4214,6 +4315,12 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
+        if node.resolve_type().is_some_and(|ty| ty.contains_vector()) {
+            self.error_logger.print_error_position(
+                assign_token.pos,
+                "explicit vector and vector-containing aggregate initializers are not supported",
+            );
+        }
         if let Some(token) = self.attempt_string_initializer(&node.resolve_type().unwrap()) {
             let bytes = token.string_bytes.clone();
             let unit_size = token.string_encoding.unit_size();
@@ -6145,6 +6252,15 @@ impl<'a> AstBuilderImpl<'a> {
                     node = Self::member_node(node, &st.members()[index], &token);
                 }
             } else if let Some(b_token) = self.attempt_reserved("[") {
+                if matches!(
+                    node.resolve_type().as_ref().map(Type::unqualified),
+                    Some(Type::Vector(..))
+                ) {
+                    self.error_logger.print_error_position(
+                        b_token.pos,
+                        "vector element access is not supported",
+                    );
+                }
                 // Subscript array
                 node = Node::new_with_op(Some(b_token.clone()), NodeType::Add, node, self.expr());
                 self.expect_reserved("]");

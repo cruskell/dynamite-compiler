@@ -853,3 +853,19 @@ They preserve external linkage and do not export static functions or objects.
 Concatenated narrow string literals and combined attribute lists are supported.
 Hidden, protected and internal visibility requests remain diagnosed rather than
 being ignored. Native assembly and LLVM output retain their existing linkage.
+
+## Vector typedef storage
+
+Postfix GNU `vector_size(N)` attributes on ordinary integer and float scalar
+typedef declarators create distinct vector types. Supported sizes are powers of
+two through 16 bytes, divisible by the element size. Boolean, pointer, long-double
+and storage-only extended scalar element types are not supported. Each typedef
+keeps its own attribute, and const qualification is preserved.
+
+Vectors retain their byte size and natural alignment in objects, arrays, packed
+or ordinary records, pointers, type queries and implicit static zero storage.
+Native assembly reserves the exact bytes; LLVM uses vector storage types.
+Explicit vector-containing initializers, vector values, lane access and vector
+or vector-containing record arguments/results are diagnosed. General object
+vector attributes and vector arithmetic are not implemented, so the compiler
+conservatively keeps `__has_attribute(vector_size)` false.
