@@ -1180,3 +1180,12 @@ and empty initializers, including nested records, arrays, and compound literals.
 Explicit member writes retain their normal types and volatile access widths.
 C does not generally require padding bytes to have a specified value after
 subsequent member assignments or record copies.
+
+## Bitwise operand evaluation
+
+The compiler evaluates operands of `&`, `^`, and `|` from left to right in both
+native assembly and LLVM output, including nested expressions. Both operands
+are always evaluated; these operators do not short-circuit. This is a compiler
+evaluation policy: portable C must not rely on a particular order for these
+operators, and this policy does not specify the order of other C operators or
+function arguments.

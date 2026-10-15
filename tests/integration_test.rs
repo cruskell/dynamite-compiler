@@ -7265,3 +7265,47 @@ fn record_zero_initialization_retains_volatile_member_stores() {
         "{generated}"
     );
 }
+
+#[test_matrix(["and", "xor", "or"], ["asm", "llvm"], ["-O0", "-O2"])]
+fn bitwise_operands_evaluate_left_to_right(
+    operator: &str,
+    output_option: &str,
+    optimization: &str,
+) {
+    let (operator, combine): (&str, fn(u64, u64) -> u64) = match operator {
+        "and" => ("&", |a, b| a & b),
+        "xor" => ("^", |a, b| a ^ b),
+        "or" => ("|", |a, b| a | b),
+        _ => unreachable!(),
+    };
+    let expected = combine(combine(15, 7), 3);
+    let mixed = combine(u64::MAX, 1 << 40);
+    let zero = combine(0, 3);
+    let nested = combine(3, combine(5, 9));
+    let code = format!(
+        r#"
+int trace;
+unsigned long mark(int n,unsigned long value){{trace=trace*10+n;return value;}}
+int narrow(int n,int value){{trace=trace*10+n;return value;}}
+int main(void){{
+    unsigned long result=mark(1,15) {operator} mark(2,7) {operator} mark(3,3);
+    if(trace!=123 || result!={expected}UL)return 1;
+    trace=0;
+    result=narrow(1,-1) {operator} mark(2,1099511627776UL);
+    if(trace!=12 || result!={mixed}UL)return 2;
+    trace=0;
+    result=mark(1,1099511627776UL) {operator} narrow(2,-1);
+    if(trace!=12 || result!={mixed}UL)return 3;
+    trace=0;
+    result=mark(1,0) {operator} mark(2,3);
+    if(trace!=12 || result!={zero}UL)return 4;
+    trace=0;
+    result=mark(1,3) {operator} (mark(2,5) {operator} mark(3,9));
+    if(trace!=123 || result!={nested}UL)return 4;
+    return 0;
+}}
+"#
+    );
+    let output = compile_and_run_with_c_flags(&code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}

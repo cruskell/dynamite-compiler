@@ -1801,11 +1801,17 @@ impl<'a> AsmGenerator<'a> {
         let unsigned = arithmetic
             .as_ref()
             .is_some_and(|ty| ty.integer_info().is_some_and(|(_, signed)| !signed));
+        let left_first = node.nt.left_operand_first();
+        let (first, second) = if left_first {
+            (node.lhs.as_ref().unwrap(), node.rhs.as_ref().unwrap())
+        } else {
+            (node.rhs.as_ref().unwrap(), node.lhs.as_ref().unwrap())
+        };
         vec![
-            self.gen_node(node.rhs.as_ref().unwrap(), options),
-            self.gen_node(node.lhs.as_ref().unwrap(), options),
-            Self::pop(X8),
-            Self::pop(X13),
+            self.gen_node(first, options),
+            self.gen_node(second, options),
+            Self::pop(if left_first { X13 } else { X8 }),
+            Self::pop(if left_first { X8 } else { X13 }),
             arithmetic
                 .as_ref()
                 .map(|ty| Self::normalize_integer(ty, X8))
