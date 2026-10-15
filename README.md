@@ -255,11 +255,12 @@ to compound literals directly.
 Local and global aggregate initializers accept array indices and member names,
 including paths such as `.items[2].value = 7`. A following undesignated element
 continues with the next subobject, including remaining elements inside a nested
-aggregate. Inner braces may be omitted for global aggregates and explicitly
-bounded automatic aggregates; scalar expressions fill subobjects in order,
+aggregate. Inner braces may be omitted for global and automatic aggregates; scalar expressions fill subobjects in order,
 while string literals and compatible record values initialize whole subobjects.
-Brace elision in inferred-bound automatic arrays is currently diagnosed rather
-than inferring an incorrect bound. Omitted elements are initialized
+Inferred-bound automatic arrays and compound literals use the highest
+initialized outer element to determine their bound, including brace elision.
+Their name remains an incomplete array type during initializer parsing;
+`sizeof` on that name requires the completed declaration. Omitted elements are initialized
 to zero, and the highest initialized index determines an omitted array bound.
 ## Storage duration and linkage
 

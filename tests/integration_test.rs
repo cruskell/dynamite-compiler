@@ -6664,12 +6664,44 @@ fn aggregate_brace_elision_matches_clang(body: &str, output_option: &str, optimi
     "int a[1][2]={1,2,3};int main(){return 0;}",
     "int main(){int a[1][2]={1,2,3};return 0;}",
     "union U{int x;long y;};union U u={1,2};int main(){return 0;}",
-    "int main(){int a[][2]={1,2,3,4};return 0;}",
-    "int main(){return sizeof((int[][2]){1,2,3,4});}",
-    "struct S{int x,y;};int main(){struct S a[]={1,2};return 0;}",
-    "struct S{int x,y;};int main(){struct S a[]={[0].x=1,2};return 0;}",
 ], ["asm", "llvm"])]
-fn invalid_or_unsupported_brace_elision_is_diagnosed(code: &str, output_option: &str) {
+fn invalid_brace_elision_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix([
+    "int evaluate(void){int n=0;int a[][2]={++n,++n,++n,++n,++n};_Static_assert(sizeof(a)==6*sizeof(int),\"bound\");return sizeof(a)+n+a[2][0]+a[2][1];}",
+    "struct S{int x,y;};int evaluate(void){struct S zero[]={0};struct S a[]={1,2,3};struct S b[]={[2].x=7,9,11};return sizeof(zero)+sizeof(a)+sizeof(b)+zero[0].y+a[1].y+b[2].y+b[3].x+b[3].y;}",
+    "int evaluate(void){char words[][4]={\"a\",\"bc\"};char text[]={\"xy\"};return sizeof(words)+sizeof(text)+words[1][1]+text[1]+text[2];}",
+    "int evaluate(void){int a[]={((int[]){3,5})[1],((int[][2]){7,9,11})[1][0]};int b[][2]={((int[]){13,17})[0],19,23};return sizeof(a)+sizeof(b)+a[0]+a[1]+b[0][0]+b[1][0]+b[1][1];}",
+    "int evaluate(void){void *p[]={p,&p[1]};return sizeof(p)+((void*)p==p[0])+((void*)&p[1]==p[1]);}",
+    "typedef int Row[2];int evaluate(void){Row a[]={1,2,3};int b[][2][2]={4,5,6,7,8};return sizeof(a)+sizeof(b)+a[1][1]+b[1][0][0]+b[1][1][1];}",
+    "int evaluate(void){int n=0;unsigned long size=sizeof((int[][2]){++n,++n,++n});return size+n;}",
+    "struct S{int x,y;};int evaluate(void){struct S first={3,5};struct S a[]={first,7,9};return sizeof(a)+a[0].y+a[1].x+a[1].y;}",
+], ["asm", "llvm"], ["-O0", "-O2"])]
+fn inferred_local_array_initializers_match_clang(
+    body: &str,
+    output_option: &str,
+    optimization: &str,
+) {
+    let companion = body.replace("int evaluate(void)", "int reference(void)");
+    let code =
+        format!("{body}\nint reference(void);int main(void){{return evaluate()!=reference();}}");
+    let output =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    "int main(){int a[];return 0;}",
+    "int main(){int a[]={sizeof(a)};return 0;}",
+    "int main(){long a;{int a[]={sizeof(a)};}return 0;}",
+    "int main(){int other[2];int a[]=other;return 0;}",
+], ["asm", "llvm"])]
+fn invalid_inferred_local_arrays_are_diagnosed(code: &str, output_option: &str) {
     assert!(
         std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
             .is_err()
