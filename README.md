@@ -329,3 +329,12 @@ definitions, references, function pointers, and symbolic initializers consistent
 in native and LLVM output, including declarations made after an earlier use.
 Conflicting labels are diagnosed. This is declaration syntax; inline assembly
 statements and register-variable bindings are not supported by this feature.
+
+## Pointer nullability annotations
+
+Pointer declarations accept `_Nullable`, `_Nonnull`, `_Null_unspecified`, and
+`_Nullable_result`, including pointer typedefs and function pointers. These are
+interface annotations; they do not change C type compatibility, pointer layout,
+or add runtime checks. Non-pointer applications and conflicting annotations on
+the same pointer declarator are diagnosed. Ordinary const/volatile/restrict
+qualification remains effective when mixed with these annotations.
