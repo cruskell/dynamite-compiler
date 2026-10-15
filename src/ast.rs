@@ -5157,6 +5157,76 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
+    fn floating_nan_builtin(&mut self, token: Token) -> Node {
+        let (name, ty) = match token.s_value.as_str() {
+            "__builtin_nanf" => ("nanf", Type::Float(32)),
+            "__builtin_nan" => ("nan", Type::Float(64)),
+            "__builtin_nanl" => ("nanl", self.long_double_type(&token)),
+            _ => unreachable!(),
+        };
+        let pointer = Type::Ptr(Box::new(Type::Qualified(
+            Box::new(Type::I8),
+            Qualifiers {
+                constant: true,
+                ..Qualifiers::default()
+            },
+        )));
+        let call = self.runtime_builtin(
+            token.clone(),
+            name,
+            Type::Func(vec![pointer], Box::new(ty.clone())),
+        );
+        let literal = call
+            .args
+            .first()
+            .filter(|argument| call.nt == NodeType::CallFunc && argument.nt == NodeType::GlobalVar)
+            .and_then(|argument| argument.token.as_ref())
+            .filter(|literal| {
+                literal.tt == TokenType::Str && literal.string_encoding.unit_size() == 1
+            });
+        if let Some(literal) = literal {
+            let payload = Self::nan_payload(&literal.string_bytes);
+            let bits = if ty.float_bits() == Some(32) {
+                0x7fc0_0000 | (payload & 0x003f_ffff)
+            } else {
+                0x7ff8_0000_0000_0000 | (payload & 0x0007_ffff_ffff_ffff)
+            };
+            return Node {
+                token: Some(token),
+                value: Some(bits as usize),
+                cty: Some(ty),
+                ..Node::default()
+            };
+        }
+        call
+    }
+
+    fn nan_payload(bytes: &[u8]) -> u64 {
+        let bytes = bytes.split(|byte| *byte == 0).next().unwrap();
+        let (radix, digits) = if bytes.starts_with(b"0x") || bytes.starts_with(b"0X") {
+            (16, &bytes[2..])
+        } else if bytes.starts_with(b"0") {
+            (8, &bytes[1..])
+        } else {
+            (10, bytes)
+        };
+        let mut value = 0u64;
+        for byte in digits {
+            let digit = match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'a'..=b'f' => byte - b'a' + 10,
+                b'A'..=b'F' => byte - b'A' + 10,
+                _ => return 0,
+            };
+            if u64::from(digit) >= radix {
+                return 0;
+            }
+            // Literal payloads retain their low bits even when their spelling exceeds u64.
+            value = value.wrapping_mul(radix).wrapping_add(u64::from(digit));
+        }
+        value
+    }
+
     fn floating_abs_builtin(&mut self, token: Token) -> Node {
         let ty = match token.s_value.as_str() {
             "__builtin_fabsf" => Type::Float(32),
@@ -5198,7 +5268,7 @@ impl<'a> AstBuilderImpl<'a> {
             vec![pointer.clone(), second, size.clone(), size],
             Box::new(pointer),
         );
-        self.checked_runtime_builtin(token, name, ty)
+        self.runtime_builtin(token, name, ty)
     }
 
     fn checked_format_builtin(&mut self, token: Token) -> Node {
@@ -5219,7 +5289,7 @@ impl<'a> AstBuilderImpl<'a> {
             ),
             _ => unreachable!(),
         };
-        self.checked_runtime_builtin(
+        self.runtime_builtin(
             token,
             name,
             Type::VariadicFunc(parameters, Box::new(Type::I32)),
@@ -5241,7 +5311,7 @@ impl<'a> AstBuilderImpl<'a> {
             "__builtin___strlcat_chk" => "__strlcat_chk",
             _ => unreachable!(),
         };
-        self.checked_runtime_builtin(
+        self.runtime_builtin(
             token,
             name,
             Type::Func(
@@ -5251,25 +5321,23 @@ impl<'a> AstBuilderImpl<'a> {
         )
     }
 
-    fn checked_runtime_builtin(&mut self, token: Token, name: &str, ty: Type) -> Node {
+    fn runtime_builtin(&mut self, token: Token, name: &str, ty: Type) -> Node {
         if self.tokens[self.cur].s_value != "(" {
             self.error_logger
-                .print_error_position(token.pos, "checked runtime builtin must be called directly");
+                .print_error_position(token.pos, "runtime builtin must be called directly");
         }
         if self.global_variables.contains_key(name)
             || self.scope_stack[0]
                 .get(name)
                 .is_some_and(|identifier| !matches!(identifier, Identifier::Static(_)))
         {
-            self.error_logger.print_error_position(
-                token.pos,
-                "checked runtime symbol conflicts with an identifier",
-            );
+            self.error_logger
+                .print_error_position(token.pos, "runtime symbol conflicts with an identifier");
         }
         if let Some(function) = self.functions.get(name) {
             if !function.cty.compatible(&ty) {
                 self.error_logger
-                    .print_error_position(token.pos, "incompatible checked runtime declaration");
+                    .print_error_position(token.pos, "incompatible runtime declaration");
             }
         }
         self.functions.entry(name.into()).or_insert_with(|| Func {
@@ -5654,6 +5722,12 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
+            if matches!(
+                t.s_value.as_str(),
+                "__builtin_nan" | "__builtin_nanf" | "__builtin_nanl"
+            ) {
+                return self.floating_nan_builtin(t);
+            }
             if matches!(
                 t.s_value.as_str(),
                 "__builtin_inff"
