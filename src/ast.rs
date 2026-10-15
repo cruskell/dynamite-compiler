@@ -2708,6 +2708,27 @@ impl<'a> AstBuilderImpl<'a> {
             if let Some(previous) = self.global_variables.get(&token.s_value) {
                 ty = self.composite_object_declaration(&previous.ty, ty, &token);
             }
+            if self.functions.contains_key(&token.s_value) {
+                self.error_logger
+                    .print_error_position(token.pos, "object conflicts with function");
+            }
+            // The object's scope begins after its declarator, before its initializer.
+            self.scope_stack
+                .last_mut()
+                .unwrap()
+                .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
+            self.global_variables
+                .entry(token.s_value.clone())
+                .or_insert_with(|| GlobalVariable {
+                    ty: ty.clone(),
+                    alignment,
+                    thread_local,
+                    weak_import: attributes.weak_import,
+                    common: attributes.common,
+                    declaration_only: external,
+                    internal,
+                    data: None,
+                });
             let data = if self.attempt_reserved("=").is_some() {
                 Some(self.global_initializer(&ty))
             } else {
@@ -2755,7 +2776,8 @@ impl<'a> AstBuilderImpl<'a> {
                 .last_mut()
                 .unwrap()
                 .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
-            if let Some(existing) = self.global_variables.get_mut(&token.s_value) {
+            {
+                let existing = self.global_variables.get_mut(&token.s_value).unwrap();
                 if existing.internal != internal && !external {
                     self.error_logger
                         .print_error_position(token.pos, "conflicting object linkage");
@@ -2780,24 +2802,6 @@ impl<'a> AstBuilderImpl<'a> {
                 if data.is_some() {
                     existing.data = data;
                 }
-            } else {
-                if self.functions.contains_key(&token.s_value) {
-                    self.error_logger
-                        .print_error_position(token.pos, "object conflicts with function");
-                }
-                self.global_variables.insert(
-                    token.s_value,
-                    GlobalVariable {
-                        ty,
-                        alignment,
-                        thread_local,
-                        weak_import,
-                        common,
-                        declaration_only: external && data.is_none(),
-                        internal,
-                        data,
-                    },
-                );
             }
             if self.attempt_reserved(",").is_none() {
                 break;
@@ -3125,6 +3129,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn constant_address(&mut self, node: &Node) -> Option<(String, i64)> {
         match node.nt {
+            NodeType::GlobalVar if node.thread_local => None,
             NodeType::GlobalVar
                 if node.resolve_type().is_some_and(|ty| {
                     matches!(ty, Type::Arr(..) | Type::Func(..) | Type::VariadicFunc(..))
@@ -3141,7 +3146,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             NodeType::Addr => {
                 let child = node.lhs.as_ref().unwrap();
-                if matches!(child.nt, NodeType::GlobalVar) {
+                if matches!(child.nt, NodeType::GlobalVar) && !child.thread_local {
                     Some((
                         if child.dest.is_empty() {
                             child.global_name.clone()
@@ -4256,6 +4261,32 @@ impl<'a> AstBuilderImpl<'a> {
                     ty = self.composite_object_declaration(&previous.ty, ty, &token);
                 }
             }
+            if self
+                .scope_stack
+                .last()
+                .unwrap()
+                .contains_key(&token.s_value)
+            {
+                self.error_logger
+                    .print_error_position(token.pos, "invalid redeclaration");
+            }
+            self.scope_stack.last_mut().unwrap().insert(
+                token.s_value.clone(),
+                Identifier::StaticObject(ty.clone(), name.clone()),
+            );
+            let new_object = !self.global_variables.contains_key(&name);
+            self.global_variables
+                .entry(name.clone())
+                .or_insert_with(|| GlobalVariable {
+                    ty: ty.clone(),
+                    alignment: requested_alignment,
+                    thread_local,
+                    internal: !external,
+                    weak_import: false,
+                    common: false,
+                    declaration_only: external,
+                    data: None,
+                });
             let data = if self.attempt_reserved("=").is_some() {
                 if external {
                     self.error_logger
@@ -4277,23 +4308,15 @@ impl<'a> AstBuilderImpl<'a> {
             if let Some(data) = &data {
                 self.validate_global_initializer(&ty, data, &token);
             }
-            if self
-                .scope_stack
-                .last()
-                .unwrap()
-                .contains_key(&token.s_value)
-            {
-                self.error_logger
-                    .print_error_position(token.pos, "invalid redeclaration");
-            }
             self.scope_stack.last_mut().unwrap().insert(
                 token.s_value,
                 Identifier::StaticObject(ty.clone(), name.clone()),
             );
-            if let Some(existing) = self.global_variables.get_mut(&name) {
+            {
+                let existing = self.global_variables.get_mut(&name).unwrap();
                 existing.alignment = existing.alignment.max(requested_alignment);
                 if existing.ty != ty {
-                    if external {
+                    if external || new_object {
                         existing.ty = ty.clone();
                     } else {
                         self.error_logger
@@ -4304,20 +4327,9 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "conflicting thread storage duration");
                 }
-            } else {
-                self.global_variables.insert(
-                    name,
-                    GlobalVariable {
-                        ty,
-                        alignment: requested_alignment,
-                        thread_local,
-                        data,
-                        internal: !external,
-                        weak_import: false,
-                        common: false,
-                        declaration_only: external,
-                    },
-                );
+                if new_object {
+                    existing.data = data;
+                }
             }
             if self.attempt_reserved(",").is_none() {
                 break;
