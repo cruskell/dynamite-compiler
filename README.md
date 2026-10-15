@@ -432,8 +432,12 @@ the same member offsets, storage size, and target ABI classification. LLVM uses
 raw record storage and packed global initializer fragments so pointer relocations
 do not introduce padding. Source-derived loads and stores allow unaligned access.
 
-Bit-fields whose declared storage alignment exceeds the packing limit remain
-unsupported and are diagnosed. GNU `packed` attributes are still unsupported.
+Pragma-packed integer bit-fields follow target layout rules, including fields
+that cross their declared storage units and zero-width separators. Accesses use
+only occupied bytes, preserve neighboring fields, and retain signed values and
+volatile access. Argument/result classification uses the occupied bits rather
+than the declared scalar container. GNU packed records with bit-fields remain
+unsupported.
 On macOS, static pointer initializers at unaligned offsets may require linking
 with `-Wl,-no_fixup_chains`, as with the equivalent Clang-generated definitions.
 

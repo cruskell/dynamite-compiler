@@ -82,7 +82,18 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
         }
         Type::Struct(st) => {
             for member in st.members() {
-                integer_slots(&member.ty, offset + member.offset, slots);
+                if let Some(field) = member.bit_field {
+                    let start = (offset + member.offset) * 8 + usize::from(field.shift);
+                    for slot in slots
+                        .iter_mut()
+                        .take((start + usize::from(field.width)).div_ceil(64))
+                        .skip(start / 64)
+                    {
+                        *slot = Some(true);
+                    }
+                } else {
+                    integer_slots(&member.ty, offset + member.offset, slots);
+                }
             }
         }
         Type::Arr(child, count) => {
@@ -105,7 +116,8 @@ fn has_unaligned_member(ty: &Type, offset: usize) -> bool {
     match ty.unqualified() {
         Type::Struct(record) => record.members().iter().any(|member| {
             let offset = offset + member.offset;
-            offset % member.ty.align_of() != 0 || has_unaligned_member(&member.ty, offset)
+            member.bit_field.is_none()
+                && (offset % member.ty.align_of() != 0 || has_unaligned_member(&member.ty, offset))
         }),
         Type::Arr(child, count) => (0..count.unwrap_or(0))
             .any(|index| has_unaligned_member(child, offset + index * child.size_of())),

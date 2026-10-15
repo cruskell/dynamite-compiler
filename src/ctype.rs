@@ -36,6 +36,8 @@ pub struct StructDefinition {
 pub struct BitField {
     pub width: u8,
     pub shift: u8,
+    /// Access only the bytes occupied by a pragma-packed field.
+    pub bytewise: bool,
 }
 
 #[derive(Clone, Debug)]
