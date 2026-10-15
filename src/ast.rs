@@ -1221,7 +1221,47 @@ impl<'a> AstBuilderImpl<'a> {
         Type::LongDouble(64)
     }
 
+    fn typeof_type(&mut self, token: Token) -> Type {
+        self.expect_reserved("(");
+        let pending_start = self.pending_bounds.len();
+        let (ty, expression) = if let Some(base) = self.attempt_type() {
+            let (name, ty, _, _, _) = self.declarator().resolve(base);
+            if name.is_some() {
+                self.error_logger
+                    .print_error_position(token.pos, "typeof requires a type name or expression");
+            }
+            (ty, None)
+        } else {
+            let expression = self.expr();
+            self.validate_void_expressions(&expression);
+            if expression.bit_field.is_some() {
+                self.error_logger
+                    .print_error_position(token.pos, "typeof cannot be applied to a bit-field");
+            }
+            (
+                expression.resolve_qualified_type().unwrap(),
+                Some(expression),
+            )
+        };
+        self.expect_reserved(")");
+        if ty.is_variably_modified() {
+            if let Some(expression) = expression {
+                self.pending_bounds.push(expression);
+            }
+        } else {
+            self.pending_bounds.truncate(pending_start);
+        }
+        ty
+    }
+
     fn attempt_unqualified_type(&mut self) -> Option<Type> {
+        if let Some(token) = self
+            .attempt_reserved("typeof")
+            .or_else(|| self.attempt_reserved("__typeof"))
+            .or_else(|| self.attempt_reserved("__typeof__"))
+        {
+            return Some(self.typeof_type(token));
+        }
         let word = self.tokens[self.cur].s_value.as_str();
         if matches!(word, "__int128" | "__int128_t" | "__uint128_t") {
             let mut signed = word != "__uint128_t";
@@ -4494,8 +4534,8 @@ impl<'a> AstBuilderImpl<'a> {
     fn unary(&mut self) -> Node {
         let saved = self.cur;
         if let Some(token) = self.attempt_reserved("(") {
+            let pending_start = self.pending_bounds.len();
             if let Some(base) = self.attempt_type() {
-                let pending_start = self.pending_bounds.len();
                 let (name, mut ty, _, _, _) = self.declarator().resolve(base);
                 self.validate_type_layout(&ty, &self.tokens[self.cur]);
                 if name.is_some() {
@@ -4606,8 +4646,8 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(t) = self.attempt_reserved("sizeof") {
             let saved = self.cur;
             if self.attempt_reserved("(").is_some() {
+                let pending_start = self.pending_bounds.len();
                 if let Some(base) = self.attempt_type() {
-                    let pending_start = self.pending_bounds.len();
                     let (name, ty, _, _, _) = self.declarator().resolve(base);
                     self.validate_type_layout(&ty, &t);
                     if name.is_some() {

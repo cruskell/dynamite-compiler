@@ -657,3 +657,13 @@ argument expressions still evaluate normally; `va_arg` for an empty record does
 not advance the cursor. Incomplete and flexible arrays retain their existing
 completion and placement rules. A constant `static` array-parameter minimum
 must still be positive.
+
+## Type queries
+
+`typeof`, `__typeof`, and `__typeof__` accept a parenthesized type name or
+expression as a type specifier. They preserve qualifiers, array bounds and
+function types without array/function pointer decay. Non-variably-modified
+operands are unevaluated. Variably modified types retain captured bounds and
+evaluate the required operand and bound expressions in their enclosing context;
+`sizeof` and `_Alignof` preserve their own evaluation rules. Bit-field operands
+and named declarators in type names are diagnosed.

@@ -3,7 +3,7 @@ use crate::token::{StringEncoding, Token, TokenType};
 use crate::trie::Trie;
 use std::collections::HashSet;
 
-pub const TYPES: [&str; 15] = [
+pub const TYPES: [&str; 18] = [
     "int",
     "char",
     "void",
@@ -15,6 +15,9 @@ pub const TYPES: [&str; 15] = [
     "bool",
     "float",
     "_Float16",
+    "typeof",
+    "__typeof",
+    "__typeof__",
     "double",
     "__int128",
     "__int128_t",

@@ -254,7 +254,7 @@ impl Node {
             ty.unqualified().clone()
         })
     }
-    fn resolve_qualified_type(&self) -> Option<Type> {
+    pub(crate) fn resolve_qualified_type(&self) -> Option<Type> {
         match self.nt {
             NodeType::Eq
             | NodeType::Ne
