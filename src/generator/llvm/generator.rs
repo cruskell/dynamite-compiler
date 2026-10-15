@@ -1548,6 +1548,68 @@ impl<'a> IrGenerator<'a> {
         Self::convert_integer(result, &storage, &object, options, lines)
     }
 
+    fn atomic_compare_exchange(
+        node: &Node,
+        expected_volatile: bool,
+        values: &[String],
+        options: &mut Options,
+        lines: &mut Vec<String>,
+    ) -> String {
+        let object = node.args[0].dest_type().unwrap();
+        let storage = Type::integer((object.size_of() * 8) as u8, false);
+        let scalar = Self::gen_type(storage.clone());
+        let desired = Self::convert_integer(
+            values[2].clone(),
+            &node.args[2].resolve_type().unwrap(),
+            &storage,
+            options,
+            lines,
+        );
+        let expected = options.new_register();
+        options.register_queue.pop();
+        let expected_volatile = if expected_volatile { "volatile " } else { "" };
+        lines.push(format!(
+            "  %{expected} = load {expected_volatile}{scalar}, ptr {}, align {}",
+            values[1],
+            object.align_of()
+        ));
+        let exchanged = options.new_register();
+        options.register_queue.pop();
+        let volatile = if node.volatile_access {
+            "volatile "
+        } else {
+            ""
+        };
+        lines.push(format!("  %{exchanged} = cmpxchg {volatile}ptr {}, {scalar} %{expected}, {scalar} {desired} seq_cst seq_cst, align {}", values[0], object.align_of()));
+        let old = options.new_register();
+        options.register_queue.pop();
+        lines.push(format!(
+            "  %{old} = extractvalue {{ {scalar}, i1 }} %{exchanged}, 0"
+        ));
+        let success = options.new_register();
+        options.register_queue.pop();
+        lines.push(format!(
+            "  %{success} = extractvalue {{ {scalar}, i1 }} %{exchanged}, 1"
+        ));
+        let failure = options.new_label();
+        let done = options.new_label();
+        lines.push(format!(
+            "  br i1 %{success}, label %{done}, label %{failure}"
+        ));
+        lines.push(format!("{failure}:"));
+        lines.push(format!(
+            "  store {expected_volatile}{scalar} %{old}, ptr {}, align {}",
+            values[1],
+            object.align_of()
+        ));
+        lines.push(format!("  br label %{done}"));
+        lines.push(format!("{done}:"));
+        let result = options.new_register();
+        options.register_queue.pop();
+        lines.push(format!("  %{result} = zext i1 %{success} to i8"));
+        format!("%{result}")
+    }
+
     fn gen_atomic(
         &self,
         node: &Node,
@@ -1559,6 +1621,17 @@ impl<'a> IrGenerator<'a> {
         for argument in &node.args {
             lines.extend(self.gen_node(argument, options));
             values.push(options.register_queue.pop().unwrap());
+        }
+        if let AtomicOperation::CompareExchange(expected_volatile) = operation {
+            let result = Self::atomic_compare_exchange(
+                node,
+                expected_volatile,
+                &values,
+                options,
+                &mut lines,
+            );
+            options.register_queue.push(result);
+            return lines;
         }
         let ty = node.args[0].dest_type().unwrap();
         if let AtomicOperation::Update(op, return_new) = operation {

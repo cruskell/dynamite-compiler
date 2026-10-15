@@ -1057,10 +1057,44 @@ impl<'a> AsmGenerator<'a> {
         lines.into()
     }
 
+    fn atomic_compare_exchange(node: &Node) -> Assembly {
+        let size = node.args[0].dest_type().unwrap().size_of();
+        let prefix = format!(".Latomic.cas.{}", node.token.as_ref().unwrap().pos);
+        vec![
+            Self::pop(X0),
+            Self::pop(X0),
+            Self::pop(X0),
+            Self::pop(X10),
+            Self::pop(X9),
+            Self::pop(X8),
+            Assembly::inst2(LDRU, X12, Ptr(X9, size)),
+            format!("{prefix}.retry:").into(),
+            Assembly::inst2(LDAXR, X11, Ptr(X8, size)),
+            Assembly::inst2(CMP, X11, X12),
+            Assembly::inst1(JNE, format!("{prefix}.failure")),
+            Assembly::inst3(STLXR, W0, X10, Ptr(X8, size)),
+            Assembly::inst2(CMP, X0, 0),
+            Assembly::inst1(JNE, format!("{prefix}.retry")),
+            Assembly::inst2(MOV, X0, 1),
+            Assembly::inst1(JMP, format!("{prefix}.done")),
+            format!("{prefix}.failure:").into(),
+            Assembly::inst0(CLREX),
+            Assembly::inst2(STR, X11, Ptr(X9, size)),
+            Assembly::inst2(MOV, X0, 0),
+            format!("{prefix}.done:").into(),
+            Self::push(X0),
+        ]
+        .into()
+    }
+
     fn gen_atomic(&self, node: &Node, operation: AtomicOperation, options: Options) -> Assembly {
         let mut lines = vec![];
         for argument in &node.args {
             lines.push(self.gen_node(argument, options));
+        }
+        if matches!(operation, AtomicOperation::CompareExchange(_)) {
+            lines.push(Self::atomic_compare_exchange(node));
+            return lines.into();
         }
         lines.push(Self::pop(X10));
         let ty = node.args[0].dest_type().unwrap();

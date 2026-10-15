@@ -18,6 +18,7 @@ pub enum AtomicOperation {
     Load,
     Store,
     Update(AtomicRmwOperation, bool),
+    CompareExchange(bool),
 }
 
 #[derive(Debug, PartialEq, Clone)]

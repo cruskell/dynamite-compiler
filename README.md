@@ -785,3 +785,19 @@ Nonliteral payload expressions are evaluated once and call the target libc's
 require linking with libm. `__builtin_nanl` follows the same rules on macOS
 AArch64, where the supported `long double` ABI is binary64; other long-double
 formats remain diagnosed.
+
+## Atomic compare-exchange
+
+`__atomic_compare_exchange_n` supports naturally aligned 1-, 2-, 4- and 8-byte
+integer, boolean and pointer objects. It returns `_Bool`, stores the desired
+value on success and writes the observed value to the expected-value buffer only
+on failure. All six arguments are evaluated once before the atomic operation.
+The weak form uses a strong implementation, so it does not fail spuriously.
+
+Both memory orders use sequentially consistent lowering, including runtime order
+expressions. Constant orders are checked: failure cannot request release or
+acquire-release and cannot be stronger than success. Expected-value buffers must
+be writable and have compatible types; their volatile accesses are preserved.
+Native backends use locked compare-exchange or an acquire/release exclusive loop;
+LLVM emits `cmpxchg` with a conditional failure store. Generic buffer-form
+`__atomic_compare_exchange` remains unsupported.
