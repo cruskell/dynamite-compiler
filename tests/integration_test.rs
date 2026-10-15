@@ -2678,3 +2678,59 @@ fn invalid_branch_expectation_operands_are_diagnosed(code: &str, output_option: 
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn predefined_function_names_have_const_array_storage(output_option: &str, optimization: &str) {
+    let code = r#"
+#include <string.h>
+int check_name(const char *,const char *,unsigned long);
+const char *first(void){return __func__;}
+static const char *hidden(void){return __func__;}
+const char *renamed(void) __asm__("dynamite_renamed_name");
+const char *renamed(void){return __func__;}
+inline const char *inline_only(void){return __func__;}
+inline const char *inline_array(void){static const char text[]="ok";return text;}
+inline const char *inline_pointer_array(void){static const char *const text[1]={"ok"};return text[0];}
+inline const char *inline_defined(void){return __func__;}
+extern const char *inline_defined(void);
+int saved(void){
+    static const char *pointer=__func__;
+    const char (*whole)[sizeof(__func__)]=&__func__;
+    return pointer!=__func__ || __func__[0]!='s' || sizeof(__func__)!=6
+        || check_name(*whole,"saved",sizeof(__func__))
+        || __builtin_object_size(__func__,0)!=6
+        || _Generic(__func__,const char*:0,default:1);
+}
+int main(){
+    return saved() || first()!=first() || check_name(first(),"first",6)
+        || check_name(hidden(),"hidden",7) || check_name(renamed(),"renamed",8)
+        || check_name(inline_defined(),"inline_defined",15)
+        || check_name(__func__,"main",sizeof(__func__))
+        || _Generic(&__func__,const char(*)[5]:0,default:1);
+}
+"#;
+    let companion = r#"
+#include <string.h>
+int check_name(const char *name,const char *expected,unsigned long size){
+    return strcmp(name,expected)!=0 || strlen(name)+1!=size;
+}
+"#;
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "const char *name=__func__;",
+    "const char *f(){return __func__;}const char *name=__func__;",
+    "int main(){__func__[0]='x';}",
+    "int main(){char *p=__func__;}",
+    "inline int f(){static int values[2];return values[0];}",
+    "inline const char *f(){static const char *values[1]={\"x\"};return values[0];}",
+], ["asm", "llvm"])]
+fn invalid_predefined_function_names_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

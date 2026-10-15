@@ -101,6 +101,7 @@ pub struct AstBuilderImpl<'a> {
     switch_stack: Vec<Vec<Node>>,
     switch_types: Vec<Type>,
     return_type: Option<Type>,
+    current_function: Option<Token>,
     mutable_static: Option<Token>,
     return_pointer: Option<usize>,
     variadic_parameters: Option<Vec<Type>>,
@@ -269,6 +270,7 @@ impl<'a> AstBuilderImpl<'a> {
             switch_stack: vec![],
             switch_types: vec![],
             return_type: None,
+            current_function: None,
             mutable_static: None,
             return_pointer: None,
             variadic_parameters: None,
@@ -1969,6 +1971,7 @@ impl<'a> AstBuilderImpl<'a> {
                     .2
                     .then(|| ty.function_signature().unwrap().0);
                 self.return_type = Some(result);
+                self.current_function = Some(token.clone());
                 self.labels.clear();
                 self.defined_labels.clear();
                 let mut bounds = self.take_bounds();
@@ -1988,6 +1991,7 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                 }
                 self.return_type = None;
+                self.current_function = None;
                 self.variadic_last = args.last().and_then(|arg| arg.offset);
                 self.variadic_parameters = None;
                 self.scope_stack.pop();
@@ -2823,8 +2827,7 @@ impl<'a> AstBuilderImpl<'a> {
             .get(&node.global_name)
             .is_some_and(|object| {
                 object.internal
-                    && !(node.global_name.starts_with(".static.")
-                        && object.ty.qualifiers().constant)
+                    && !(node.global_name.starts_with(".static.") && object.ty.is_const_object())
             });
         let internal_function = self
             .functions
@@ -3413,7 +3416,7 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(token.pos, "inline requires a function declaration");
             }
-            if !external && !ty.qualifiers().constant && self.mutable_static.is_none() {
+            if !external && !ty.is_const_object() && self.mutable_static.is_none() {
                 self.mutable_static = Some(token.clone());
             }
             if external {
@@ -4606,6 +4609,47 @@ impl<'a> AstBuilderImpl<'a> {
         expression
     }
 
+    fn predefined_function_name(&mut self, token: Token) -> Node {
+        let Some(function) = self.current_function.clone() else {
+            self.error_logger
+                .print_error_position(token.pos, "__func__ is only available inside a function");
+            return Node::default();
+        };
+        let name = format!(".static.{}.__func__", function.pos);
+        let element = Type::Qualified(
+            Box::new(Type::I8),
+            Qualifiers {
+                constant: true,
+                ..Qualifiers::default()
+            },
+        );
+        let ty = Type::Arr(Box::new(element), function.s_value.len() + 1);
+        self.global_variables
+            .entry(name.clone())
+            .or_insert_with(|| GlobalVariable {
+                ty: ty.clone(),
+                alignment: 1,
+                thread_local: false,
+                internal: true,
+                declaration_only: false,
+                data: Some(GlobalVariableData::Arr(
+                    function
+                        .s_value
+                        .bytes()
+                        .chain([0])
+                        .map(|byte| GlobalVariableData::Elem(byte.to_string()))
+                        .collect(),
+                )),
+            });
+        Node {
+            nt: NodeType::GlobalVar,
+            global_name: name,
+            token: Some(token),
+            cty: Some(ty),
+            ..Node::default()
+        }
+    }
+
     fn branch_expectation_builtin(&mut self, token: Token) -> Node {
         self.expect_reserved("(");
         let value = self.assign();
@@ -4837,6 +4881,10 @@ impl<'a> AstBuilderImpl<'a> {
                 _ => None,
             } {
                 return self.byte_swap_builtin(t, bits);
+            }
+            if t.s_value == "__func__" {
+                let name = self.predefined_function_name(t);
+                return self.postfix(name);
             }
             if t.s_value == "__builtin_expect" {
                 return self.branch_expectation_builtin(t);
