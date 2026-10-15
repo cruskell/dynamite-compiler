@@ -1825,6 +1825,111 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
     );
 }
 
+#[test_matrix([
+    ("unsigned char",1), ("short",4), ("int",16),
+    ("float",8), ("unsigned long long",16), ("double",16),
+], ["asm", "llvm"], ["-O0", "-O2"])]
+fn vector_typedef_storage_matches_clang(
+    case: (&str, usize),
+    output_option: &str,
+    optimization: &str,
+) {
+    let (element, bytes) = case;
+    let declarations = format!(
+        r"
+typedef {element} V __attribute__((vector_size({bytes})));
+typedef const {element} CV __attribute__((__vector_size__({bytes})));
+struct Plain{{char prefix;V value;char tail;}};
+#pragma pack(push,1)
+struct Packed{{char prefix;V value;char tail;}};
+#pragma pack(pop)
+"
+    );
+    let code = format!(
+        r#"{declarations}
+V global, array[2];struct Plain plain;struct Packed packed;
+int inspect(V*,V*,V*,struct Plain*,struct Packed*);
+int main(void){{
+    V local;static V block;int n=2;V variable[n];
+    if(sizeof(V)!={bytes} || _Alignof(V)!={bytes} || sizeof(global)!={bytes})return 1;
+    if(sizeof(array)!=2*{bytes} || sizeof(variable)!=2*{bytes} || (char*)&array[1]-(char*)&array[0]!={bytes})return 2;
+    if(__builtin_offsetof(struct Plain,value)!={bytes} || sizeof(struct Plain)!=3*{bytes})return 3;
+    if(__builtin_offsetof(struct Packed,value)!=1 || sizeof(struct Packed)!={bytes}+2)return 4;
+    if(_Generic((CV*)0,const V*:0,default:1))return 5;
+    if(inspect(&global,&local,array,&plain,&packed))return 6;
+    if((unsigned long)&block%{bytes})return 7;
+    return *(unsigned char*)&local!=0x3c || *(unsigned char*)&global!=0x5a;
+}}
+"#
+    );
+    let companion = format!(
+        r#"{declarations}
+#include <string.h>
+int inspect(V *g,V *local,V *array,struct Plain *plain,struct Packed *packed){{
+if((unsigned long)g%_Alignof(V) || (unsigned long)local%_Alignof(V) || (char*)&array[1]-(char*)&array[0]!=sizeof(V))return 1;
+if((char*)&plain->value-(char*)plain!=__builtin_offsetof(struct Plain,value) || (char*)&packed->value-(char*)packed!=1)return 2;
+for(unsigned long i=0;i<sizeof(V);i++)if(((unsigned char*)g)[i] || ((unsigned char*)array)[i])return 3;
+memset(g,0x5a,sizeof(V));memset(local,0x3c,sizeof(V));return 0;
+}}
+"#
+    );
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn vector_typedef_attributes_remain_local_and_type_queries_are_unevaluated(output_option: &str) {
+    let code = r#"
+typedef int V __attribute__((vector_size(16))), Scalar;
+typedef int V __attribute__((vector_size(16)));
+V object;
+_Static_assert(sizeof(object)==16,"vector size");
+_Static_assert(sizeof(_Generic(object,V:1,default:0))==4,"generic type");
+int main(){typedef short Local __attribute__((vector_size(sizeof(int))));Local local;return sizeof(Scalar)!=4 || sizeof(Local)!=4 || _Generic(object,V:0,default:1) || _Generic((V*)0,int(*)[4]:1,default:0);}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "typedef int V __attribute__((vector_size(16)));V a,b;int main(){a=b;return 0;}",
+    "typedef int V __attribute__((vector_size(16)));V a,b;int main(){a+b;return 1;}",
+    "typedef int V __attribute__((vector_size(16)));V a;int main(){return a[0];}",
+    "typedef int V __attribute__((vector_size(16)));V a={0};",
+    "typedef int V __attribute__((vector_size(16)));int main(){V a={0};return 0;}",
+    "typedef int V __attribute__((vector_size(16)));V f(void);",
+    "typedef int V __attribute__((vector_size(16)));void f(V);",
+    "typedef int V __attribute__((vector_size(16)));struct S{V value;};void f(struct S);",
+    "typedef int V __attribute__((vector_size(16)));struct S;void f(struct S);struct S{V value;};",
+    "typedef int V __attribute__((vector_size(16)));struct S{V value;};int f(int,...);int main(){struct S s;return f(0,s);}",
+    "typedef int V __attribute__((vector_size(3)));",
+    "typedef int V __attribute__((vector_size(32)));",
+    "typedef double V __attribute__((vector_size(4)));",
+    "typedef _Bool V __attribute__((vector_size(16)));",
+    "typedef int *P __attribute__((vector_size(16)));",
+    "typedef int V __attribute__((vector_size(16),vector_size(8)));",
+    "int object __attribute__((vector_size(16)));",
+], ["asm", "llvm"])]
+fn unsupported_vector_operations_have_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn default_visibility_annotations_preserve_linkage(output_option: &str, optimization: &str) {
     let code = r#"

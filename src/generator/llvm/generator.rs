@@ -315,6 +315,7 @@ impl<'a> IrGenerator<'a> {
             // LLVM 15 gives i128 only 8-byte alignment on some targets.
             Type::Integer128 { .. } => "<2 x i64>".to_string(),
             Type::Float16 => "half".to_string(),
+            Type::Vector(element, lanes) => format!("<{lanes} x {}>", Self::gen_type(*element)),
             Type::Float(bits) | Type::LongDouble(bits) => {
                 if bits == 32 { "float" } else { "double" }.to_string()
             }
@@ -402,6 +403,7 @@ impl<'a> IrGenerator<'a> {
             Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
             Type::Integer128 { .. } => "<2 x i64> zeroinitializer".into(),
             Type::Float16 => "half zeroinitializer".into(),
+            Type::Vector(..) => format!("{} zeroinitializer", Self::gen_type(ty.clone())),
             Type::Float(_) | Type::LongDouble(_) => {
                 let bits = if let Some(GlobalVariableData::Elem(value)) = data {
                     value.parse::<i64>().unwrap() as usize

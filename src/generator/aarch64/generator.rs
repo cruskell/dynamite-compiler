@@ -274,6 +274,7 @@ impl<'a> AsmGenerator<'a> {
             .into(),
             Type::Integer128 { .. } => "  .zero 16".into(),
             Type::Float16 => "  .zero 2".into(),
+            Type::Vector(..) => format!("  .zero {}", ty.size_of()).into(),
             Type::Float(_) | Type::LongDouble(_) => format!(
                 "  .{}byte {}",
                 ty.size_of(),
