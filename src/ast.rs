@@ -2608,18 +2608,21 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "function conflicts with object");
                 }
+                let definition = self.tokens[self.cur].s_value == "{";
                 self.scope_stack.push(parameter_scope);
                 let mut args = vec![];
-                for (i, (name, ty, registered)) in parameters.into_iter().enumerate() {
-                    let name = name.unwrap_or_else(|| Token {
-                        s_value: format!(".parameter.{i}"),
-                        ..token.clone()
-                    });
-                    let mut argument = self.register_local_variable(name, ty);
-                    if registered {
-                        self.mark_registered(&mut argument);
+                if definition {
+                    for (i, (name, ty, registered)) in parameters.into_iter().enumerate() {
+                        let name = name.unwrap_or_else(|| Token {
+                            s_value: format!(".parameter.{i}"),
+                            ..token.clone()
+                        });
+                        let mut argument = self.register_local_variable(name, ty);
+                        if registered {
+                            self.mark_registered(&mut argument);
+                        }
+                        args.push(argument);
                     }
-                    args.push(argument);
                 }
                 self.scope_stack
                     .first_mut()
@@ -2653,7 +2656,6 @@ impl<'a> AstBuilderImpl<'a> {
                 let gnu_inline = attributes.gnu_inline || previous.gnu_inline;
                 let noinline = attributes.noinline || previous.noinline;
                 let replaceable_inline_body = previous.gnu_inline && previous.inline_only();
-                let definition = self.tokens[self.cur].s_value == "{";
                 let weak_import = attributes.weak_import || previous.weak_import;
                 if weak_import && (internal || definition || previous.body.is_some()) {
                     self.error_logger.print_error_position(token.pos, "weak_import requires an external function declaration without a definition");
@@ -2671,7 +2673,10 @@ impl<'a> AstBuilderImpl<'a> {
                 function.external_definition = external_definition;
                 function.noinline = noinline;
                 let (_, result, _) = ty.function_signature().unwrap();
-                self.return_pointer = if matches!(result, Type::Struct(_)) {
+                if definition && result.unqualified() != &Type::Void {
+                    self.expect_object_type(&result, &token);
+                }
+                self.return_pointer = if definition && matches!(result, Type::Struct(_)) {
                     self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
                     Some(self.offset_size)
                 } else {

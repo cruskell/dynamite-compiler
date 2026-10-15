@@ -161,6 +161,8 @@ fixed parameters and retrieve unnamed arguments through the bundled `stdarg.h`.
 
 Parenthesized declarators support function pointers, function-pointer arrays,
 callback parameters, unnamed prototype parameters, and indirect calls.
+Function prototypes may mention incomplete record parameters and results; their
+records must be complete at definitions and value-producing calls.
 Function designators convert to compatible function pointers, ignoring top-level
 parameter qualifiers while preserving qualifications on pointed-to types.
 

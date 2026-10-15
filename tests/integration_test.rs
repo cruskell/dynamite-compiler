@@ -6725,3 +6725,38 @@ int main(void){int (*p)(int)=add;int a=p(3);int b=p(5);return a+b+calls-22;}
         compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn incomplete_record_prototypes_complete_before_use(output_option: &str, optimization: &str) {
+    let code = r#"
+struct Future;
+struct Future add(struct Future);
+typedef struct Future (*Callback)(struct Future);
+struct Unused;
+void unused(struct Unused);
+struct Unused result(void);
+struct Future { long x,y; };
+struct Future add(struct Future value){value.x+=2;value.y+=3;return value;}
+struct Future foreign(struct Future);
+int main(void){Callback call=add;struct Future a={3,5};struct Future b=call(a);
+    struct Future c=foreign(b);return c.x+c.y-17;}
+"#;
+    let companion =
+        "struct Future{long x,y;};struct Future foreign(struct Future v){v.x++;v.y+=3;return v;}";
+    let output =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    "struct S;int f(struct S x){return 0;}",
+    "struct S;struct S f(void){for(;;){}}",
+    "struct S;struct S f(void);int main(){f();return 0;}",
+    "struct S;void f(struct S);int main(){f(0);return 0;}",
+], ["asm", "llvm"])]
+fn incomplete_records_in_definitions_and_calls_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
