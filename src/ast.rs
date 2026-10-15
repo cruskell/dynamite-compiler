@@ -7,6 +7,8 @@ use crate::token::{Token, TokenType};
 use std::collections::{HashMap, HashSet};
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "object_size.rs"]
+mod object_size;
 #[path = "varargs.rs"]
 mod varargs;
 #[path = "vla.rs"]
@@ -3602,6 +3604,7 @@ impl<'a> AstBuilderImpl<'a> {
             ..Node::default()
         };
         let mut result = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, pointer);
+        result.member_access = true;
         result.bit_field = member.bit_field;
         result.registered = registered;
         result
@@ -4729,6 +4732,9 @@ impl<'a> AstBuilderImpl<'a> {
                 _ => None,
             } {
                 return self.byte_swap_builtin(t, bits);
+            }
+            if t.s_value == "__builtin_object_size" {
+                return self.object_size_builtin(t);
             }
             if t.s_value == "__builtin_offsetof" {
                 return self.offsetof_builtin(t);

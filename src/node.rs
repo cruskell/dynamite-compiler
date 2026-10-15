@@ -60,6 +60,8 @@ impl Default for NodeType {
 pub struct Node {
     pub nt: NodeType,
     pub bit_field: Option<BitField>,
+    /// Preserve lowered member identity for closest-subobject size queries.
+    pub member_access: bool,
     pub compound_literal: bool,
     pub volatile_access: bool,
     pub registered: bool,

@@ -394,6 +394,23 @@ unsupported and are diagnosed. GNU `packed` attributes are still unsupported.
 On macOS, static pointer initializers at unaligned offsets may require linking
 with `-Wl,-no_fixup_chains`, as with the equivalent Clang-generated definitions.
 
+## Static object-size queries
+
+`__builtin_object_size(pointer, mode)` returns an unsigned `size_t` constant
+without evaluating the pointer expression, including calls, increments, and
+variable-array bounds in casts. The mode must be an integer constant from 0 to 3.
+Whole-object and closest-subobject queries support direct object addresses,
+fixed arrays, string literals, member accesses, pointer casts, and constant
+pointer offsets. Direct conditional pointer alternatives use the maximum or
+minimum known bound according to the mode.
+
+Analysis is conservative: pointer-variable assignments, allocation sizes,
+interprocedural flow, and other unresolved expressions return `(size_t)-1` for
+modes 0/1 or zero for modes 2/3. Pointer/integer round trips do not retain bounds.
+The result can be used in constant expressions. Dynamic object-size queries are
+not implemented. See the [GCC object-size documentation](https://gcc.gnu.org/onlinedocs/gcc/Object-Size-Checking.html)
+for the mode definitions.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their
