@@ -49,6 +49,8 @@ pub enum InstOperator {
     AND,
     OR,
     XOR,
+    LDAXR,
+    STLXR,
     LDAR,
     STLR,
     LDR,
@@ -117,6 +119,8 @@ impl InstOperator {
             AND => "and",
             OR => "orr",
             XOR => "eor",
+            LDAXR => "ldaxr",
+            STLXR => "stlxr",
             LDAR => "ldar",
             STLR => "stlr",
             LDR => "ldr",
@@ -305,8 +309,11 @@ impl Instruction {
         if let (Some(InstOperand::Reg(register)), Some(InstOperand::Ptr(base, size))) =
             (&self.operand1, &self.operand2)
         {
-            if matches!(self.operator, LDR | LDRU | STR | LDAR | STLR) {
+            if matches!(self.operator, LDR | LDRU | STR | LDAR | STLR | LDAXR) {
                 let (operator, operand) = match (&self.operator, size) {
+                    (LDAXR, 1) => ("ldaxrb", register.to_string().replacen('x', "w", 1)),
+                    (LDAXR, 2) => ("ldaxrh", register.to_string().replacen('x', "w", 1)),
+                    (LDAXR, 4) => ("ldaxr", register.to_string().replacen('x', "w", 1)),
                     (LDAR, 1) => ("ldarb", register.to_string().replacen('x', "w", 1)),
                     (LDAR, 2) => ("ldarh", register.to_string().replacen('x', "w", 1)),
                     (LDAR, 4) => ("ldar", register.to_string().replacen('x', "w", 1)),
@@ -326,6 +333,29 @@ impl Instruction {
                 };
                 return format!("  {} {}, [{}]", operator, operand, base);
             }
+        }
+        if let (
+            STLXR,
+            Some(status),
+            Some(InstOperand::Reg(value)),
+            Some(InstOperand::Ptr(base, size)),
+        ) = (
+            &self.operator,
+            &self.operand1,
+            &self.operand2,
+            &self.operand3,
+        ) {
+            let operator = match size {
+                1 => "stlxrb",
+                2 => "stlxrh",
+                _ => "stlxr",
+            };
+            let value = if *size < 8 {
+                value.to_string().replacen('x', "w", 1)
+            } else {
+                value.to_string()
+            };
+            return format!("  {operator} {status}, {value}, [{base}]");
         }
         if self.operand4.is_some() {
             return format!(

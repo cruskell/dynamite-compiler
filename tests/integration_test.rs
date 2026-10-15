@@ -2596,6 +2596,118 @@ fn invalid_atomic_load_store_is_diagnosed(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn atomic_read_modify_write_matches_clang(output_option: &str, optimization: &str) {
+    let dispatch = r#"
+unsigned long execute(int op,unsigned long *p,unsigned long n){
+    switch(op){
+    case 0:return __atomic_fetch_add(p,n,5);
+    case 1:return __atomic_add_fetch(p,n,5);
+    case 2:return __atomic_fetch_sub(p,n,5);
+    case 3:return __atomic_sub_fetch(p,n,5);
+    case 4:return __atomic_fetch_and(p,n,5);
+    case 5:return __atomic_and_fetch(p,n,5);
+    case 6:return __atomic_fetch_or(p,n,5);
+    case 7:return __atomic_or_fetch(p,n,5);
+    case 8:return __atomic_fetch_xor(p,n,5);
+    case 9:return __atomic_xor_fetch(p,n,5);
+    case 10:return __atomic_fetch_nand(p,n,5);
+    case 11:return __atomic_nand_fetch(p,n,5);
+    case 12:return __atomic_exchange_n(p,n,5);
+    }
+    return 0;
+}
+"#;
+    let code = [dispatch, r#"
+unsigned long reference(int,unsigned long*,unsigned long);
+int run_workers(void*(*)(void*));
+int plus_one(int n){return n+1;}
+int plus_two(int n){return n+2;}
+struct Count {unsigned long value;};
+void *increment(void *raw){struct Count *count=(struct Count*)raw;int i;for(i=0;i<10000;++i)__atomic_fetch_add(&count->value,1UL,0);return 0;}
+int calls;
+int *address(int *p){calls++;return p;}
+int value(){calls++;return 3;}
+int order(){calls++;return 5;}
+int main(){
+    unsigned long seed=0x8123456789abcdefUL;
+    int op,i;
+    for(op=0;op<13;++op)for(i=0;i<40;++i){
+        unsigned long x=seed,y=seed;
+        seed=seed*6364136223846793005UL+1442695040888963407UL;
+        unsigned long a=execute(op,&x,seed),b=reference(op,&y,seed);
+        if(a!=b || x!=y)return 1;
+    }
+    signed char byte=127;
+    if(__atomic_add_fetch(&byte,1,0)!=-128 || byte!=-128)return 2;
+    short word=32767;
+    if(__atomic_sub_fetch(&word,-1,0)!=-32768 || word!=-32768)return 3;
+    int integer=2147483647;
+    if(__atomic_add_fetch(&integer,1,0)!=(-2147483647-1))return 4;
+    long large=9223372036854775807L;
+    if(__atomic_add_fetch(&large,1L,0)!=(-9223372036854775807L-1))return 5;
+    volatile unsigned char observed=255;
+    if(__atomic_fetch_add(&observed,1,0)!=255 || observed!=0)return 6;
+    unsigned short mask=0xff00;
+    if(__atomic_nand_fetch(&mask,0x0f0f,0)!=0xf0ff || mask!=0xf0ff)return 7;
+    if(__atomic_exchange_n(&byte,-9,0)!=-128 || byte!=-9)return 8;
+    _Bool flag=0;
+    if(__atomic_exchange_n(&flag,1,0) || !flag || !__atomic_exchange_n(&flag,0,0) || flag)return 9;
+    int array[2];int *pointer=array;
+    if(__atomic_fetch_add(&pointer,1L,0)!=array || (unsigned long)pointer-(unsigned long)array!=1)return 10;
+    if(__atomic_sub_fetch(&pointer,1L,0)!=array)return 11;
+    if(__atomic_exchange_n(&pointer,&array[1],0)!=array || pointer!=&array[1])return 12;
+    integer=7;
+    if(__atomic_add_fetch(address(&integer),value(),order())!=10 || calls!=3)return 13;
+    if(_Generic(__atomic_fetch_add(&observed,0,0),unsigned char:0,default:1))return 14;
+    __atomic_store_n(&pointer,0,0);
+    if(__atomic_load_n(&pointer,0) || __atomic_exchange_n(&pointer,array,0))return 16;
+    int (*callback)(int)=plus_one;
+    if(__atomic_exchange_n(&callback,plus_two,0)(5)!=6 || callback(5)!=7)return 17;
+    __atomic_store_n(&callback,plus_one,0);
+    if(__atomic_load_n(&callback,0)(5)!=6)return 18;
+    return run_workers(increment);
+}
+"#].concat();
+    let companion = [dispatch.replace("execute(", "reference("), r#"
+#include <pthread.h>
+struct Count{unsigned long value;};
+static void *increment(void *raw){struct Count *c=raw;for(int i=0;i<10000;++i)__atomic_fetch_add(&c->value,1UL,__ATOMIC_RELAXED);return 0;}
+int run_workers(void*(*generated)(void*)){struct Count c={0};pthread_t t[4];for(int i=0;i<4;++i)if(pthread_create(&t[i],0,i<2?generated:increment,&c))return 15;for(int i=0;i<4;++i)pthread_join(t[i],0);return __atomic_load_n(&c.value,__ATOMIC_SEQ_CST)!=40000;}
+"#.into()].concat();
+    if output_option == "llvm" {
+        let ir = dynamite_compiler::generate(&code, output_option, false);
+        assert!(ir.contains("atomicrmw volatile add"));
+        assert!(ir.contains("atomicrmw nand"));
+        assert!(ir.contains("ptrtoint"));
+    }
+    assert_eq!(
+        compile_and_run_with_c_flags(
+            &code,
+            output_option,
+            Some(&companion),
+            &[optimization, "-pthread"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){_Bool x=0;return __atomic_fetch_add(&x,1,0);}",
+    "int main(){const int x=1;return __atomic_exchange_n(&x,2,0);}",
+    "int main(){int x;return __atomic_or_fetch(&x,1,7);}",
+    "int main(){double x;return __atomic_fetch_xor(&x,1,0);}",
+    "int main(){int x;return __atomic_add_fetch(&x,1);}"
+], ["asm", "llvm"])]
+fn invalid_atomic_read_modify_write_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,
