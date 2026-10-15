@@ -240,7 +240,10 @@ Integer literals support octal notation and `U`, `L`, and `LL` suffixes. Integer
 types include signed and unsigned `char`, `short`, `int`, `long`, `long long`, and
 `_Bool`; both supported targets use 64-bit long and pointer types.
 
-Global pointers accept symbolic addresses and constant element offsets. Enum
+Global pointers accept symbolic addresses and constant element offsets. Explicit
+casts to pointer-sized integer types also preserve a single symbolic address
+plus constant byte offsets in static initializers. Narrowing address casts and
+thread-local addresses are not constant initializers. Enum
 constants support explicit constant expressions, automatic increments, and
 scoped lookup. Goto targets and labels have function scope; undefined and
 duplicate labels are diagnosed.

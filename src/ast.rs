@@ -2936,7 +2936,9 @@ impl<'a> AstBuilderImpl<'a> {
                     self.validate_global_initializer(ty, element, token);
                 }
             }
-            (ty, GlobalVariableData::Address { .. }) if ty.is_arithmetic() => {
+            (ty, GlobalVariableData::Address { .. })
+                if ty.is_arithmetic() && !ty.integer_info().is_some_and(|(bits, _)| bits == 64) =>
+            {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be an address");
             }
@@ -3171,6 +3173,7 @@ impl<'a> AstBuilderImpl<'a> {
         let expression = self.ternary();
         self.validate_storage_only_expressions(&expression, false);
         if let Some((symbol, offset)) = self.constant_address(&expression) {
+            self.expect_conversion(ty, &expression);
             return GlobalVariableData::Address { symbol, offset };
         }
         let value = if ty.float_bits().is_some() {
@@ -3220,23 +3223,56 @@ impl<'a> AstBuilderImpl<'a> {
                     None
                 }
             }
-            NodeType::Cast => self.constant_address(node.lhs.as_ref().unwrap()),
-            NodeType::Add | NodeType::Sub => {
-                let lhs = node.lhs.as_ref().unwrap();
-                let (symbol, offset) = self.constant_address(lhs)?;
-                let stride = lhs.dest_type()?.size_of() as i64;
-                let delta = self.eval(node.rhs.as_ref().unwrap()).checked_mul(stride)?;
-                Some((
-                    symbol,
-                    if node.nt == NodeType::Add {
-                        offset.checked_add(delta)?
-                    } else {
-                        offset.checked_sub(delta)?
-                    },
-                ))
+            NodeType::Cast
+                if node.resolve_type().is_some_and(|ty| {
+                    matches!(ty.unqualified(), Type::Ptr(_))
+                        || ty.integer_info().is_some_and(|(bits, _)| bits == 64)
+                }) =>
+            {
+                self.constant_address(node.lhs.as_ref().unwrap())
             }
+            NodeType::Add => {
+                let lhs = node.lhs.as_ref().unwrap();
+                let rhs = node.rhs.as_ref().unwrap();
+                self.constant_address_offset(lhs, rhs, false)
+                    .or_else(|| self.constant_address_offset(rhs, lhs, false))
+            }
+            NodeType::Sub => self.constant_address_offset(
+                node.lhs.as_ref().unwrap(),
+                node.rhs.as_ref().unwrap(),
+                true,
+            ),
             _ => None,
         }
+    }
+
+    fn constant_address_offset(
+        &mut self,
+        base: &Node,
+        amount: &Node,
+        subtract: bool,
+    ) -> Option<(String, i64)> {
+        let (symbol, offset) = self.constant_address(base)?;
+        if !Self::integer_constant(amount) {
+            return None;
+        }
+        let ty = base.resolve_type()?;
+        let stride = if ty.is_pointer_value() {
+            base.dest_type()?.size_of() as i64
+        } else if ty.integer_info().is_some_and(|(bits, _)| bits == 64) {
+            1
+        } else {
+            return None;
+        };
+        let delta = self.eval(amount).checked_mul(stride)?;
+        Some((
+            symbol,
+            if subtract {
+                offset.checked_sub(delta)?
+            } else {
+                offset.checked_add(delta)?
+            },
+        ))
     }
 
     fn eval_float_as(&mut self, node: &Node, ty: &Type) -> f64 {
