@@ -6591,3 +6591,52 @@ fn parenthesized_type_keyword_strings_remain_expressions(output_option: &str, op
     let output = compile_and_run_with_c_flags(&code, output_option, None, &[optimization]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn static_objects_are_in_scope_in_their_initializers(output_option: &str, optimization: &str) {
+    let code = r#"
+struct Link { struct Link *next; long size; };
+static struct Link root = { &root, sizeof(root) };
+static int array[3] = { sizeof(array), 7, 9 };
+static int *element = &array[1];
+static void *self = &self;
+static int first = sizeof(first), second = sizeof(first)+sizeof(second);
+char shadow;
+int check(void) {
+    static struct Link local = { &local, sizeof(local) };
+    static long shadow = sizeof(shadow);
+    static int inferred[] = { 3, 5, 7 };
+    static void *pointer = &pointer;
+    return local.next == &local && local.size == sizeof(local) && shadow == sizeof(long)
+        && sizeof(inferred) == 3*sizeof(int) && pointer == &pointer;
+}
+int main(void) {
+    return !(root.next == &root && root.size == sizeof(root) && array[0] == sizeof(array)
+        && *element == 7 && self == &self && first == sizeof(int)
+        && second == 2*sizeof(int) && check());
+}
+"#;
+    let output = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test_matrix([
+    "static int a[sizeof(a)];",
+    "static int incomplete[]={sizeof(incomplete)};",
+    "int main(){static int a[sizeof(a)];return 0;}",
+    "int main(){static int incomplete[]={sizeof(incomplete)};return 0;}",
+    "_Thread_local void *p=&p;",
+    "int main(){static _Thread_local void *p=&p;return 0;}",
+], ["asm", "llvm"])]
+fn invalid_static_self_initializers_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test]
+fn thread_local_self_size_initializers_remain_constant() {
+    let code = "_Thread_local long size=sizeof(size);int main(){static _Thread_local int local=sizeof(local);return size!=sizeof(long)||local!=sizeof(int);}";
+    assert_eq!(compile_and_run(code, "llvm").status.code(), Some(0));
+}

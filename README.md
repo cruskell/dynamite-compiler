@@ -266,6 +266,10 @@ the bound. Element access and symbolic offsets work before a bound is known;
 `sizeof` still requires a complete array type.
 Block-scope `static` objects use constant initializers and retain their values
 across calls; `extern` declarations refer to externally linked objects or functions.
+An object name is in scope after its declarator, including within its own
+initializer. Static objects can initialize pointers to themselves or use their
+complete type in `sizeof`. Addresses of thread-local objects are not constant
+initializers.
 ## Unions
 
 Union members share their starting address. The largest member and alignment
