@@ -1825,6 +1825,143 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn common_objects_coalesce_and_yield_to_strong_definitions(
+    output_option: &str,
+    optimization: &str,
+) {
+    let declarations = r#"
+struct S{long n;unsigned flag:3;};
+#pragma pack(push,1)
+struct P{char tag;long n;};
+#pragma pack(pop)
+int shared __attribute__((common));
+int array[3] __attribute__((__common__,aligned(64)));
+struct S record __attribute__((common));struct P packed __attribute__((common));
+int (*callback)(int) __attribute__((common));
+"#;
+    let code = format!(
+        r#"{declarations}
+int shared;extern int array[3];
+int overridden __attribute__((common));
+extern int imported __attribute__((common));
+int initialized __attribute__((common))=11;
+int later __attribute__((common));int later=13;
+int earlier=17;extern int earlier __attribute__((common));
+static int local __attribute__((common));
+int check(int*,int*,struct S*,struct P*,int(**)(int));
+int add(int n){{return n+2;}}
+int main(void){{
+ if(shared || array[0] || record.n || packed.n || callback || local)return 1;
+ if(overridden!=7 || imported!=9 || initialized!=11 || later!=13 || earlier!=17)return 2;
+ if((unsigned long)array%64)return 3;
+ shared=3;array[2]=5;record.n=19;record.flag=6;packed.tag=1;packed.n=23;callback=add;
+ if(check(&shared,array,&record,&packed,&callback))return 4;
+ return shared!=29 || callback(5)!=7;
+}}
+"#
+    );
+    let companion = format!(
+        r#"{declarations}
+int overridden=7,imported=9;
+int initialized __attribute__((common));int later __attribute__((common));int earlier __attribute__((common));
+int check(int *s,int *a,struct S *r,struct P *p,int (**fn)(int)){{
+if(s!=&shared || a!=array || r!=&record || p!=&packed || fn!=&callback)return 1;
+if(shared!=3 || array[2]!=5 || record.n!=19 || record.flag!=6 || packed.tag!=1 || packed.n!=23 || callback(3)!=5)return 2;
+shared=29;return 0;
+}}
+"#
+    );
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn common_attribute_keeps_declarator_ownership_and_redeclarations(output_option: &str) {
+    let code = "__attribute__((common)) int first,second;int third __attribute__((common)),strong;extern int imported __attribute__((common));int initialized __attribute__((common))=3;int zero __attribute__((common))=0;static int local __attribute__((common));int use(void){return first+second+third+strong+imported+initialized+local;}";
+    let generated = dynamite_compiler::generate(code, output_option, false);
+    if output_option == "llvm" {
+        for name in ["first", "second", "third"] {
+            assert!(
+                generated.contains(&format!("@{name} = common global")),
+                "{generated}"
+            );
+        }
+        assert!(generated.contains("@strong = global"), "{generated}");
+        assert!(generated.contains("@zero = global i32 0"), "{generated}");
+        assert!(
+            generated.contains("@initialized = global i32 3"),
+            "{generated}"
+        );
+        assert!(
+            generated.contains("@imported = external global"),
+            "{generated}"
+        );
+        assert!(
+            generated.contains("@local = internal global"),
+            "{generated}"
+        );
+    } else {
+        let generated = generated.replace('"', "");
+        let prefix = if cfg!(target_os = "macos") { "_" } else { "" };
+        for name in ["first", "second", "third"] {
+            assert!(
+                generated.contains(&format!(".comm {prefix}{name},4,")),
+                "{generated}"
+            );
+        }
+        for name in ["strong", "initialized", "zero", "imported", "local"] {
+            assert!(
+                !generated.contains(&format!(".comm {prefix}{name},")),
+                "{generated}"
+            );
+        }
+    }
+}
+
+#[test]
+fn common_thread_local_objects_keep_thread_local_linkage() {
+    let generated = dynamite_compiler::generate(
+        "_Thread_local int object __attribute__((common));int read(void){return object;}",
+        "llvm",
+        false,
+    );
+    assert!(
+        generated.contains("@object = thread_local global"),
+        "{generated}"
+    );
+    assert!(!generated.contains("common thread_local"), "{generated}");
+}
+
+#[test_matrix([
+    "int f(void) __attribute__((common));",
+    "struct S{int member __attribute__((common));}object;",
+    "enum E{ITEM __attribute__((common))}object;",
+    "int main(){int object __attribute__((common));return 0;}",
+    "void f(int object __attribute__((common)));",
+    "typedef int T __attribute__((common));",
+    "__attribute__((common)) typedef int T;",
+    "__attribute__((common)) struct S{int n;};",
+    "int object __attribute__((common(1)));",
+    "extern int object __attribute__((common,weak_import));",
+    "extern int object __attribute__((weak_import));extern int object __attribute__((common));",
+], ["asm", "llvm"])]
+fn invalid_common_attributes_have_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
 #[test_matrix([
     ("unsigned char",1), ("short",4), ("int",16),
     ("float",8), ("unsigned long long",16), ("double",16),

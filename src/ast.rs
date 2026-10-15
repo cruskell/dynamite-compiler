@@ -98,6 +98,7 @@ impl Declarator {
 struct DeclarationAttributes {
     gnu_inline: bool,
     weak_import: bool,
+    common: bool,
     typedef_declarator: bool,
     vector_size: Option<usize>,
 }
@@ -638,6 +639,29 @@ impl<'a> AstBuilderImpl<'a> {
                         );
                     }
                     self.expect_reserved(")");
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
+                }
+                if name.s_value.trim_matches('_') == "common" {
+                    if self.parameter_depth != 0
+                        || !self
+                            .declaration_attributes_state
+                            .as_ref()
+                            .is_some_and(|attributes| !attributes.typedef_declarator)
+                    {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "common requires a file-scope object declaration",
+                        );
+                    }
+                    self.cur += 1;
+                    if self.tokens[self.cur].s_value == "(" {
+                        self.error_logger
+                            .print_error_position(name.pos, "common does not take arguments");
+                    }
+                    self.declaration_attributes_state.as_mut().unwrap().common = true;
                     if self.tokens[self.cur].s_value != ")" {
                         self.expect_reserved(",");
                     }
@@ -1589,6 +1613,13 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn enum_type(&mut self, token: Token) -> Type {
+        let attributes = self.declaration_attributes_state.take();
+        let result = self.enum_type_body(token);
+        self.declaration_attributes_state = attributes;
+        result
+    }
+
+    fn enum_type_body(&mut self, token: Token) -> Type {
         self.declaration_annotations();
         let name = self.attempt_ident();
         self.declaration_annotations();
@@ -2293,7 +2324,7 @@ impl<'a> AstBuilderImpl<'a> {
             if self
                 .declaration_attributes_state
                 .take()
-                .is_some_and(|a| a.gnu_inline || a.weak_import)
+                .is_some_and(|a| a.gnu_inline || a.weak_import || a.common)
             {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -2340,7 +2371,7 @@ impl<'a> AstBuilderImpl<'a> {
             if self
                 .declaration_attributes_state
                 .take()
-                .is_some_and(|a| a.gnu_inline || a.weak_import)
+                .is_some_and(|a| a.gnu_inline || a.weak_import || a.common)
             {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
@@ -2380,6 +2411,12 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger.print_error_position(
                     token.pos,
                     "gnu_inline requires an inline function declaration",
+                );
+            }
+            if attributes.common && (ty.function_signature().is_some() || attributes.weak_import) {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "common requires an object declaration without weak_import",
                 );
             }
             self.validate_type_layout(&ty, &token);
@@ -2567,13 +2604,19 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 None
             };
+            let common = attributes.common
+                || self
+                    .global_variables
+                    .get(&token.s_value)
+                    .is_some_and(|object| object.common);
             let weak_import = attributes.weak_import
                 || self
                     .global_variables
                     .get(&token.s_value)
                     .is_some_and(|object| object.weak_import);
             if weak_import
-                && (!external
+                && (common
+                    || !external
                     || internal
                     || thread_local
                     || data.is_some()
@@ -2616,6 +2659,7 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 existing.alignment = existing.alignment.max(alignment);
                 existing.weak_import = weak_import;
+                existing.common = common;
                 if existing.thread_local != thread_local {
                     self.error_logger
                         .print_error_position(token.pos, "conflicting thread storage duration");
@@ -2639,6 +2683,7 @@ impl<'a> AstBuilderImpl<'a> {
                         alignment,
                         thread_local,
                         weak_import,
+                        common,
                         declaration_only: external && data.is_none(),
                         internal,
                         data,
@@ -4134,6 +4179,7 @@ impl<'a> AstBuilderImpl<'a> {
                         data,
                         internal: !external,
                         weak_import: false,
+                        common: false,
                         declaration_only: external,
                     },
                 );
@@ -4939,6 +4985,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 data: Some(data),
                                 internal: true,
                                 weak_import: false,
+                                common: false,
                                 declaration_only: false,
                             },
                         );
@@ -5258,6 +5305,7 @@ impl<'a> AstBuilderImpl<'a> {
                 thread_local: false,
                 internal: true,
                 weak_import: false,
+                common: false,
                 declaration_only: false,
                 data: Some(GlobalVariableData::Arr(
                     function
@@ -6477,6 +6525,7 @@ mod tests {
                     thread_local: false,
                     internal: false,
                     weak_import: false,
+                    common: false,
                     declaration_only: false,
                     ty: Type::I32,
                     data: Some(GlobalVariableData::Elem("42".to_string())),
