@@ -11,7 +11,9 @@ use crate::func::Func;
 use crate::generator::Os;
 use crate::generator::{ScalarLocation, scalar_arguments};
 use crate::global::{GlobalVariable, GlobalVariableData};
-use crate::node::{AtomicOperation, AtomicRmwOperation, Node, NodeType};
+use crate::node::{
+    AtomicOperation, AtomicRmwOperation, InlineAsmPart, InlineAssembly, Node, NodeType,
+};
 use crate::token::Token;
 use std::{
     collections::{HashMap, HashSet},
@@ -1187,8 +1189,28 @@ impl<'a> AsmGenerator<'a> {
         lines.into()
     }
 
+    fn gen_inline_assembly(&self, node: &Node, asm: &InlineAssembly) -> Assembly {
+        let ty = node.resolve_type().unwrap();
+        let register = if ty.size_of() == 4 { "%eax" } else { "%rax" };
+        let template = asm
+            .parts
+            .iter()
+            .map(|part| match part {
+                InlineAsmPart::Text(text) => text.as_str(),
+                InlineAsmPart::Output => register,
+            })
+            .collect::<String>();
+        vec![
+            Assembly::inst0(InlineAsm(template)),
+            Self::normalize_integer(&ty, RAX),
+            Assembly::inst1(PUSH, RAX),
+        ]
+        .into()
+    }
+
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::InlineAsm(ref asm) => return self.gen_inline_assembly(node, asm),
             NodeType::Atomic(operation) => {
                 return self.gen_atomic(node, operation, offset, breakable_branch_num);
             }

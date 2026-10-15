@@ -6,7 +6,7 @@ use crate::{
     error,
     func::Func,
     global::{GlobalVariable, GlobalVariableData},
-    node::{AtomicOperation, AtomicRmwOperation, Node, NodeType},
+    node::{AtomicOperation, AtomicRmwOperation, InlineAsmPart, InlineAssembly, Node, NodeType},
     token::Token,
 };
 
@@ -1677,6 +1677,38 @@ impl<'a> IrGenerator<'a> {
         lines
     }
 
+    fn gen_inline_assembly(
+        &self,
+        node: &Node,
+        asm: &InlineAssembly,
+        options: &mut Options,
+    ) -> Vec<String> {
+        let template = asm
+            .parts
+            .iter()
+            .map(|part| match part {
+                InlineAsmPart::Text(text) => text.replace('$', "$$"),
+                InlineAsmPart::Output => "$0".into(),
+            })
+            .collect::<String>();
+        let template = template
+            .bytes()
+            .map(|byte| format!("\\{byte:02X}"))
+            .collect::<String>();
+        let constraints = if cfg!(target_arch = "x86_64") {
+            "=r,~{dirflag},~{fpsr},~{flags}"
+        } else {
+            "=r,~{cc}"
+        };
+        let result = format!("%{}", options.new_register());
+        options.register_queue.push(result.clone());
+        vec![format!(
+            "  {result} = call {} asm {}\"{template}\", \"{constraints}\"()",
+            Self::gen_type(node.resolve_type().unwrap()),
+            if asm.volatile { "sideeffect " } else { "" }
+        )]
+    }
+
     fn gen_node(&self, node: &Node, options: &mut Options) -> Vec<String> {
         if options.terminated
             && !matches!(node.nt, NodeType::Block | NodeType::Case | NodeType::Label)
@@ -1692,6 +1724,7 @@ impl<'a> IrGenerator<'a> {
             return lines;
         }
         match node.nt {
+            NodeType::InlineAsm(ref asm) => return self.gen_inline_assembly(node, asm, options),
             NodeType::Atomic(operation) => {
                 return self.gen_atomic(node, operation, options);
             }

@@ -1826,6 +1826,108 @@ fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn register_output_inline_assembly_preserves_values_and_lvalues(
+    output_option: &str,
+    optimization: &str,
+) {
+    let (positive, negative, zero) = if cfg!(target_arch = "aarch64") {
+        (
+            "mov %0, #42\nmov %0, %0 // %% literal",
+            "mov %0, #-7",
+            "mov %0, #0",
+        )
+    } else {
+        (
+            "mov $42, %0\nmov %0, %0 # %% literal",
+            "mov $-7, %0",
+            "mov $0, %0",
+        )
+    };
+    let positive = positive.replace('\n', "\\n");
+    let code = format!(
+        r#"
+int calls;volatile int global;int *destination(void){{calls++;return (int*)&global;}}
+long signed_value(void){{int n;__asm__("{negative}" : "=r"(n));return n;}}
+unsigned long unsigned_value(void){{unsigned int n;__asm__ __volatile__("{negative}" : "=r"(n));return n;}}
+#pragma pack(push,1)
+struct Packed{{char tag;long value;}};
+#pragma pack(pop)
+int main(void){{
+ long a=3,b=5,value;asm volatile("{positive}" : "=r"(value));
+ if(a+b+value!=50)return 1;
+ __asm volatile("{positive}" : "=r"(*destination()) : :);
+ if(calls!=1 || global!=42)return 2;
+ if(signed_value()!=-7 || unsigned_value()!=4294967289UL)return 3;
+ void *pointer=(void*)1;__asm__("{zero}" : "=r"(pointer));if(pointer)return 4;
+ struct Packed packed;asm("{positive}" : "=r"(packed.value));if(packed.value!=42)return 5;
+ int n=2,index=0;int array[n];__asm__("{positive}" : "=r"(array[index++]));if(index!=1 || array[0]!=42)return 6;
+ return 0;
+}}
+"#
+    );
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn register_output_inline_assembly_preserves_volatile_ir() {
+    let template = if cfg!(target_arch = "aarch64") {
+        "mov %0, #42"
+    } else {
+        "mov $42, %0"
+    };
+    for qualifier in ["volatile", ""] {
+        let code = format!(
+            "volatile int output;int main(){{asm {qualifier}(\"{template}\" : \"=r\"(output));return output!=42;}}"
+        );
+        let generated = dynamite_compiler::generate(&code, "llvm", false);
+        assert_eq!(
+            generated.contains("asm sideeffect"),
+            !qualifier.is_empty(),
+            "{generated}"
+        );
+        assert!(generated.contains("store volatile i32"), "{generated}");
+    }
+}
+
+#[test_matrix([
+    "int main(){int x;asm(\"nop\");}",
+    "int main(){int x;asm goto(\"nop\");}",
+    "int main(){int x;asm(\"%\" : \"=r\"(x));}",
+    "int main(){int x;asm(\"%1\" : \"=r\"(x));}",
+    "int main(){int x;asm(\"%w0\" : \"=r\"(x));}",
+    "int main(){int x;asm(\"%[name]\" : \"=r\"(x));}",
+    "int main(){int x;asm(\"nop\" : \"+r\"(x));}",
+    "int main(){int x;asm(\"nop\" : \"=m\"(x));}",
+    "int main(){int x;asm(\"nop\" : \"=r\"(x),\"=r\"(x));}",
+    "int main(){int x;asm(\"nop\" : \"=r\"(x) : \"r\"(1));}",
+    "int main(){int x;asm(\"nop\" : \"=r\"(x) : : \"memory\");}",
+    "int main(){const int x=0;asm(\"nop\" : \"=r\"(x));}",
+    "int main(){asm(\"nop\" : \"=r\"(1));}",
+    "int main(){double x;asm(\"nop\" : \"=r\"(x));}",
+    "int main(){char x;asm(\"nop\" : \"=r\"(x));}",
+    "struct S{int n;};int main(){struct S x;asm(\"nop\" : \"=r\"(x));}",
+    "struct S{int n:3;};int main(){struct S x;asm(\"nop\" : \"=r\"(x.n));}",
+    "int main(){int x;asm(L\"nop\" : \"=r\"(x));}",
+    "int main(){int x;asm(\"nop\\0bad\" : \"=r\"(x));}",
+], ["asm", "llvm"])]
+fn unsupported_inline_assembly_has_source_diagnostics(code: &str, output_option: &str) {
+    let panic =
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .unwrap_err();
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains('^'), "{message}");
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn common_objects_coalesce_and_yield_to_strong_definitions(
     output_option: &str,
     optimization: &str,

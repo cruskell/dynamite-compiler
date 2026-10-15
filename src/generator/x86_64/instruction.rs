@@ -1,6 +1,7 @@
 use crate::generator::Os;
 
 pub enum InstOperator {
+    InlineAsm(String),
     CMPXCHG,
     MFENCE,
     XCHG,
@@ -69,6 +70,7 @@ impl InstOperator {
         //     return "movzb";
         // }
         match self {
+            InlineAsm(_) => "",
             CMPXCHG => "lock cmpxchg",
             MFENCE => "mfence",
             XCHG => "xchg",
@@ -273,6 +275,9 @@ pub struct Instruction {
 }
 impl Instruction {
     pub fn to_string(&self, target_os: Os) -> String {
+        if let InstOperator::InlineAsm(template) = &self.operator {
+            return format!("  .att_syntax prefix\n{template}\n  .intel_syntax noprefix");
+        }
         if self.operand2.is_some() {
             return format!(
                 "  {} {}, {}",
