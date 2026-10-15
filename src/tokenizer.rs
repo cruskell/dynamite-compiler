@@ -167,7 +167,7 @@ fn decode_prefixed_character(value: &str, encoding: StringEncoding) -> Option<us
     match encoding {
         StringEncoding::Utf16 if scalar <= 0xffff => Some(scalar as usize),
         StringEncoding::Utf32 => Some(scalar as usize),
-        StringEncoding::Wide => Some((scalar as i32 as isize) as usize),
+        StringEncoding::Wide => Some(scalar as usize),
         _ => None,
     }
 }
@@ -798,7 +798,7 @@ mod tests {
     fn prefixed_character_constants_decode_one_code_unit() {
         for (source, value, encoding) in [
             (r"L'\0'", 0, StringEncoding::Wide),
-            (r"L'\xffffffff'", usize::MAX, StringEncoding::Wide),
+            (r"L'\xffffffff'", 4294967295, StringEncoding::Wide),
             ("L'Ω'", 937, StringEncoding::Wide),
             (r"u'\u03a9'", 937, StringEncoding::Utf16),
             (r"u'\xffff'", 65535, StringEncoding::Utf16),

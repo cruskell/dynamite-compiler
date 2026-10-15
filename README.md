@@ -923,8 +923,9 @@ argument types are diagnosed. The preprocessing capability probe advertises it.
 ## Prefixed character constants
 
 `L'...'`, `u'...'` and `U'...'` character constants produce the supported targets'
-32-bit signed wchar_t/int, 16-bit unsigned char16_t and 32-bit unsigned char32_t
-values. UTF-8 source characters, simple escapes, universal character names and
+32-bit wchar_t, 16-bit unsigned char16_t and 32-bit unsigned char32_t values.
+The wchar_t type is unsigned on Linux AArch64 and signed on the other supported
+targets, consistently for character constants, wide strings and the bundled header. UTF-8 source characters, simple escapes, universal character names and
 numeric escapes are supported. Numeric escapes may fill the complete destination
 code unit; ordinary narrow multi-character constants retain their existing rules.
 Prefixed constants require exactly one representable code unit, so multi-character
