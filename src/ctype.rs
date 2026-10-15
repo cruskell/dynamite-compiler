@@ -179,7 +179,7 @@ impl Type {
                 left.qualifiers() == right.qualifiers() && left.compatible(right)
             }
             (Self::Arr(left, count), Self::Arr(right, other_count)) => {
-                count == other_count
+                (count == other_count || count.is_none() || other_count.is_none())
                     && left.qualifiers() == right.qualifiers()
                     && left.compatible(right)
             }
@@ -193,6 +193,19 @@ impl Type {
                     && result.compatible(other_result)
             }
             (left, right) => left == right,
+        }
+    }
+
+    /// GNU type queries ignore outer qualification, including qualification of array elements.
+    pub fn unqualified_for_type_query(&self) -> Self {
+        match self.unqualified() {
+            Self::Arr(child, count) => {
+                Self::Arr(Box::new(child.unqualified_for_type_query()), *count)
+            }
+            Self::Vla(child, offset) => {
+                Self::Vla(Box::new(child.unqualified_for_type_query()), *offset)
+            }
+            ty => ty.clone(),
         }
     }
 

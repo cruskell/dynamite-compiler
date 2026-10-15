@@ -21,6 +21,8 @@ mod object_size;
 mod overflow;
 #[path = "prefetch.rs"]
 mod prefetch;
+#[path = "type_query.rs"]
+mod type_query;
 #[path = "varargs.rs"]
 mod varargs;
 #[path = "vla.rs"]
@@ -2813,7 +2815,10 @@ impl<'a> AstBuilderImpl<'a> {
             if let (Type::Arr(left, left_count), Type::Arr(right, right_count)) =
                 (previous.unqualified(), declared.unqualified())
             {
-                if left == right && (left_count.is_none() || right_count.is_none()) {
+                if left.qualifiers() == right.qualifiers()
+                    && left.compatible(right)
+                    && (left_count.is_none() || right_count.is_none())
+                {
                     return if right_count.is_none() {
                         previous.clone()
                     } else {
@@ -2821,6 +2826,9 @@ impl<'a> AstBuilderImpl<'a> {
                     };
                 }
             }
+        }
+        if previous.qualifiers() == declared.qualifiers() && previous.compatible(&declared) {
+            return declared;
         }
         self.error_logger
             .print_error_position(token.pos, "incompatible object redeclaration");
@@ -6099,6 +6107,9 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
+            if t.s_value == "__builtin_types_compatible_p" {
+                return self.types_compatible_builtin(t);
+            }
             if matches!(
                 t.s_value.as_str(),
                 "__builtin_nan" | "__builtin_nanf" | "__builtin_nanl"

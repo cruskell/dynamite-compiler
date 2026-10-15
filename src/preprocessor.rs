@@ -117,6 +117,7 @@ fn compiler_macros(command: &mut Command) {
         "__builtin_expect",
         "__builtin_object_size",
         "__builtin_offsetof",
+        "__builtin_types_compatible_p",
         "__builtin_add_overflow",
         "__builtin_sub_overflow",
         "__builtin_nanf",
