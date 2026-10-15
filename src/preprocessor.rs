@@ -55,6 +55,7 @@ fn compiler_macros(command: &mut Command) {
         "__atomic_xor_fetch",
         "__atomic_fetch_nand",
         "__atomic_nand_fetch",
+        "__atomic_compare_exchange_n",
         "__atomic_load_n",
         "__atomic_store_n",
         "__builtin_constant_p",
@@ -511,6 +512,9 @@ mod option_tests {
 #endif
 #if !__has_builtin(__atomic_fetch_add) || !__has_builtin(__atomic_nand_fetch) || !__has_builtin(__atomic_exchange_n)
 #error Atomic updates missing
+#endif
+#if !__has_builtin(__atomic_compare_exchange_n)
+#error missing compare-exchange builtin
 #endif
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing

@@ -2629,6 +2629,142 @@ fn invalid_compile_time_constant_queries(code: &str, output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn atomic_compare_exchange_matches_clang_for_scalar_widths(
+    output_option: &str,
+    optimization: &str,
+) {
+    let types = [
+        "signed char",
+        "unsigned char",
+        "short",
+        "unsigned short",
+        "int",
+        "unsigned int",
+        "long",
+        "unsigned long",
+        "_Bool",
+    ];
+    let mut code = String::from("int check(void);int main(void){return check();}");
+    let mut companion = String::new();
+    let mut cases = String::new();
+    for (index, ty) in types.iter().enumerate() {
+        code.push_str(&format!("int cas{index}({ty} *p,{ty} *e,{ty} v){{return __atomic_compare_exchange_n(p,e,v,0,5,5);}}"));
+        companion.push_str(&format!("int cas{index}({ty}*,{ty}*,{ty});"));
+        cases.push_str(&format!(
+            r"
+{{ {ty} a=({ty})seed,b=a,e=({ty})(seed+(i%2)),f=e,v=({ty})(seed>>13);
+int x=cas{index}(&a,&e,v),y=__atomic_compare_exchange_n(&b,&f,v,0,5,5);
+if(x!=y || a!=b || e!=f)return {index}+1;
+if(!cas{index}(&a,&a,({ty})42) || a!=({ty})42)return {index}+11;
+}}
+"
+        ));
+    }
+    companion.push_str(&format!("int check(void){{unsigned long seed=0x8123456789abcdefUL;for(int i=0;i<80;i++){{{cases}seed=seed*6364136223846793005UL+1442695040888963407UL;}}return 0;}}"));
+    assert_eq!(
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn atomic_compare_exchange_preserves_pointers_and_argument_effects(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r"
+int object=7,expected=0,calls;
+int *target(void){calls++;return &object;}int *expectation(void){calls++;expected=0;return &expected;}
+int desired(void){calls++;return 9;}int weak(void){calls++;return 1;}
+int success(void){calls++;expected=7;return 5;}int failure(void){calls++;return 2;}
+int function(void){return 13;}
+int main(void){
+    if(!__atomic_compare_exchange_n(target(),expectation(),desired(),weak(),success(),failure()) || calls!=6 || object!=9 || expected!=7)return 1;
+    if(__atomic_compare_exchange_n(&object,&expected,11,1,5,5) || object!=9 || expected!=9)return 2;
+    int array[2]={3,5};int *p=0,*e=0;
+    if(!__atomic_compare_exchange_n(&p,&e,array,0,5,5) || p!=array || e)return 3;
+    if(__atomic_compare_exchange_n(&p,&e,0,0,5,5) || e!=array || p!=array)return 4;
+    if(!__atomic_compare_exchange_n(&p,&e,array+1,0,5,5) || *p!=5 || e!=array)return 5;
+    int (*fn)(void)=0,(*ef)(void)=0;
+    if(!__atomic_compare_exchange_n(&fn,&ef,function,0,5,5) || fn()!=13 || ef)return 6;
+    if(__atomic_compare_exchange_n(&fn,&ef,0,0,5,5) || ef!=function)return 7;
+    if(!__atomic_compare_exchange_n(&fn,&ef,0,0,5,5) || fn || ef!=function)return 8;
+    if(_Generic(__atomic_compare_exchange_n(&object,&expected,17,0,5,5),_Bool:0,default:1) || object!=9)return 9;
+    volatile unsigned short v=65535,e16=65535;
+    if(!__atomic_compare_exchange_n(&v,&e16,1,0,5,5) || v!=1 || e16!=65535)return 10;
+    if(__atomic_compare_exchange_n(&v,&e16,2,0,5,5) || e16!=1 || v!=1)return 11;
+    return 0;
+}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn atomic_compare_exchange_retains_updates_under_contention(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r"
+void *increment(void *p){unsigned long *counter=p;for(int i=0;i<4000;i++){unsigned long expected=__atomic_load_n(counter,0);while(!__atomic_compare_exchange_n(counter,&expected,expected+1,1,5,0)){} }return 0;}
+int run(void*(*)(void*));int main(void){return run(increment);}
+";
+    let companion = r"
+#include <pthread.h>
+static void *other(void *p){for(int i=0;i<4000;i++)__atomic_fetch_add((unsigned long*)p,1,5);return 0;}
+int run(void*(*increment)(void*)){unsigned long count=0;pthread_t threads[4];for(int i=0;i<4;i++)if(pthread_create(&threads[i],0,i<2?increment:other,&count))return 2;for(int i=0;i<4;i++)pthread_join(threads[i],0);return count!=16000;}
+";
+    assert_eq!(
+        compile_and_run_with_c_flags(
+            code,
+            output_option,
+            Some(companion),
+            &[optimization, "-pthread"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+}
+
+#[test]
+fn atomic_compare_exchange_preserves_volatile_expected_accesses_in_llvm() {
+    let ir = dynamite_compiler::generate(
+        "volatile int object,expected;int main(){return __atomic_compare_exchange_n(&object,&expected,3,0,5,5);}",
+        "llvm",
+        false,
+    );
+    assert!(ir.contains("cmpxchg volatile ptr"));
+    assert!(ir.contains("load volatile i32"));
+    assert!(ir.contains("store volatile i32"));
+    assert!(ir.contains("seq_cst seq_cst, align 4"));
+}
+
+#[test_matrix([
+    "int main(){int x,e;return __atomic_compare_exchange_n(&x,&e,1,0,0,2);}",
+    "int main(){int x,e;return __atomic_compare_exchange_n(&x,&e,1,0,3,1);}",
+    "int main(){int x,e;return __atomic_compare_exchange_n(&x,&e,1,0,5,3);}",
+    "int main(){int x,e;return __atomic_compare_exchange_n(&x,&e,1,0,5,4);}",
+    "int main(){int x,e;return __atomic_compare_exchange_n(&x,&e,1,0,6,0);}",
+    "int main(){const int x=0;int e;return __atomic_compare_exchange_n(&x,&e,1,0,5,5);}",
+    "int main(){int x;const int e=0;return __atomic_compare_exchange_n(&x,&e,1,0,5,5);}",
+    "int main(){int x;long e;return __atomic_compare_exchange_n(&x,&e,1,0,5,5);}",
+    "int main(){float x,e;return __atomic_compare_exchange_n(&x,&e,1,0,5,5);}",
+    "int main(){int x,e;return __atomic_compare_exchange_n(&x,&e,1,0,5);}",
+], ["asm", "llvm"])]
+fn atomic_compare_exchange_rejects_invalid_arguments(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn atomic_load_store_preserve_values_and_publication(output_option: &str, optimization: &str) {
     let code = r#"
 int run_publication(void*(*)(void*));
