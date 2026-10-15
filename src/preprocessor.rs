@@ -74,6 +74,8 @@ fn compiler_macros(command: &mut Command) {
         "__builtin_object_size",
         "__builtin_offsetof",
         "__builtin_add_overflow",
+        "__builtin_nanf",
+        "__builtin_nan",
         "__builtin_fabsf",
         "__builtin_fabs",
         "__builtin_inff",
@@ -95,7 +97,12 @@ fn compiler_macros(command: &mut Command) {
         command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
     }
     if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
-        for name in ["__builtin_fabsl", "__builtin_infl", "__builtin_huge_vall"] {
+        for name in [
+            "__builtin_fabsl",
+            "__builtin_infl",
+            "__builtin_huge_vall",
+            "__builtin_nanl",
+        ] {
             command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
         }
     }
@@ -507,6 +514,9 @@ mod option_tests {
 #endif
 #if !__has_builtin(__atomic_load_n) || !__has_builtin(__atomic_store_n)
 #error Atomic load/store missing
+#endif
+#if !__has_builtin(__builtin_nan) || !__has_builtin(__builtin_nanf)
+#error missing NaN builtin
 #endif
 #if !__has_builtin(__builtin_constant_p)
 #error Constant query missing

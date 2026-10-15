@@ -4663,6 +4663,86 @@ fn floating_absolute_builtins_reject_unsupported_long_double(output_option: &str
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn floating_nan_builtins_preserve_payloads_and_runtime_calls(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+union D{double f;unsigned long u;}; union F{float f;unsigned int u;};
+double global=__builtin_nan(("0x" "123"));float small=__builtin_nanf("0123");
+unsigned long reference64(int);unsigned int reference32(int);int check_runtime(double,float);
+int calls;const char *payload(void){calls++;return "0x321";}
+int main(void){
+    union D d={global};union F f={small};
+    if(d.u!=0x7ff8000000000123UL || f.u!=0x7fc00053U)return 1;
+    double values[]={__builtin_nan(""),__builtin_nan("123"),__builtin_nan("0123"),__builtin_nan("0x123"),__builtin_nan("bad"),__builtin_nan("-1"),__builtin_nan("18446744073709551616"),__builtin_nan("0xffffffffffffffffffffffff"),__builtin_nan("123x"),__builtin_nan(" 12"),__builtin_nan("12\0tail")};
+    float floats[]={__builtin_nanf(""),__builtin_nanf("123"),__builtin_nanf("0123"),__builtin_nanf("0x123"),__builtin_nanf("bad"),__builtin_nanf("-1"),__builtin_nanf("18446744073709551616"),__builtin_nanf("0xffffffffffffffffffffffff"),__builtin_nanf("123x"),__builtin_nanf(" 12"),__builtin_nanf("12\0tail")};
+    for(int i=0;i<11;++i){d.f=values[i];f.f=floats[i];if(d.u!=reference64(i) || f.u!=reference32(i))return 2;if(d.f==d.f || f.f==f.f)return 3;}
+    if(_Generic(__builtin_nan(""),double:0,default:1) || _Generic(__builtin_nanf(""),float:0,default:1))return 4;
+    if(check_runtime(__builtin_nan(payload()),__builtin_nanf(payload())) || calls!=2)return 5;
+    const char *dynamic="0x321";union D dynamic_value={__builtin_nan(dynamic)};if(dynamic_value.f==dynamic_value.f)return 6;return 0;
+}"#;
+    let companion = r#"
+#include <math.h>
+#include <string.h>
+#define VALUES(B) B(""),B("123"),B("0123"),B("0x123"),B("bad"),B("-1"),B("18446744073709551616"),B("0xffffffffffffffffffffffff"),B("123x"),B(" 12"),B("12\0tail")
+unsigned long reference64(int i){double values[]={VALUES(__builtin_nan)};unsigned long bits;memcpy(&bits,&values[i],8);return bits;}
+unsigned int reference32(int i){float values[]={VALUES(__builtin_nanf)};unsigned int bits;memcpy(&bits,&values[i],4);return bits;}
+int check_runtime(double d,float f){return !isnan(d) || !isnan(f);}
+"#;
+    let result = compile_and_run_with_c_flags(
+        &code,
+        output_option,
+        Some(companion),
+        &[optimization, "-lm"],
+    );
+    assert_eq!(result.status.code(), Some(0), "{result:?}");
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn floating_nan_builtins_support_binary64_long_double(output_option: &str, optimization: &str) {
+    let code = r#"
+long double stored=__builtin_nanl("0x123");
+const char *payload(void){return "0x321";}
+int main(void){union Bits{long double f;unsigned long u;};union Bits v={stored};if(v.u!=0x7ff8000000000123UL)return 1;v.f=__builtin_nanl(payload());return v.f==v.f || _Generic(__builtin_nanl(""),long double:0,default:1);}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){__builtin_nan();return 0;}",
+    "int main(){double (*p)(const char *)=__builtin_nan;return 0;}",
+    "int main(){__builtin_nanf(1,2);return 0;}",
+    "int main(){int n;__builtin_nan(&n);return 0;}",
+    "int main(){__builtin_nan(L\"123\");return 0;}",
+], ["asm", "llvm"])]
+fn invalid_floating_nan_builtins_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[test_matrix(["asm", "llvm"])]
+fn floating_nan_builtins_reject_unsupported_long_double(output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(
+            "int main(){return __builtin_nanl(\"\")!=0;}",
+            output_option,
+            false,
+        ))
+        .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn floating_infinity_builtins_preserve_bits_types_and_classifiers(
     output_option: &str,
     optimization: &str,

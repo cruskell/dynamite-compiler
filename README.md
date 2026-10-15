@@ -773,3 +773,15 @@ block-scope declarations require one of them. Initial values and mutations are
 independent in each thread, and external TLS symbols interoperate with Clang.
 Native assembly backends diagnose thread-local declarations because they do not
 yet implement TLS addressing and object-file directives.
+
+## NaN builtins
+
+`__builtin_nan` and `__builtin_nanf` construct quiet IEEE NaNs of type `double`
+and `float`. Narrow string literals fold into constants suitable for static
+initializers. Decimal, octal and hexadecimal payloads retain their low payload
+bits; invalid payload spellings use zero, and strings end at the first NUL.
+Nonliteral payload expressions are evaluated once and call the target libc's
+`nan` or `nanf`, preserving its payload interpretation. Linux runtime calls may
+require linking with libm. `__builtin_nanl` follows the same rules on macOS
+AArch64, where the supported `long double` ABI is binary64; other long-double
+formats remain diagnosed.
