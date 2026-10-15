@@ -2734,3 +2734,130 @@ fn invalid_predefined_function_names_are_diagnosed(code: &str, output_option: &s
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn checked_integer_addition_matches_clang(output_option: &str, optimization: &str) {
+    let mut code = String::from(
+        "int global;\n_Static_assert(sizeof(__builtin_add_overflow(1,2,&global))==sizeof(_Bool),\"result size\");\n_Static_assert(_Generic(__builtin_add_overflow(1,2,&global),_Bool:1,default:0),\"result type\");\n",
+    );
+    let mut companion = String::new();
+    let mut calls = String::new();
+    let targets = [
+        ("i8", "signed char"),
+        ("u8", "unsigned char"),
+        ("i16", "short"),
+        ("u16", "unsigned short"),
+        ("i32", "int"),
+        ("u32", "unsigned int"),
+        ("i64", "long"),
+        ("u64", "unsigned long"),
+    ];
+    let sources = [
+        ("ss", "long", "long"),
+        ("su", "long", "unsigned long"),
+        ("us", "unsigned long", "long"),
+        ("uu", "unsigned long", "unsigned long"),
+    ];
+    let mut cases = Vec::new();
+    for (target_tag, target) in targets {
+        for (source_tag, left, right) in sources {
+            cases.push((format!("{target_tag}_{source_tag}"), target, left, right));
+        }
+    }
+    cases.extend([
+        ("narrow8".into(), "int", "signed char", "unsigned char"),
+        (
+            "narrow16".into(),
+            "unsigned long",
+            "unsigned short",
+            "short",
+        ),
+        ("narrow32".into(), "long", "int", "unsigned int"),
+        ("boolean".into(), "unsigned char", "_Bool", "_Bool"),
+    ]);
+    for (index, (tag, target, left, right)) in cases.iter().enumerate() {
+        code.push_str(&format!(r#"
+int reference_{tag}(unsigned long,unsigned long,{target} *);
+int check_{tag}(unsigned long a,unsigned long b){{
+    {target} actual=3,expected=4;
+    int got=__builtin_add_overflow(({left})a,({right})b,&actual);
+    int want=reference_{tag}(a,b,&expected);
+    if(got!=want || actual!=expected){{
+        printf("{tag}: %lu %lu flags %d %d values %lu %lu\n",a,b,got,want,(unsigned long)actual,(unsigned long)expected);return 1;
+    }}
+    return 0;
+}}
+"#));
+        companion.push_str(&format!("int reference_{tag}(unsigned long a,unsigned long b,{target} *out){{return __builtin_add_overflow(({left})a,({right})b,out);}}\n"));
+        calls.push_str(&format!("if(check_{tag}(a,b))return {};\n", index + 1));
+    }
+    code.push_str(&format!(r#"
+int check_all(unsigned long a,unsigned long b){{{calls}return 0;}}
+unsigned long state=42;
+unsigned long next(){{state=state*6364136223846793005ul+1;return state;}}
+int main(){{
+    unsigned long edges[]={{0,1,2,127,128,255,256,2147483647,0x80000000u,0x7ffffffffffffffful,0x8000000000000000ul,0xfffffffffffffffful}};
+    for(unsigned long i=0;i<sizeof(edges)/sizeof(edges[0]);i++){{
+        for(unsigned long j=0;j<sizeof(edges)/sizeof(edges[0]);j++){{
+            int result=check_all(edges[i],edges[j]);if(result)return result;
+        }}
+    }}
+    for(int i=0;i<100;i++){{unsigned long a=next(),b=next();int result=check_all(a,b);if(result)return result;}}
+    return global!=0;
+}}
+"#));
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(&companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn checked_integer_addition_preserves_effects_and_aliases(output_option: &str) {
+    let code = r#"
+int left_calls,right_calls,pointer_calls;
+volatile int output;
+long left(){left_calls++;return -1;}
+unsigned long right(){right_calls++;return 0;}
+volatile int *destination(){pointer_calls++;return &output;}
+_Bool bounded(unsigned long a,unsigned long b,unsigned char *out){return __builtin_add_overflow(a,b,out);}
+int main(){
+    _Bool overflow=__builtin_add_overflow(left(),right(),destination());
+    long value=7;_Bool alias=__builtin_add_overflow(value,2,&value);
+    unsigned long wide=5;_Bool wrapped=__builtin_add_overflow(0xfffffffffffffffful,1,&wide);
+    unsigned char array[1]={0};_Bool narrow=__builtin_add_overflow(250,10,array);
+    int prediction_result=0;long carried=__builtin_expect(9,__builtin_add_overflow(1,2,&prediction_result));
+    int inner=0,outer=0;_Bool nested=__builtin_add_overflow(__builtin_add_overflow(1,2,&inner),4,&outer);
+    unsigned char returned;_Bool returned_flag=bounded(250,10,&returned);
+    return carried!=9 || prediction_result!=3 || nested || inner!=3 || outer!=4 || !returned_flag || returned!=4
+        || overflow || output!=-1 || left_calls!=1 || right_calls!=1 || pointer_calls!=1
+        || alias || value!=9 || !wrapped || wide!=0 || !narrow || array[0]!=4;
+}
+"#;
+    let result = compile_and_run(code, output_option);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test]
+fn checked_integer_addition_emits_one_volatile_destination_store() {
+    let code = "_Bool add(long a,unsigned long b,volatile int *out){return __builtin_add_overflow(a,b,out);}";
+    let ir = dynamite_compiler::generate(code, "llvm", false);
+    assert_eq!(ir.matches("store volatile i32").count(), 1, "{ir}");
+    assert!(!ir.contains("load volatile i32"), "{ir}");
+}
+
+#[test_matrix([
+    "int main(){int r;return __builtin_add_overflow(1,2);}",
+    "int main(){int r;return __builtin_add_overflow(1,2,&r,3);}",
+    "int main(){int r;return __builtin_add_overflow(1.0,2,&r);}",
+    "int main(){int r;return __builtin_add_overflow(&r,2,&r);}",
+    "int main(){_Bool r;return __builtin_add_overflow(1,2,&r);}",
+    "int main(){const int r=0;return __builtin_add_overflow(1,2,&r);}",
+    "int main(){return __builtin_add_overflow(1,2,0);}",
+    "int main(){double r;return __builtin_add_overflow(1,2,&r);}",
+], ["asm", "llvm"])]
+fn invalid_checked_integer_addition_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

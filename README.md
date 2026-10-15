@@ -438,6 +438,20 @@ inline definitions. Uses outside a function and writes through its const element
 type are diagnosed. Block-static arrays of const elements are treated as const
 objects for C11 inline constraints; arrays of mutable pointers remain mutable.
 
+## Checked integer addition
+
+`__builtin_add_overflow(a, b, result)` computes the mathematical sum before
+checking the destination's range, writes the converted result even on overflow,
+and returns `_Bool`. Signed and unsigned operands and destinations can have
+independent widths through 64 bits. Boolean operands are permitted; boolean or
+const destinations are rejected. Operand values and the destination address are
+evaluated once, including when the destination aliases an operand.
+
+A shared AST lowering uses unsigned low-word arithmetic and a signed high word
+so all backends agree on mixed-sign sums and narrowing. It runs after
+unevaluated expressions have been discarded, allowing type queries without
+performing the write. Volatile destinations receive one volatile store.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their
