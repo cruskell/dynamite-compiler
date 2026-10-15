@@ -2102,6 +2102,12 @@ impl<'a> AstBuilderImpl<'a> {
         true
     }
 
+    fn attempt_thread_local(&mut self) -> bool {
+        self.attempt_reserved("_Thread_local")
+            .or_else(|| self.attempt_reserved("__thread"))
+            .is_some()
+    }
+
     fn global_definition(&mut self) {
         if self.attempt_static_assert() {
             return;
@@ -2127,7 +2133,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut thread_local = false;
         loop {
             alignment = alignment.max(self.object_alignment_annotations());
-            if self.attempt_reserved("_Thread_local").is_some() {
+            if self.attempt_thread_local() {
                 thread_local = true;
             } else if self.attempt_inline().is_some() {
                 inline = true;
@@ -2169,7 +2175,7 @@ impl<'a> AstBuilderImpl<'a> {
             if thread_local {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
-                    "_Thread_local cannot be applied to a typedef",
+                    "thread-local storage cannot be applied to a typedef",
                 );
             }
             if alignment != 0 {
@@ -2181,12 +2187,6 @@ impl<'a> AstBuilderImpl<'a> {
             self.typedef_definition();
             self.expect_reserved(";");
             return;
-        }
-        if thread_local && storage.is_none() {
-            self.error_logger.print_error_position(
-                self.tokens[self.cur - 1].pos,
-                "_Thread_local requires static or extern storage duration",
-            );
         }
         if storage
             .as_ref()
@@ -2222,7 +2222,7 @@ impl<'a> AstBuilderImpl<'a> {
             if thread_local {
                 self.error_logger.print_error_position(
                     self.tokens[self.cur - 1].pos,
-                    "_Thread_local requires an object declaration",
+                    "thread-local storage requires an object declaration",
                 );
             }
             if inline {
@@ -2273,7 +2273,7 @@ impl<'a> AstBuilderImpl<'a> {
                 if thread_local {
                     self.error_logger.print_error_position(
                         token.pos,
-                        "_Thread_local cannot be applied to a function",
+                        "thread-local storage cannot be applied to a function",
                     );
                 }
                 if self.tokens[self.cur].s_value == "{" && !stars.is_empty() {
@@ -2527,7 +2527,7 @@ impl<'a> AstBuilderImpl<'a> {
         unreachable!()
     }
 
-    fn resolve_name(&mut self, s: &str) -> Option<&Identifier> {
+    fn resolve_name(&self, s: &str) -> Option<&Identifier> {
         self.scope_stack.iter().rev().find_map(|map| map.get(s))
     }
     fn validate_global_initializer(&self, ty: &Type, data: &GlobalVariableData, token: &Token) {
@@ -3683,7 +3683,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut storage = storage;
         loop {
             requested_alignment = requested_alignment.max(self.object_alignment_annotations());
-            if self.attempt_reserved("_Thread_local").is_some() {
+            if self.attempt_thread_local() {
                 thread_local = true;
             } else if let Some(token) = self
                 .attempt_reserved("static")
@@ -3698,6 +3698,12 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 break;
             }
+        }
+        if thread_local && storage.is_none() {
+            self.error_logger.print_error_position(
+                self.tokens[self.cur - 1].pos,
+                "block thread-local declaration requires static or extern storage",
+            );
         }
         if storage.is_some() || inline.is_some() || thread_local {
             let mut storage = storage.unwrap_or_else(|| {
@@ -3845,7 +3851,7 @@ impl<'a> AstBuilderImpl<'a> {
                 if thread_local {
                     self.error_logger.print_error_position(
                         token.pos,
-                        "_Thread_local cannot be applied to a function",
+                        "thread-local storage cannot be applied to a function",
                     );
                 }
                 if requested_alignment != 0 {
@@ -5757,7 +5763,10 @@ impl<'a> AstBuilderImpl<'a> {
                         nt: NodeType::GlobalVar,
                         cty: Some(ty.clone()),
                         global_name: name.clone(),
-                        thread_local,
+                        thread_local: self
+                            .global_variables
+                            .get(name)
+                            .is_some_and(|object| object.thread_local),
                         ..Node::default()
                     },
                     Identifier::Static(ty) => Node {

@@ -1789,6 +1789,56 @@ struct Pair echo(struct Pair p){struct Pair result={p.y,p.x};return result;}
     assert_eq!(result.status.code(), Some(0));
 }
 
+#[test_matrix(["_Thread_local", "__thread"], ["-O0", "-O2"])]
+fn thread_local_storage_is_private_and_interoperates_with_clang(keyword: &str, optimization: &str) {
+    let code = format!(
+        r"
+{keyword} int shared = 7;
+extern {keyword} int foreign;
+{keyword} static int private = 11;
+int check(int *, int *, int *);
+int generated(void){{
+    static {keyword} int block = 13;
+    if(shared!=7 || foreign!=17 || private!=11 || block!=13)return 1;
+    shared++;foreign++;private++;block++;
+    return check(&shared,&private,&block);
+}}
+int run(int(*)(void));
+int main(void){{int result=run(generated);if(result)return result;return generated();}}
+"
+    );
+    let companion = r"
+#include <pthread.h>
+extern _Thread_local int shared;
+_Thread_local int foreign=17;
+int check(int *s,int *p,int *b){return s!=&shared || shared!=8 || foreign!=18 || *p!=12 || *b!=14;}
+static void *worker(void *p){int (*f)(void)=p;return (void *)(long)f();}
+int run(int(*f)(void)){pthread_t threads[2];for(int i=0;i<2;i++)if(pthread_create(&threads[i],0,worker,f))return 2;for(int i=0;i<2;i++){void *r;pthread_join(threads[i],&r);if(r)return 3;}return shared!=7 || foreign!=17;}
+";
+    let result =
+        compile_and_run_with_c_flags(&code, "llvm", Some(companion), &[optimization, "-pthread"]);
+    assert_eq!(result.status.code(), Some(0), "{result:?}");
+}
+
+#[test_matrix([
+    "__thread int f(void);",
+    "typedef __thread int T;",
+    "__thread int x; int x;",
+    "int main(){__thread int x;return 0;}",
+    "int main(){static __thread int f(void);return 0;}",
+], ["asm", "llvm"])]
+fn invalid_thread_local_declarations_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["static __thread int x;", "extern _Thread_local int x;"])]
+fn native_thread_local_storage_is_diagnosed(code: &str) {
+    assert!(std::panic::catch_unwind(|| dynamite_compiler::generate(code, "asm", false)).is_err());
+}
+
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn gnu_object_alignment_preserves_storage_and_type(output_option: &str, optimization: &str) {
     let code = r#"

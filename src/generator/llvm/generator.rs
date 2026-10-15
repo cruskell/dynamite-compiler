@@ -63,21 +63,11 @@ impl<'a> IrGenerator<'a> {
             error_logger: self.error_logger,
             symbol_names: ast.symbol_names.clone(),
         };
-        let has_thread_local = ast
-            .global_variables
-            .values()
-            .any(|global| global.thread_local);
         [
-            {
-                let mut declarations = vec![
-                    "declare void @llvm.va_start(ptr)".into(),
-                    "declare void @llvm.va_end(ptr)".into(),
-                ];
-                if has_thread_local {
-                    declarations.push("declare ptr @llvm.threadlocal.address.p0(ptr)".into());
-                }
-                declarations
-            },
+            vec![
+                "declare void @llvm.va_start(ptr)".into(),
+                "declare void @llvm.va_end(ptr)".into(),
+            ],
             generator.gen_string_literals(ast.string_literals),
             ast.global_variables
                 .iter()
@@ -1485,17 +1475,9 @@ impl<'a> IrGenerator<'a> {
                 } else {
                     node.dest.clone()
                 };
-                if node.thread_local {
-                    let register = options.new_register();
-                    options.register_queue.push(format!("%{}", register));
-                    vec![format!(
-                        "  %{} = call ptr @llvm.threadlocal.address.p0(ptr {})",
-                        register, symbol
-                    )]
-                } else {
-                    options.register_queue.push(symbol);
-                    vec![]
-                }
+                // LLVM resolves TLS globals in the current thread, including on LLVM 15.
+                options.register_queue.push(symbol);
+                vec![]
             }
             NodeType::Deref => self.gen_node(node.lhs.as_ref().unwrap(), options),
             _ => {

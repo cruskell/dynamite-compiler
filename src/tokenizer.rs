@@ -23,7 +23,7 @@ pub const TYPES: [&str; 18] = [
     "__int128_t",
     "__uint128_t",
 ];
-const RESERVED_WORDS: [&str; 36] = [
+const RESERVED_WORDS: [&str; 37] = [
     "return",
     "if",
     "else",
@@ -56,6 +56,7 @@ const RESERVED_WORDS: [&str; 36] = [
     "_Alignof",
     "_Alignas",
     "_Thread_local",
+    "__thread",
     "_Nullable",
     "_Nonnull",
     "_Null_unspecified",
