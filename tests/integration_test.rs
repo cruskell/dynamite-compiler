@@ -1791,6 +1791,54 @@ struct Pair echo(struct Pair p){struct Pair result={p.y,p.x};return result;}
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn compatible_function_designators_ignore_parameter_qualifiers(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r"
+typedef int (*Callback)(int *,const int *);
+typedef int (*Variadic)(const int *,...);
+int combine(int *restrict a,const int *restrict b){return *a+*b;}
+int constant(const int value){return value+1;}
+int variable(const int *restrict value,...){return *value;}
+Callback select(void){return combine;}
+int invoke(Callback f,int *a,const int *b){return f(a,b);}
+int external_invoke(Callback f,int *a,const int *b);
+int main(void){
+    int a=17,b=25;
+    Callback initial=combine,assigned;assigned=combine;
+    int (*scalar)(int)=constant;
+    Variadic variadic=variable;
+    if(initial(&a,&b)!=42 || assigned(&a,&b)!=42)return 1;
+    if(select()(&a,&b)!=42 || invoke(combine,&a,&b)!=42)return 2;
+    if(external_invoke(combine,&a,&b)!=42)return 3;
+    return scalar(41)!=42 || variadic(&a,3)!=17;
+}";
+    let companion =
+        "int external_invoke(int (*f)(int*,const int*),int *a,const int *b){return f(a,b);}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int f(const int *p){return *p;}int use(int (*p)(int*)){return 0;}int main(){return use(f);}",
+    "int f(int **p){return 0;}int use(int (*p)(const int**)){return 0;}int main(){return use(f);}",
+    "int f(int a,int b){return a+b;}int use(int (*p)(int)){return 0;}int main(){return use(f);}",
+    "int f(int a,...){return a;}int use(int (*p)(int)){return 0;}int main(){return use(f);}",
+    "double f(int a){return a;}int use(int (*p)(int)){return 0;}int main(){return use(f);}",
+], ["asm", "llvm"])]
+fn incompatible_function_designators_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn function_designators_convert_to_pointer_values(output_option: &str, optimization: &str) {
     let code = r"
 int function(void){return 7;}int another(void){return 9;}int variadic(int n,...){return n;}

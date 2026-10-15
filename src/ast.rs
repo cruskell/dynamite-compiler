@@ -3450,7 +3450,7 @@ impl<'a> AstBuilderImpl<'a> {
                         || *source.unqualified() == Type::Void)
             }
             (Type::Ptr(target), Some(source @ (Type::Func(..) | Type::VariadicFunc(..)))) => {
-                **target == *source
+                target.compatible(source)
             }
             (Type::Ptr(_), Some(Type::I32)) => {
                 matches!(operand.nt, NodeType::Num) && operand.value == Some(0)
