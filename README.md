@@ -830,3 +830,17 @@ and remain unsupported.
 On macOS, completely undefined weak symbols require an appropriate weak-linked
 library or an explicit linker policy such as `-undefined dynamic_lookup`, as with
 Clang. Linux permits undefined weak symbols with the default ELF link policy.
+
+## Checked integer subtraction
+
+`__builtin_sub_overflow(a, b, out)` evaluates both integer operands and the output
+pointer once, stores the converted difference, and returns `_Bool` indicating
+whether the exact mathematical result fits the destination integer type. Signed
+and unsigned operands of different widths are supported without first converting
+them to a common C arithmetic type. The output must be a writable nonboolean
+integer object; volatile stores and unevaluated contexts are preserved.
+
+Shared AST lowering represents the exact difference with an unsigned low word
+and a signed high word, correcting sign extension with the low-word borrow.
+This uses the same representation as checked addition across all three backends
+and does not require 128-bit integer value operations.

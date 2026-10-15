@@ -5841,8 +5841,16 @@ impl<'a> AstBuilderImpl<'a> {
             ) {
                 return self.checked_bsd_string_builtin(t);
             }
-            if t.s_value == "__builtin_add_overflow" {
-                return self.add_overflow_builtin(t);
+            if matches!(
+                t.s_value.as_str(),
+                "__builtin_add_overflow" | "__builtin_sub_overflow"
+            ) {
+                let operation = if t.s_value == "__builtin_sub_overflow" {
+                    NodeType::SubOverflow
+                } else {
+                    NodeType::AddOverflow
+                };
+                return self.overflow_builtin(t, operation);
             }
             if t.s_value == "__func__" {
                 let name = self.predefined_function_name(t);
