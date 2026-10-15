@@ -9,6 +9,8 @@ use std::{cell::RefCell, rc::Rc};
 
 #[path = "object_size.rs"]
 mod object_size;
+#[path = "overflow.rs"]
+mod overflow;
 #[path = "varargs.rs"]
 mod varargs;
 #[path = "vla.rs"]
@@ -176,6 +178,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
             if let Some(body) = &mut function.body {
                 Self::erase_qualifiers(body);
                 Self::lower_variable_arithmetic(body);
+                overflow::lower(body, &mut function.offset_size);
                 Self::insert_integer_conversions(body);
                 crate::bitfield::lower(body, &mut function.offset_size);
             }
@@ -2652,7 +2655,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn erase_qualifiers(node: &mut Node) {
-        node.volatile_access = node
+        node.volatile_access |= node
             .object_type()
             .is_some_and(|ty| ty.qualifiers().volatile);
         if let Some(ty) = &mut node.cty {
@@ -4881,6 +4884,9 @@ impl<'a> AstBuilderImpl<'a> {
                 _ => None,
             } {
                 return self.byte_swap_builtin(t, bits);
+            }
+            if t.s_value == "__builtin_add_overflow" {
+                return self.add_overflow_builtin(t);
             }
             if t.s_value == "__func__" {
                 let name = self.predefined_function_name(t);
