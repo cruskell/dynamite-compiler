@@ -2450,6 +2450,59 @@ fn unsupported_extended_record_stack_abi_is_diagnosed(code: &str, output_option:
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn compile_time_constant_queries_do_not_evaluate_operands(output_option: &str, optimization: &str) {
+    let code = r#"
+_Static_assert(__builtin_constant_p(7),"literal");
+_Static_assert(__builtin_constant_p(2+3*4),"integer arithmetic");
+_Static_assert(__builtin_constant_p(3.5),"floating literal");
+_Static_assert(__builtin_constant_p("text"),"string literal");
+_Static_assert(__builtin_constant_p((int)3.5),"literal cast");
+_Static_assert(!__builtin_constant_p(1/0),"invalid division");
+_Static_assert(!__builtin_constant_p(1<<32),"invalid shift");
+_Static_assert(!__builtin_constant_p((-9223372036854775807L-1)/-1),"invalid quotient");
+int global=__builtin_constant_p(1+2);
+int calls;
+int side(){calls++;return 3;}
+int runtime(int x){calls++;return x+1;}
+#define SELECT(x) (__builtin_constant_p(x)?(x)+1:runtime(x))
+int main(){
+    int n=2;
+    volatile int v=7;
+    if(__builtin_constant_p(n) || __builtin_constant_p(v) || __builtin_constant_p(side())) return 1;
+    if(__builtin_constant_p(n++) || __builtin_constant_p((n=9)) || __builtin_constant_p((side(),3))) return 2;
+    if(n!=2 || calls) return 3;
+    if(__builtin_constant_p(sizeof(int[n++]))) return 4;
+    if(n!=2) return 5;
+    int a[n];
+    if(__builtin_constant_p(sizeof(a)) || __builtin_constant_p(a)) return 6;
+    if(SELECT(7)!=8 || calls) return 7;
+    if(SELECT(n++)!=3 || calls!=1 || n!=3) return 8;
+    if(!global || _Generic(__builtin_constant_p(n),int:0,default:1)) return 9;
+    if(!__builtin_constant_p((unsigned long)~0U) || !__builtin_constant_p(1?7:8)) return 10;
+    return 0;
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){return __builtin_constant_p();}",
+    "int main(){return __builtin_constant_p(1,2);}",
+    "int main(){return __builtin_constant_p(unknown);}"
+], ["asm", "llvm"])]
+fn invalid_compile_time_constant_queries(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
 fn narrow_scalar_abi_interoperates_with_clang_in_both_directions(
     output_option: &str,
     optimization: &str,

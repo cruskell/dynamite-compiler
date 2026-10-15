@@ -42,6 +42,7 @@ fn compiler_macros(command: &mut Command) {
         "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
     ]);
     for name in [
+        "__builtin_constant_p",
         "__builtin_clz",
         "__builtin_clzl",
         "__builtin_clzll",
@@ -485,6 +486,9 @@ mod option_tests {
 #endif
 #if __has_feature(blocks) || __has_extension(c_atomic) || __has_c_attribute(nodiscard)
 #error Unsupported language feature
+#endif
+#if !__has_builtin(__builtin_constant_p)
+#error Constant query missing
 #endif
 #if !__has_builtin(__builtin_clz) || !__has_builtin(__builtin_ctzll)
 #error Bit-scan operation missing

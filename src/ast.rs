@@ -5193,6 +5193,68 @@ impl<'a> AstBuilderImpl<'a> {
         })
     }
 
+    fn foldable_integer_constant(&mut self, node: &Node) -> bool {
+        if !Self::integer_constant(node) {
+            return false;
+        }
+        if node.nt == NodeType::Cast
+            && node
+                .lhs
+                .as_ref()
+                .is_some_and(|child| child.nt == NodeType::Num)
+        {
+            return true;
+        }
+        if [&node.lhs, &node.rhs, &node.cond, &node.then, &node.els]
+            .into_iter()
+            .flatten()
+            .any(|child| !self.foldable_integer_constant(child))
+        {
+            return false;
+        }
+        if matches!(node.nt, NodeType::Div | NodeType::Mod) {
+            let right = self.eval(node.rhs.as_ref().unwrap());
+            if right == 0 {
+                return false;
+            }
+            let ty = node.resolve_type().unwrap();
+            let (bits, signed) = ty.integer_info().unwrap();
+            if signed
+                && right == -1
+                && i128::from(self.eval(node.lhs.as_ref().unwrap())) == -(1i128 << (bits - 1))
+            {
+                return false;
+            }
+        }
+        if matches!(node.nt, NodeType::BitLeft | NodeType::BitRight) {
+            let shift = self.eval(node.rhs.as_ref().unwrap());
+            let bits = node.resolve_type().unwrap().integer_info().unwrap().0;
+            if shift < 0 || shift >= i64::from(bits) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn constant_query_builtin(&mut self, token: Token) -> Node {
+        self.expect_reserved("(");
+        let bounds_start = self.pending_bounds.len();
+        let operand = self.assign();
+        self.expect_reserved(")");
+        let has_bounds = self.pending_bounds.len() != bounds_start;
+        self.pending_bounds.truncate(bounds_start);
+        let literal = operand.nt == NodeType::Num
+            || (operand.nt == NodeType::GlobalVar
+                && operand
+                    .token
+                    .as_ref()
+                    .is_some_and(|token| token.tt == TokenType::Str));
+        let known = !has_bounds
+            && !operand.has_side_effects()
+            && (literal || self.foldable_integer_constant(&operand));
+        Node::new_with_num(Some(token), usize::from(known))
+    }
+
     fn bit_scan_builtin(&mut self, token: Token, bits: u8, leading: bool) -> Node {
         self.expect_reserved("(");
         let mut argument = self.assign();
@@ -5512,6 +5574,9 @@ impl<'a> AstBuilderImpl<'a> {
                 "__builtin_fabsf" | "__builtin_fabs" | "__builtin_fabsl"
             ) {
                 return self.floating_abs_builtin(t);
+            }
+            if t.s_value == "__builtin_constant_p" {
+                return self.constant_query_builtin(t);
             }
             if let Some((bits, leading)) = match t.s_value.as_str() {
                 "__builtin_clz" => Some((32, true)),
