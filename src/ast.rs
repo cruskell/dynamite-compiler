@@ -4606,6 +4606,52 @@ impl<'a> AstBuilderImpl<'a> {
         expression
     }
 
+    fn branch_expectation_builtin(&mut self, token: Token) -> Node {
+        self.expect_reserved("(");
+        let value = self.assign();
+        self.expect_reserved(",");
+        let expected = self.assign();
+        self.expect_reserved(")");
+        let ty = Type::integer(64, true);
+        self.expect_conversion(&ty, &value);
+        self.expect_conversion(&ty, &expected);
+        let cast = |operand| Node {
+            nt: NodeType::Cast,
+            cty: Some(ty.clone()),
+            lhs: Some(Box::new(operand)),
+            token: Some(token.clone()),
+            ..Node::default()
+        };
+        let value = cast(value);
+        if !expected.has_side_effects() {
+            return value;
+        }
+        if self.return_type.is_none() {
+            self.error_logger
+                .print_error_position(token.pos, "branch expectation is not a constant expression");
+        }
+        let expected = cast(expected);
+        let temporary = self.register_local_variable(
+            Token {
+                s_value: format!(".expect.{}.{}", token.pos, self.offset_size),
+                ..token.clone()
+            },
+            ty,
+        );
+        let save = Node::new_with_op(
+            Some(token.clone()),
+            NodeType::Assign,
+            temporary.clone(),
+            value,
+        );
+        Node {
+            nt: NodeType::Sequence,
+            token: Some(token),
+            children: vec![save, expected, temporary],
+            ..Node::default()
+        }
+    }
+
     fn checked_memory_builtin(&mut self, token: Token) -> Node {
         if self.tokens[self.cur].s_value != "(" {
             self.error_logger
@@ -4791,6 +4837,9 @@ impl<'a> AstBuilderImpl<'a> {
                 _ => None,
             } {
                 return self.byte_swap_builtin(t, bits);
+            }
+            if t.s_value == "__builtin_expect" {
+                return self.branch_expectation_builtin(t);
             }
             if matches!(
                 t.s_value.as_str(),

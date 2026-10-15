@@ -420,6 +420,14 @@ The final argument supplies the destination's capacity, commonly from
 once, and the result is the destination as `void *`. The operations require a
 compatible checked runtime, as provided by the tested macOS and Linux libcs.
 
+## Branch expectation builtin
+
+`__builtin_expect(value, expected)` converts its operands to `long` and returns
+`value` as an rvalue. Calls, writes, and volatile reads in either operand retain
+their effects and execute once. The prediction is currently ignored by code
+generation; no branch-weight metadata is emitted. Constant-valued uses remain
+available in constant expressions.
+
 ## Byte-swap builtins
 
 `__builtin_bswap16`, `__builtin_bswap32`, and `__builtin_bswap64` convert their

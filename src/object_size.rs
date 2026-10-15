@@ -19,41 +19,6 @@ impl ObjectRegion {
     }
 }
 
-fn has_side_effects(node: &Node, value: bool) -> bool {
-    if matches!(
-        node.nt,
-        NodeType::Assign
-            | NodeType::CallFunc
-            | NodeType::SuffixIncr
-            | NodeType::SuffixDecr
-            | NodeType::VaStart
-            | NodeType::VaEnd
-    ) || (value
-        && node.object_type().is_some_and(|ty| {
-            ty.qualifiers().volatile && !matches!(ty.unqualified(), Type::Arr(..) | Type::Vla(..))
-        }))
-    {
-        return true;
-    }
-    if node.nt == NodeType::Addr {
-        return node
-            .lhs
-            .as_deref()
-            .is_some_and(|child| has_side_effects(child, false));
-    }
-    [
-        &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-    ]
-    .into_iter()
-    .flatten()
-    .any(|child| has_side_effects(child, true))
-        || node
-            .children
-            .iter()
-            .chain(&node.args)
-            .any(|child| has_side_effects(child, true))
-}
-
 impl AstBuilderImpl<'_> {
     fn object_region_lvalue(&mut self, node: &Node) -> Option<ObjectRegion> {
         let ty = node.object_type()?;
@@ -198,7 +163,7 @@ impl AstBuilderImpl<'_> {
                 "object-size mode must be an integer constant from 0 to 3",
             );
         }
-        let size = if has_bounds || has_side_effects(&pointer, true) {
+        let size = if has_bounds || pointer.has_side_effects() {
             None
         } else {
             self.object_size_value(&pointer, mode)
