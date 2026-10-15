@@ -33,6 +33,8 @@ pub struct StructType {
 pub struct StructDefinition {
     pub members: Vec<StructMember>,
     pub is_union: bool,
+    /// Function parameters use the first scalar member's calling convention.
+    pub transparent_union: bool,
     pub has_bit_fields: bool,
     pub has_flexible_array: bool,
     pub size: usize,
@@ -189,11 +191,49 @@ impl Type {
                     && args
                         .iter()
                         .zip(other_args)
-                        .all(|(left, right)| left.compatible(right))
+                        .all(|(left, right)| left.parameter_compatible(right))
                     && result.qualifiers() == other_result.qualifiers()
                     && result.compatible(other_result)
             }
             (left, right) => left == right,
+        }
+    }
+
+    /// Return the scalar members of a validated GNU transparent union.
+    pub fn transparent_union_members(&self) -> Option<Vec<StructMember>> {
+        let Self::Struct(record) = self.unqualified() else {
+            return None;
+        };
+        if record.definition().borrow().transparent_union {
+            Some(record.members())
+        } else {
+            None
+        }
+    }
+
+    fn parameter_compatible(&self, other: &Self) -> bool {
+        match (
+            self.transparent_union_members(),
+            other.transparent_union_members(),
+        ) {
+            (Some(_), Some(_)) | (None, None) => self.compatible(other),
+            (Some(members), None) => members.iter().any(|member| member.ty.compatible(other)),
+            (None, Some(members)) => members.iter().any(|member| self.compatible(&member.ty)),
+        }
+    }
+
+    /// Normalize a transparent-union parameter without changing ordinary union values or results.
+    pub fn parameter_for_codegen(&self) -> Self {
+        if let Some(members) = self.transparent_union_members() {
+            let first = &members[0].ty;
+            if matches!(first.unqualified(), Self::Ptr(_)) {
+                // Opaque pointer ABI types also break recursive callback parameter types.
+                Self::Ptr(Box::new(Self::Void))
+            } else {
+                first.lowered_for_codegen()
+            }
+        } else {
+            self.lowered_for_codegen()
         }
     }
 
@@ -424,11 +464,11 @@ impl Type {
             Self::Arr(child, size) => Self::Arr(Box::new(child.lowered_for_codegen()), *size),
             Self::Vla(child, offset) => Self::Vla(Box::new(child.lowered_for_codegen()), *offset),
             Self::Func(args, result) => Self::Func(
-                args.iter().map(Self::lowered_for_codegen).collect(),
+                args.iter().map(Self::parameter_for_codegen).collect(),
                 Box::new(result.lowered_for_codegen()),
             ),
             Self::VariadicFunc(args, result) => Self::VariadicFunc(
-                args.iter().map(Self::lowered_for_codegen).collect(),
+                args.iter().map(Self::parameter_for_codegen).collect(),
                 Box::new(result.lowered_for_codegen()),
             ),
             _ => self.clone(),
