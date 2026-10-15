@@ -2309,3 +2309,129 @@ fn invalid_member_alignment_is_diagnosed(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn pragma_pack_preserves_storage_and_clang_calls(output_option: &str, optimization: &str) {
+    let shared = r#"
+#include <stdarg.h>
+#pragma pack(push,one,1)
+struct P1{char c;int x;short y;};
+union U1{long number;int *pointer;};
+struct B1{unsigned char a:3;unsigned char b:4;};
+#pragma pack(push,two,2)
+struct P2{char c;int x;short y;};
+#pragma pack(push,four,4)
+struct P4{char c;long x;};
+struct Capped{char c;long x __attribute__((aligned(16)));};
+struct CappedAlignas{char c;_Alignas(16) long x;};
+struct Raised{char c;long x;} __attribute__((aligned(16)));
+struct B4{char c;unsigned int a:3;unsigned int b:4;};
+struct Hfa{double x;double y;};
+#pragma pack(pop,four)
+struct Parent{char c;struct P4 child;struct P1 array[2];union U1 choice;};
+#pragma pack(pop,one)
+struct Natural{char c;long x;};
+struct AtStart{char c;
+#pragma pack(push,1)
+long x;};
+#pragma pack(pop)
+#pragma pack(push,8)
+struct P8{char c;long x;};
+#pragma pack(16)
+struct P16{char c;_Alignas(16) long x;};
+#pragma pack(0)
+struct Reset{char c;long x;};
+#pragma pack(pop)
+#define DEFINE_VAR(name) int name(int n,...){va_list ap;va_start(ap,n);struct P1 p=va_arg(ap,struct P1);struct P4 q=va_arg(ap,struct P4);struct Parent parent=va_arg(ap,struct Parent);struct Hfa h=va_arg(ap,struct Hfa);double d=va_arg(ap,double);va_end(ap);return n!=1 || p.x!=2 || q.x!=5 || parent.child.x!=3 || h.x!=2.5 || d!=7.5;}
+
+"#;
+    let code = [shared,r#"
+DEFINE_VAR(local_var)
+int target[2]={37,41};
+struct Hfa global_hfa={-2.5,3.5};struct P1 zeros;
+_Alignas(8) struct Parent global={1,{2,3},{{4,5,6},{7,8,9}},{.pointer=&target[1]}};
+union U1 union_array[2]={{.pointer=&target[0]},{.number=19}};
+struct B1 byte_bits={5,9};struct B4 word_bits={1,5,9};
+struct P1 local_p1(struct P1 value){value.x+=2;value.y++;return value;}
+struct P4 local_p4(struct P4 value){value.x+=3;return value;}
+struct Hfa local_hfa(struct Hfa value){value.x+=value.y;return value;}
+struct P1 foreign_p1(struct P1);struct P4 foreign_p4(struct P4);struct Hfa foreign_hfa(struct Hfa);
+int foreign_var(int,...);int call_local_var(struct P1,struct P4,struct Parent,struct Hfa);
+int mutate_copy(struct Parent);
+int check(struct Parent *,union U1 *,struct B1 *,struct B4 *,struct P1,struct P4);
+int main(){
+    struct Parent local=global;struct P1 p={1,2,3};struct P4 q={4,5};struct Hfa h={2.5,3.5};
+    volatile struct P1 v={1,2,3};v.x++;v.y+=2;local.array[1].x++;
+    if(foreign_var(1,p,q,local,h,7.5) || call_local_var(p,q,local,h))return 2;
+    for(int i=0;i<4;i++)if(mutate_copy(local)!=99 || local.child.x!=3)return 3;
+    p=foreign_p1(p);q=foreign_p4(q);h=foreign_hfa(h);
+    return check(&local,union_array,&byte_bits,&word_bits,p,q)
+        || v.x!=3 || v.y!=5 || h.x!=6.0 || h.y!=3.5
+        || global_hfa.x!=-2.5 || global_hfa.y!=3.5 || zeros.x!=0 || zeros.y!=0
+        || sizeof(struct P1)!=7 || _Alignof(struct P1)!=1 || __builtin_offsetof(struct P1,x)!=1
+        || sizeof(struct P2)!=8 || _Alignof(struct P2)!=2 || __builtin_offsetof(struct P2,x)!=2
+        || sizeof(struct P4)!=12 || _Alignof(struct P4)!=4 || __builtin_offsetof(struct P4,x)!=4
+        || sizeof(struct Capped)!=12 || __builtin_offsetof(struct Capped,x)!=4
+        || sizeof(struct CappedAlignas)!=12 || __builtin_offsetof(struct CappedAlignas,x)!=4
+        || sizeof(struct Raised)!=16 || _Alignof(struct Raised)!=16
+        || sizeof(struct Natural)!=16 || sizeof(struct AtStart)!=16 || sizeof(struct Reset)!=16
+        || sizeof(struct P8)!=16 || sizeof(struct P16)!=32 || sizeof(struct B1)!=1 || sizeof(struct B4)!=4;
+}
+"#].concat();
+    let companion = [
+        shared,
+        r#"
+DEFINE_VAR(foreign_var)
+int local_var(int,...);
+int call_local_var(struct P1 p,struct P4 q,struct Parent parent,struct Hfa h){return local_var(1,p,q,parent,h,7.5);}
+int mutate_copy(struct Parent parent){parent.child.x=99;return parent.child.x;}
+struct P1 local_p1(struct P1);struct P4 local_p4(struct P4);struct Hfa local_hfa(struct Hfa);
+struct P1 foreign_p1(struct P1 p){return local_p1(p);}
+struct P4 foreign_p4(struct P4 p){return local_p4(p);}
+struct Hfa foreign_hfa(struct Hfa p){return local_hfa(p);}
+int check(struct Parent *p,union U1 *unions,struct B1 *b,struct B4 *w,struct P1 x,struct P4 y){
+    return p->c!=1 || p->child.c!=2 || p->child.x!=3 || p->array[1].x!=9
+        || *p->choice.pointer!=41 || *unions[0].pointer!=37 || unions[1].number!=19
+        || b->a!=5 || b->b!=9 || w->a!=5 || w->b!=9 || x.x!=4 || x.y!=4 || y.x!=8
+        || sizeof(*p)!=36 || _Alignof(struct Parent)!=2;
+}
+"#,
+    ]
+    .concat();
+    // Mach-O chained fixups cannot encode every unaligned static pointer.
+    // This linker option also permits the same packed definitions from Clang.
+    let mut flags = vec![optimization];
+    if cfg!(target_os = "macos") {
+        flags.push("-Wl,-no_fixup_chains");
+    }
+    let result = compile_and_run_with_c_flags(&code, output_option, Some(&companion), &flags);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "#pragma pack(1)\nstruct S{unsigned int x:3;};",
+    "#pragma pack(4)\nstruct S{unsigned long x:3;};",
+], ["asm", "llvm"])]
+fn unsupported_packed_bit_field_storage_is_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn pragma_pack_expands_from_macros_and_restores_layout(output_option: &str) {
+    let code = r#"
+#define PACK _Pragma("pack(push,1)")
+#define RESTORE _Pragma("pack(pop)")
+PACK
+struct Packed{char c;long x;};
+RESTORE
+struct Restored{char c;long x;};
+_Static_assert(sizeof(struct Packed)==9,"packed size");
+_Static_assert(__builtin_offsetof(struct Packed,x)==1,"packed offset");
+_Static_assert(sizeof(struct Restored)==16,"restored size");
+int main(){struct Packed p={1,7};return p.x!=7;}
+"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}

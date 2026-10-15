@@ -27,6 +27,8 @@ pub struct StructDefinition {
     pub align: usize,
     /// Member-derived alignment before record-level alignment attributes.
     pub natural_align: usize,
+    /// Pragma pack limit captured at the start of the definition.
+    pub packing: Option<usize>,
     pub complete: bool,
 }
 

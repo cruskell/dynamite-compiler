@@ -18,6 +18,8 @@ impl Default for TokenType {
 pub struct Token {
     pub tt: TokenType,
     pub pos: usize,
+    /// Active pragma pack limit at this source position.
+    pub packing: Option<usize>,
     pub i_value: usize,
     pub s_value: String,
     pub string_encoding: StringEncoding,

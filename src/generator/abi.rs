@@ -101,6 +101,19 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
         }
     }
 }
+fn has_unaligned_member(ty: &Type, offset: usize) -> bool {
+    match ty.unqualified() {
+        Type::Struct(record) => record.members().iter().any(|member| {
+            let offset = offset + member.offset;
+            offset % member.ty.align_of() != 0 || has_unaligned_member(&member.ty, offset)
+        }),
+        Type::Arr(child, count) => {
+            (0..*count).any(|index| has_unaligned_member(child, offset + index * child.size_of()))
+        }
+        _ => false,
+    }
+}
+
 pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
     if let Type::Arr(child, _) = ty.unqualified() {
         return vec![Part {
@@ -121,7 +134,7 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
         }];
     }
     // Flexible tails force SysV memory classification and prevent AAPCS64 HFAs.
-    if ty.has_flexible_array() && matches!(arch, Arch::X86_64) {
+    if matches!(arch, Arch::X86_64) && (ty.has_flexible_array() || has_unaligned_member(ty, 0)) {
         return vec![];
     }
     if matches!(arch, Arch::Aarch64) && !ty.has_flexible_array() {
