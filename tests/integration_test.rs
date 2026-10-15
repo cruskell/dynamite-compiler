@@ -3372,3 +3372,70 @@ fn floating_absolute_builtins_reject_unsupported_long_double(output_option: &str
         .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn floating_infinity_builtins_preserve_bits_types_and_classifiers(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+unsigned int reference32(int);unsigned long reference64(int);
+union Bits32{unsigned int bits;float value;};union Bits64{unsigned long bits;double value;};
+float initial32=__builtin_inff();double initial64=__builtin_huge_val();double zero=1.0/__builtin_inf();
+int finite32(float x){return x==x && __builtin_fabsf(x)!=__builtin_inff();}
+int finite64(double x){return x==x && __builtin_fabs(x)!=__builtin_inf();}
+int main(){
+union Bits32 a,b;a.value=__builtin_inff();b.value=__builtin_huge_valf();
+union Bits64 c,d;c.value=__builtin_inf();d.value=__builtin_huge_val();
+if(a.bits!=reference32(0) || b.bits!=reference32(1) || c.bits!=reference64(0) || d.bits!=reference64(1))return 1;
+if(initial32!=a.value || initial64!=c.value || zero!=0.0 || !(a.value>3e38f) || !(c.value>1e300))return 2;
+if(finite32(a.value) || finite32(-a.value) || finite64(c.value) || finite64(-c.value))return 3;
+if(!finite32(0.0f) || !finite32(-2.5f) || !finite64(0.0) || !finite64(-3.25))return 4;
+a.bits=0x7fc12345u;c.bits=0x7ff8123456789abcul;if(finite32(a.value) || finite64(c.value))return 5;
+return _Generic(__builtin_inff(),float:0,default:1) || _Generic(__builtin_inf(),double:0,default:1) || _Generic(__builtin_huge_valf(),float:0,default:1) || _Generic(__builtin_huge_val(),double:0,default:1);
+}
+"#;
+    let companion = r#"
+#include <string.h>
+unsigned int reference32(int which){float value=which?__builtin_huge_valf():__builtin_inff();unsigned int bits;memcpy(&bits,&value,4);return bits;}
+unsigned long reference64(int which){double value=which?__builtin_huge_val():__builtin_inf();unsigned long bits;memcpy(&bits,&value,8);return bits;}
+"#;
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn floating_infinity_builtins_preserve_binary64_long_double(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = "long double infinity=__builtin_infl();long double huge=__builtin_huge_vall();int main(){return infinity!=huge || !(infinity>1e300L) || __builtin_fabsl(-infinity)!=infinity || _Generic(__builtin_infl(),long double:0,default:1) || _Generic(__builtin_huge_vall(),long double:0,default:1);}";
+    let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){return __builtin_inff(1);}",
+    "int main(){return __builtin_inf(1,2);}",
+    "int main(){return __builtin_huge_valf(1);}",
+    "int main(){return __builtin_huge_val(1);}",
+    "int main(){void *p=__builtin_inf;}",
+], ["asm", "llvm"])]
+fn invalid_floating_infinity_builtins_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[test_matrix(["__builtin_infl", "__builtin_huge_vall"], ["asm", "llvm"])]
+fn floating_infinity_builtins_reject_unsupported_long_double(name: &str, output_option: &str) {
+    let code = format!("double value={name}();");
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(&code, output_option, false))
+            .is_err()
+    );
+}
