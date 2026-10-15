@@ -326,7 +326,12 @@ GNU `__attribute__((...))` syntax accepts common diagnostic, availability,
 format-checking, and optimization annotations without changing execution.
 Both plain and double-underscore attribute names are accepted, including
 annotations after enum constant names. These annotations
-do not enable additional diagnostics or optimizations. Attributes that require
+do not enable additional diagnostics or optimizations. Objective-C bridge and boxing
+annotations (`objc_bridge`, `objc_bridge_mutable`, `objc_boxable`), CoreFoundation
+ownership annotations (`cf_consumed`, `cf_returns_retained`,
+`cf_returns_not_retained`), and Swift importer annotations (`swift_name`,
+`swift_private`, `swift_wrapper`) are accepted as metadata for ordinary C. They
+do not enable Objective-C syntax, ARC, or Swift import generation. Attributes that require
 unsupported layout, linkage, or calling-convention behavior are diagnosed rather
 than silently discarded.
 
