@@ -94,6 +94,8 @@ fixed parameters and retrieve unnamed arguments through the bundled `stdarg.h`.
 
 Parenthesized declarators support function pointers, function-pointer arrays,
 callback parameters, unnamed prototype parameters, and indirect calls.
+Function designators convert to compatible function pointers, ignoring top-level
+parameter qualifiers while preserving qualifications on pointed-to types.
 
 Structs support tags, anonymous typedefs, aligned members, nested aggregates,
 self-referential pointers, member access (`.` and `->`), brace initialization,
