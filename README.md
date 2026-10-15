@@ -676,3 +676,9 @@ macOS ARM64. Linux ARM64 follows AAPCS64 without these extension attributes.
 This applies to direct and indirect calls, fixed variadic parameters and scalar
 parameters/results alongside records. Aggregate coercion types and LLVM function
 types remain unadorned; unnamed variadic arguments retain default promotions.
+
+Character arrays can be initialized by a string literal with optional enclosing
+braces and a trailing comma, such as `char name[] = { "value", };`. The array
+bound includes the terminating zero when inferred; a fixed bound may omit that
+zero when it exactly fits the string. This applies to static and automatic
+storage, aggregate members, compound literals, and supported wide strings.

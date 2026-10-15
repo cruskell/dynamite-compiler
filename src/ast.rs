@@ -851,7 +851,7 @@ impl<'a> AstBuilderImpl<'a> {
         let ty = if matches!(ty, Type::Arr(_, None)) {
             let saved = self.cur;
             self.expect_reserved("=");
-            let count = self.initializer_count();
+            let count = self.initializer_count(&ty);
             self.cur = saved;
             self.infer_array_size(ty, count, &t)
         } else {
@@ -878,8 +878,35 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn initializer_count(&mut self) -> usize {
-        if let Some(token) = self.attempt(TokenType::Str) {
+    fn string_initializer_index(&self, ty: &Type) -> Option<usize> {
+        let index = self.cur + usize::from(self.tokens[self.cur].s_value == "{");
+        let token = self.tokens.get(index)?;
+        if token.tt == TokenType::Str
+            && matches!(ty.unqualified(), Type::Arr(child, _)
+                if child.integer_info().is_some()
+                    && child.size_of() == token.string_encoding.unit_size())
+        {
+            Some(index)
+        } else {
+            None
+        }
+    }
+
+    fn attempt_string_initializer(&mut self, ty: &Type) -> Option<Token> {
+        let index = self.string_initializer_index(ty)?;
+        let braced = index != self.cur;
+        self.cur = index;
+        let token = self.attempt(TokenType::Str).unwrap();
+        if braced {
+            self.attempt_reserved(",");
+            self.expect_reserved("}");
+        }
+        Some(token)
+    }
+
+    fn initializer_count(&mut self, ty: &Type) -> usize {
+        if let Some(index) = self.string_initializer_index(ty) {
+            let token = &self.tokens[index];
             return token.string_bytes.len() / token.string_encoding.unit_size() + 1;
         }
         self.expect_reserved("{");
@@ -2535,10 +2562,7 @@ impl<'a> AstBuilderImpl<'a> {
         Self::set_global_element(&child, &mut elements[path[0]], &path[1..], value);
     }
     fn global_initializer(&mut self, ty: &Type) -> GlobalVariableData {
-        if matches!(ty.unqualified(), Type::Arr(child, _) if child.unqualified().size_of() == self.tokens[self.cur].string_encoding.unit_size())
-            && self.tokens[self.cur].tt == TokenType::Str
-        {
-            let token = self.attempt(TokenType::Str).unwrap();
+        if let Some(token) = self.attempt_string_initializer(ty) {
             let mut bytes = token.string_bytes.clone();
             let unit_size = token.string_encoding.unit_size();
             let Type::Arr(_, size) = ty.unqualified() else {
@@ -3695,39 +3719,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "block extern cannot have an initializer");
                 }
-                if matches!(&ty, Type::Arr(child, _) if child.unqualified().size_of() == self.tokens[self.cur].string_encoding.unit_size())
-                    && self.tokens[self.cur].tt == TokenType::Str
-                {
-                    let string = self.attempt(TokenType::Str).unwrap();
-                    let mut bytes = string.string_bytes.clone();
-                    let Type::Arr(_, size) = &ty else {
-                        unreachable!()
-                    };
-                    let unit_size = string.string_encoding.unit_size();
-                    if size.is_some_and(|size| bytes.len() / unit_size > size) {
-                        self.error_logger
-                            .print_error_position(string.pos, "string initializer is too long");
-                    }
-                    if size.is_none_or(|size| bytes.len() / unit_size < size) {
-                        bytes.extend(vec![0; unit_size]);
-                    }
-                    Some(GlobalVariableData::Arr(
-                        bytes
-                            .chunks(unit_size)
-                            .map(|unit| {
-                                GlobalVariableData::Elem(
-                                    unit.iter()
-                                        .enumerate()
-                                        .map(|(index, byte)| usize::from(*byte) << (index * 8))
-                                        .sum::<usize>()
-                                        .to_string(),
-                                )
-                            })
-                            .collect(),
-                    ))
-                } else {
-                    Some(self.global_initializer(&ty))
-                }
+                Some(self.global_initializer(&ty))
             } else {
                 None
             };
@@ -3959,10 +3951,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn local_variable_initialization(&mut self, node: &Node, assign_token: &Token) -> Node {
-        if matches!(node.resolve_type(), Some(Type::Arr(child, _)) if child.unqualified().size_of() == self.tokens[self.cur].string_encoding.unit_size())
-            && self.tokens[self.cur].tt == TokenType::Str
-        {
-            let token = self.attempt(TokenType::Str).unwrap();
+        if let Some(token) = self.attempt_string_initializer(&node.resolve_type().unwrap()) {
             let bytes = token.string_bytes.clone();
             let unit_size = token.string_encoding.unit_size();
             let Type::Arr(_, size) = node.resolve_type().unwrap() else {
@@ -4546,7 +4535,7 @@ impl<'a> AstBuilderImpl<'a> {
                 if self.tokens[self.cur].s_value == "{" {
                     if matches!(ty, Type::Arr(_, None)) {
                         let saved = self.cur;
-                        let count = self.initializer_count();
+                        let count = self.initializer_count(&ty);
                         self.cur = saved;
                         ty = self.infer_array_size(ty, count, &token);
                     }

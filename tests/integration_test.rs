@@ -595,6 +595,57 @@ fn it_supports_compound_literals(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn braced_string_array_initializers(output_option: &str, optimization: &str) {
+    let code = r#"
+char global[] = { "ab" "c", };
+unsigned char exact[3] = { "abc" };
+char padded[6] = { "ab" };
+char *pointers[] = { "abc" };
+struct S { char text[4]; int value; } record = { { "abc" }, 7 };
+int wide[] = { L"xy", };
+unsigned short utf16[] = { u"xy" };
+int main() {
+    char local[] = { "abc" };
+    static char stored[] = { "abc", };
+    char empty[] = { "" };
+    char bounded[5] = { "ab", };
+    char *local_pointers[] = { "abc" };
+    struct S nested = { .text = { "xyz", }, .value = 9 };
+    if (sizeof(global) != 4 || sizeof(local) != 4 || sizeof(stored) != 4) return 1;
+    if (global[2] != 'c' || global[3] || local[2] != 'c' || stored[3]) return 2;
+    if (exact[2] != 'c' || padded[2] || padded[5] || bounded[4]) return 3;
+    if (sizeof(empty) != 1 || empty[0]) return 4;
+    if (sizeof(pointers) != sizeof(void*) || sizeof(local_pointers) != sizeof(void*)) return 5;
+    if (pointers[0][2] != 'c' || local_pointers[0][0] != 'a') return 6;
+    if (record.text[2] != 'c' || record.value != 7 || nested.text[2] != 'z' || nested.value != 9) return 7;
+    if (sizeof(wide) != 12 || wide[1] != 'y' || wide[2]) return 8;
+    if (sizeof(utf16) != 6 || utf16[1] != 'y' || utf16[2]) return 9;
+    if (sizeof((char[]){ "abc" }) != 4 || ((char[]){ "xy" })[1] != 'y') return 10;
+    return 0;
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "char a[2] = { \"abc\" }; int main(){return 0;}",
+    "int main(){char a[2] = { \"abc\" };return 0;}",
+    "char a[] = { \"ab\", 1 };int main(){return 0;}",
+    "int main(){char a[] = { \"ab\", 1 };return 0;}"
+], ["asm", "llvm"])]
+fn invalid_braced_string_array_initializers(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
+
 #[test_matrix([
     "int main(){int a[4]={[2]=7,[0]=3};return a[0]+a[1]+a[2]+a[3]-10;}",
     "int a[]={[3]=7,9};int main(){return sizeof(a)+a[0]+a[4]-29;}",
