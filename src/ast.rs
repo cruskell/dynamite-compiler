@@ -1542,14 +1542,16 @@ impl<'a> AstBuilderImpl<'a> {
         let base = self.expect_type();
         loop {
             let (token, ty) = self.expect_ident_with_type(base.clone());
-            if self
-                .scope_stack
-                .last()
-                .unwrap()
-                .contains_key(&token.s_value)
-            {
-                self.error_logger
-                    .print_error_position(token.pos, "invalid redeclaration");
+            if let Some(previous) = self.scope_stack.last().unwrap().get(&token.s_value) {
+                let valid = matches!(previous, Identifier::TypeDef(previous)
+                    if !previous.is_variably_modified()
+                        && !ty.is_variably_modified()
+                        && previous.qualifiers() == ty.qualifiers()
+                        && previous.compatible(&ty));
+                if !valid {
+                    self.error_logger
+                        .print_error_position(token.pos, "incompatible typedef redeclaration");
+                }
             }
             if self.return_type.is_none() && ty.is_variably_modified() {
                 self.error_logger.print_error_position(

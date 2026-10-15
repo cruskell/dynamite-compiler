@@ -376,3 +376,11 @@ argument to the corresponding unsigned integer width and reverse its bytes.
 Arguments are evaluated once. Integer constant operands are folded, including in
 static initializers and static assertions. Runtime expressions use shared typed
 AST operations, so native assembly and LLVM IR have the same semantics.
+
+## Typedef redeclarations
+
+C11-style same-scope typedef redeclarations are accepted when they name the same
+non-variably-modified type. Type qualifiers, array bounds, and the identifier
+kind must agree. Function parameter top-level qualifiers do not change function
+type compatibility. Inner scopes may still introduce a different typedef with
+the same name.
