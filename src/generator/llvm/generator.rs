@@ -1688,23 +1688,38 @@ impl<'a> IrGenerator<'a> {
         volatile: bool,
         options: &mut Options,
     ) -> Vec<String> {
+        let mut lines = vec![];
+        let input = node
+            .lhs
+            .as_ref()
+            .map(|input| {
+                lines.extend(self.gen_node(input, options));
+                let value = options.register_queue.pop().unwrap();
+                format!("{} {value}", Self::gen_type(input.resolve_type().unwrap()))
+            })
+            .unwrap_or_default();
         let template = render_inline_assembly(&node.dest.replace('$', "$$"), "$0").unwrap();
         let template = template
             .bytes()
             .map(|byte| format!("\\{byte:02X}"))
             .collect::<String>();
-        let constraints = if cfg!(target_arch = "x86_64") {
-            "=r,~{dirflag},~{fpsr},~{flags}"
+        let clobbers = if cfg!(target_arch = "x86_64") {
+            "~{dirflag},~{fpsr},~{flags}"
         } else {
-            "=r,~{cc}"
+            "~{cc}"
         };
+        let constraints = format!(
+            "=r{},{clobbers}",
+            if node.lhs.is_some() { ",0" } else { "" }
+        );
         let result = format!("%{}", options.new_register());
         options.register_queue.push(result.clone());
-        vec![format!(
-            "  {result} = call {} asm {}\"{template}\", \"{constraints}\"()",
+        lines.push(format!(
+            "  {result} = call {} asm {}\"{template}\", \"{constraints}\"({input})",
             Self::gen_type(node.resolve_type().unwrap()),
             if volatile { "sideeffect " } else { "" }
-        )]
+        ));
+        lines
     }
 
     fn gen_node(&self, node: &Node, options: &mut Options) -> Vec<String> {
