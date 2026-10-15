@@ -251,7 +251,7 @@ impl<'a> AsmGenerator<'a> {
                 }
             )
             .into(),
-            Type::Float(_) => format!(
+            Type::Float(_) | Type::LongDouble(_) => format!(
                 "  .{}byte {}",
                 ty.size_of(),
                 if let Some(GlobalVariableData::Elem(value)) = data {

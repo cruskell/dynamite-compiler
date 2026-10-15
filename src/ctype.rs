@@ -115,6 +115,7 @@ pub enum Type {
     Integer { bits: u8, signed: bool },
     Bool,
     Float(u8),
+    LongDouble(u8),
     Ptr(Box<Type>),
     Arr(Box<Type>, usize),
     // The offset names the captured bound; runtime_size computes the language size.
@@ -172,7 +173,7 @@ impl Type {
 
     pub fn float_bits(&self) -> Option<u8> {
         match self.unqualified() {
-            Self::Float(bits) => Some(*bits),
+            Self::Float(bits) | Self::LongDouble(bits) => Some(*bits),
             _ => None,
         }
     }
@@ -220,11 +221,17 @@ impl Type {
     }
     pub fn arithmetic_type(lhs: &Self, rhs: &Self) -> Self {
         if lhs.float_bits().is_some() || rhs.float_bits().is_some() {
-            return Self::Float(
-                lhs.float_bits()
-                    .unwrap_or(0)
-                    .max(rhs.float_bits().unwrap_or(0)),
-            );
+            let bits = lhs
+                .float_bits()
+                .unwrap_or(0)
+                .max(rhs.float_bits().unwrap_or(0));
+            return if matches!(lhs.unqualified(), Self::LongDouble(_))
+                || matches!(rhs.unqualified(), Self::LongDouble(_))
+            {
+                Self::LongDouble(bits)
+            } else {
+                Self::Float(bits)
+            };
         }
         let lhs = lhs.promoted();
         let rhs = rhs.promoted();
@@ -313,7 +320,7 @@ impl Type {
             Type::I32 => 4,
             Type::Integer { bits, .. } => (*bits as usize) / 8,
             Type::Bool => 1,
-            Type::Float(bits) => usize::from(*bits) / 8,
+            Type::Float(bits) | Type::LongDouble(bits) => usize::from(*bits) / 8,
             Type::Ptr(_) => 8,
             Type::Arr(t, s) => t.size_of() * s,
             Type::Vla(..) => 8,

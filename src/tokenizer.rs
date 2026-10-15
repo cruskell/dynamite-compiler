@@ -252,7 +252,8 @@ impl Tokenizer {
         }
         let numeric_end = pos;
         let single = bytes.get(pos).is_some_and(|b| matches!(b, b'f' | b'F'));
-        if single {
+        let extended = bytes.get(pos).is_some_and(|b| matches!(b, b'l' | b'L'));
+        if single || extended {
             pos += 1;
         }
         if bytes
@@ -288,7 +289,14 @@ impl Tokenizer {
                 } else {
                     value.to_bits() as usize
                 },
-                s_value: if single { "f" } else { "d" }.into(),
+                s_value: if single {
+                    "f"
+                } else if extended {
+                    "l"
+                } else {
+                    "d"
+                }
+                .into(),
                 ..Token::default()
             },
             pos,

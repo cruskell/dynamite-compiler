@@ -1055,7 +1055,26 @@ impl<'a> AstBuilderImpl<'a> {
             Type::Qualified(Box::new(ty), q)
         })
     }
+    fn long_double_type(&self, token: &Token) -> Type {
+        if !cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+            self.error_logger.print_error_position(
+                token.pos,
+                "long double is only supported on targets with a binary64 long double ABI",
+            );
+        }
+        Type::LongDouble(64)
+    }
+
     fn attempt_unqualified_type(&mut self) -> Option<Type> {
+        if (self.tokens[self.cur].s_value == "long"
+            && self.tokens[self.cur + 1].s_value == "double")
+            || (self.tokens[self.cur].s_value == "double"
+                && self.tokens[self.cur + 1].s_value == "long")
+        {
+            let token = self.tokens[self.cur].clone();
+            self.cur += 2;
+            return Some(self.long_double_type(&token));
+        }
         if let Some(token) = self.attempt_reserved("enum") {
             return Some(self.enum_type(token));
         }
@@ -4052,6 +4071,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 | Type::Integer { .. }
                                 | Type::Bool
                                 | Type::Float(_)
+                                | Type::LongDouble(_)
                                 | Type::Ptr(_)
                                 | Type::Arr(..)
                                 | Type::Vla(..)
@@ -4348,7 +4368,11 @@ impl<'a> AstBuilderImpl<'a> {
             Node {
                 nt: NodeType::Num,
                 value: Some(t.i_value),
-                cty: Some(Type::Float(if t.s_value == "f" { 32 } else { 64 })),
+                cty: Some(if t.s_value == "l" {
+                    self.long_double_type(&t)
+                } else {
+                    Type::Float(if t.s_value == "f" { 32 } else { 64 })
+                }),
                 token: Some(t),
                 ..Node::default()
             }

@@ -198,7 +198,10 @@ Arithmetic, comparisons, scalar conversions, global initializers, pointer
 access, and increment/decrement support floating values. Mixed expressions use
 the usual arithmetic conversions; variadic calls promote `float` to `double`.
 Native calls use the platform floating-register and stack conventions.
-`long double`, floating environment control, and complex types are not supported.
+On macOS AArch64, `long double` is a distinct C type using the platform's
+binary64 representation, including `L` literals, arithmetic, and function calls.
+Other long-double formats are diagnosed as unsupported. Floating environment
+control and complex types are not supported.
 
 ## Aggregate function values
 
