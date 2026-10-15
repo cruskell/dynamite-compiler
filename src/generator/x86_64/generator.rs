@@ -1565,11 +1565,7 @@ impl<'a> AsmGenerator<'a> {
                 let branch_num = node.token.as_ref().unwrap().pos;
                 let v = vec![
                     node.ini.as_ref().map_or(Vec::new().into(), |node| {
-                        vec![
-                            self.gen_node(node, offset, branch_num),
-                            Assembly::inst1(POP, RAX),
-                        ]
-                        .into()
+                        self.gen_statements(std::slice::from_ref(node.as_ref()), offset, branch_num)
                     }),
                     format!("{}:", BeginFlag(branch_num)).into(),
                     node.cond
@@ -1953,6 +1949,7 @@ impl<'a> AsmGenerator<'a> {
                     if matches!(
                         node.nt,
                         NodeType::Block
+                            | NodeType::DefVar
                             | NodeType::If
                             | NodeType::While
                             | NodeType::DoWhile

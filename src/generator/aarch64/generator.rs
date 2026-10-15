@@ -1317,7 +1317,7 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
             NodeType::DefVar => {
-                return vec![self.gen_statements(&node.children, options), Self::push(0)].into();
+                return self.gen_statements(&node.children, options);
             }
             NodeType::CallFunc => {
                 if matches!(node.resolve_type(), Some(Type::Struct(_)))
@@ -1550,7 +1550,7 @@ impl<'a> AsmGenerator<'a> {
                 };
                 let v = vec![
                     node.ini.as_ref().map_or(Vec::new().into(), |node| {
-                        vec![self.gen_node(node, options), Self::pop(X8)].into()
+                        self.gen_statements(std::slice::from_ref(node.as_ref()), options)
                     }),
                     format!("{}:", BeginFlag(branch_num)).into(),
                     node.cond
@@ -1893,6 +1893,7 @@ impl<'a> AsmGenerator<'a> {
                     if matches!(
                         node.nt,
                         NodeType::Block
+                            | NodeType::DefVar
                             | NodeType::If
                             | NodeType::While
                             | NodeType::DoWhile
