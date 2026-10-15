@@ -2531,3 +2531,90 @@ fn invalid_object_size_queries_are_diagnosed(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn checked_memory_builtins_preserve_results_and_single_evaluation(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+char destination[16];const char source[]="abcdef";
+int destinations,sources,counts,bounds,fills;
+char *next_destination(){destinations++;return destination;}
+const char *next_source(){sources++;return source;}
+unsigned long count(unsigned long n){counts++;return n;}
+unsigned long bound(unsigned long n){bounds++;return n;}
+int fill(){fills++;return 256+'X';}
+int main(){
+    void *copied=__builtin___memcpy_chk(next_destination(),next_source(),count(7),bound(__builtin_object_size(destination,0)));
+    void *moved=__builtin___memmove_chk(destination+1,destination,count(6),bound(15));
+    void *set=__builtin___memset_chk(destination+2,fill(),count(2),bound(14));
+    if(__builtin___memcpy_chk(destination,source,0,0)!=destination)return 1;
+    if(__builtin___memmove_chk(destination,destination,0,0)!=destination)return 2;
+    if(__builtin___memset_chk(destination,0,0,0)!=destination)return 3;
+    if(__builtin___memcpy_chk(destination+8,source,7,(unsigned long)-1)!=destination+8)return 4;
+    return copied!=destination || moved!=destination+1 || set!=destination+2
+        || destination[0]!='a' || destination[1]!='a' || destination[2]!='X' || destination[3]!='X'
+        || destination[4]!='d' || destination[6]!='f' || destination[7]!=0 || destination[14]!=0
+        || destinations!=1 || sources!=1 || counts!=3 || bounds!=3 || fills!=1
+        || __builtin_object_size(next_destination(),0)!=(unsigned long)-1 || destinations!=1
+        || _Generic(__builtin___memcpy_chk(destination,source,0,16),void*:0,default:1);
+}
+"#;
+    let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["__builtin___memcpy_chk", "__builtin___memmove_chk", "__builtin___memset_chk"], ["asm", "llvm"], ["-O0", "-O2"])]
+fn checked_memory_builtins_stop_before_overflow(
+    builtin: &str,
+    output_option: &str,
+    optimization: &str,
+) {
+    let second = if builtin == "__builtin___memset_chk" {
+        "0"
+    } else {
+        "source"
+    };
+    let code = format!(
+        r#"
+void install_failure_handler(char *);unsigned long read_count(void);
+int main(){{char destination[4]={{55,55,55,55}};char source[8]={{0}};
+    install_failure_handler(destination);{builtin}(destination,{second},read_count(),__builtin_object_size(destination,0));return 99;}}
+"#
+    );
+    let companion = r#"
+#include <signal.h>
+#include <stdlib.h>
+static volatile unsigned char *watched;
+// Checked libc operations may abort or issue a hardware trap.
+static void on_failure(int number){
+    (void)number;
+    _Exit(watched[0]==55 && watched[1]==55 && watched[2]==55 && watched[3]==55 ? 73 : 74);
+}
+void install_failure_handler(char *value){watched=(unsigned char *)value;signal(SIGABRT,on_failure);signal(SIGTRAP,on_failure);signal(SIGILL,on_failure);}
+unsigned long read_count(void){return 5;}
+"#;
+    let result =
+        compile_and_run_with_c_flags(&code, output_option, Some(companion), &[optimization]);
+    assert_eq!(result.status.code(), Some(73), "{:?}", result);
+}
+
+#[test_matrix([
+    "int main(){char a[2];__builtin___memcpy_chk(a,a,1);}",
+    "int main(){char a[2];__builtin___memmove_chk(a,a,1,2,3);}",
+    "int main(){char a[2];__builtin___memset_chk(1,0,1,2);}",
+    "int main(){char a[2];__builtin___memcpy_chk(a,1,1,2);}",
+    "int main(){char a[2];__builtin___memset_chk(a,a,1,2);}",
+    "int main(){const char a[2]={0};__builtin___memset_chk(a,0,1,2);}",
+    "int main(){char a[2];__builtin___memcpy_chk(a,a,a,2);}",
+    "int __memcpy_chk(int);int main(){char a[2];__builtin___memcpy_chk(a,a,1,2);}",
+    "int main(){void *p=__builtin___memset_chk;}",
+    "typedef int __memcpy_chk;int main(){char a[2];__builtin___memcpy_chk(a,a,1,2);}",
+], ["asm", "llvm"])]
+fn invalid_checked_memory_operands_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

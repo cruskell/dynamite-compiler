@@ -4606,6 +4606,65 @@ impl<'a> AstBuilderImpl<'a> {
         expression
     }
 
+    fn checked_memory_builtin(&mut self, token: Token) -> Node {
+        if self.tokens[self.cur].s_value != "(" {
+            self.error_logger
+                .print_error_position(token.pos, "checked-memory builtin must be called directly");
+        }
+        let pointer = Type::Ptr(Box::new(Type::Void));
+        let const_pointer = Type::Ptr(Box::new(Type::Qualified(
+            Box::new(Type::Void),
+            Qualifiers {
+                constant: true,
+                ..Qualifiers::default()
+            },
+        )));
+        let (name, second) = match token.s_value.as_str() {
+            "__builtin___memcpy_chk" => ("__memcpy_chk", const_pointer),
+            "__builtin___memmove_chk" => ("__memmove_chk", const_pointer),
+            "__builtin___memset_chk" => ("__memset_chk", Type::I32),
+            _ => unreachable!(),
+        };
+        let size = Type::integer(64, false);
+        let ty = Type::Func(
+            vec![pointer.clone(), second, size.clone(), size],
+            Box::new(pointer),
+        );
+        if self.global_variables.contains_key(name)
+            || self.scope_stack[0]
+                .get(name)
+                .is_some_and(|identifier| !matches!(identifier, Identifier::Static(_)))
+        {
+            self.error_logger.print_error_position(
+                token.pos,
+                "checked-memory runtime symbol conflicts with an identifier",
+            );
+        }
+        if let Some(function) = self.functions.get(name) {
+            if !function.cty.compatible(&ty) {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "incompatible checked-memory runtime declaration",
+                );
+            }
+        }
+        self.functions.entry(name.into()).or_insert_with(|| Func {
+            cty: ty.clone(),
+            token: Some(token.clone()),
+            ..Func::default()
+        });
+        self.scope_stack[0]
+            .entry(name.into())
+            .or_insert_with(|| Identifier::Static(ty.clone()));
+        self.postfix(Node {
+            nt: NodeType::GlobalVar,
+            cty: Some(ty),
+            token: Some(token),
+            global_name: name.into(),
+            ..Node::default()
+        })
+    }
+
     fn byte_swap_builtin(&mut self, token: Token, bits: u8) -> Node {
         self.expect_reserved("(");
         let mut argument = self.assign();
@@ -4732,6 +4791,12 @@ impl<'a> AstBuilderImpl<'a> {
                 _ => None,
             } {
                 return self.byte_swap_builtin(t, bits);
+            }
+            if matches!(
+                t.s_value.as_str(),
+                "__builtin___memcpy_chk" | "__builtin___memmove_chk" | "__builtin___memset_chk"
+            ) {
+                return self.checked_memory_builtin(t);
             }
             if t.s_value == "__builtin_object_size" {
                 return self.object_size_builtin(t);
