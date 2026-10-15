@@ -718,3 +718,10 @@ of leading or trailing zero bits after conversion to the declared unsigned
 argument width. Their GNU contract requires a nonzero operand. Constant inputs
 are folded, and runtime inputs are evaluated once using shared integer operations
 without target-specific instructions or runtime library calls.
+
+`__builtin_constant_p(expression)` returns an int constant without evaluating its
+operand or variable-array bounds. It recognizes numeric/string literals and
+foldable integer expressions, conservatively returning zero for object reads,
+calls and expressions with side effects. It does not perform data-flow constant
+propagation or general floating-expression analysis. Invalid division and shift
+operations are not classified as known constants.
