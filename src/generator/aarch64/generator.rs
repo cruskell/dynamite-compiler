@@ -49,6 +49,14 @@ impl<'a> AsmGenerator<'a> {
         }
     }
     fn generate(&self, ast: ProgramAst) -> Box<dyn crate::generator::Assembly> {
+        if ast
+            .global_variables
+            .values()
+            .any(|object| object.thread_local)
+        {
+            self.error_logger
+                .print_error_position(0, "thread-local storage requires the LLVM backend");
+        }
         let generator = Self {
             error_logger: self.error_logger,
             target_os: self.target_os,

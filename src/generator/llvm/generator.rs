@@ -1487,7 +1487,6 @@ impl<'a> IrGenerator<'a> {
                 };
                 if node.thread_local {
                     let register = options.new_register();
-                    options.register_queue.push(format!("%{}", register));
                     vec![format!(
                         "  %{} = call ptr @llvm.threadlocal.address.p0(ptr {})",
                         register, symbol

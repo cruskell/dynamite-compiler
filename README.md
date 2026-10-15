@@ -763,3 +763,13 @@ These operations retain sequentially consistent ordering. Native x86_64 uses
 locked compare-exchange loops, AArch64 uses acquire/release exclusive loops, and
 LLVM uses atomic read-modify-write instructions. Arguments are captured before
 retry loops, so contention does not repeat their side effects.
+
+## Thread-local storage
+
+`_Thread_local` and GNU `__thread` declarations use per-thread storage with the
+LLVM backend, including file-scope definitions, external declarations and
+block-scope static objects. File-scope declarations may omit `static` or `extern`;
+block-scope declarations require one of them. Initial values and mutations are
+independent in each thread, and external TLS symbols interoperate with Clang.
+Native assembly backends diagnose thread-local declarations because they do not
+yet implement TLS addressing and object-file directives.
