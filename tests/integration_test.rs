@@ -1429,3 +1429,24 @@ fn builtin_va_list_interoperates_with_system_c(output_option: &str) {
         Some(0)
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn declaration_metadata_attributes_preserve_execution(output_option: &str) {
+    let code = r#"__attribute__((unused)) static int calls;int add(int n __attribute__((unused))) __attribute__((__warn_unused_result__, availability(macos,introduced=10.10)));__attribute__((noinline)) int add(int n){calls++;return n+1;}typedef int scalar __attribute__((deprecated("message with ) parentheses")));struct __attribute__((deprecated)) Pair{int a;int b;};enum __attribute__((flag_enum,enum_extensibility(open))) Flags{Flag=1};int main(){__attribute__((unused)) static int local=Flag;scalar n=3;int (*p)(int) __attribute__((unused))=add;struct Pair pair={1,2};int result=p(n);return result+calls+pair.a+pair.b+local-9;}"#;
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "struct __attribute__((packed)) S{int x;};",
+    "int value __attribute__((aligned(32)));",
+    "int value __attribute__((vector_size(16)));",
+    "int value __attribute__((unknown_attribute));",
+    "int value __attribute__((deprecated(\"unterminated\");",
+    "int value __attribute__((unused);",
+], ["asm", "llvm"])]
+fn unsupported_or_malformed_attributes_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}
