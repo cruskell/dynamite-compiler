@@ -1498,3 +1498,21 @@ fn invalid_assembler_labels_are_diagnosed(code: &str, output_option: &str) {
             .is_err()
     );
 }
+
+#[test_matrix(["asm", "llvm"])]
+fn pointer_nullability_preserves_types_and_execution(output_option: &str) {
+    let code = "typedef int *Handle;int read_value(int * _Nonnull p){return *p;}struct API{int (* _Nullable callback)(int*);};int main(){int n=7;Handle _Nullable p=&n;int *const _Null_unspecified same=p;struct API api={read_value};int result=api.callback(same);int * _Nullable_result empty=0;return result-7+(empty!=0);}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "int _Nullable value;",
+    "int * _Nonnull _Nullable p;",
+    "int main(){int x=1;int * _Nonnull const p=&x;p=0;return 0;}",
+], ["asm", "llvm"])]
+fn invalid_nullability_and_const_pointer_writes_are_diagnosed(code: &str, output_option: &str) {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
+            .is_err()
+    );
+}

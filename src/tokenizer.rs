@@ -7,7 +7,7 @@ pub const TYPES: [&str; 11] = [
     "int", "char", "void", "short", "long", "signed", "unsigned", "_Bool", "bool", "float",
     "double",
 ];
-const RESERVED_WORDS: [&str; 30] = [
+const RESERVED_WORDS: [&str; 34] = [
     "return",
     "if",
     "else",
@@ -38,6 +38,10 @@ const RESERVED_WORDS: [&str; 30] = [
     "_Alignof",
     "_Alignas",
     "_Thread_local",
+    "_Nullable",
+    "_Nonnull",
+    "_Null_unspecified",
+    "_Nullable_result",
 ];
 
 const RESERVED_SYMBOLS: [&str; 51] = [

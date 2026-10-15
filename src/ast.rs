@@ -13,6 +13,14 @@ mod varargs;
 mod vla;
 
 #[derive(Clone, Copy, PartialEq)]
+enum Nullability {
+    Nullable,
+    Nonnull,
+    Unspecified,
+    NullableResult,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 enum AutomaticStorage {
     Default,
     Auto,
@@ -497,7 +505,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.declaration_annotations();
         let mut pointers = vec![];
         while self.attempt_reserved("*").is_some() {
-            pointers.push(self.attempt_qualifiers());
+            pointers.push(self.pointer_qualifiers());
         }
         let mut direct = if self.attempt_reserved("(").is_some() {
             let inner = self.declarator();
@@ -920,6 +928,39 @@ impl<'a> AstBuilderImpl<'a> {
         Some((ty, storage, alignment))
     }
 
+    fn nullability(&self) -> Option<Nullability> {
+        match self.tokens[self.cur].s_value.as_str() {
+            "_Nullable" => Some(Nullability::Nullable),
+            "_Nonnull" => Some(Nullability::Nonnull),
+            "_Null_unspecified" => Some(Nullability::Unspecified),
+            "_Nullable_result" => Some(Nullability::NullableResult),
+            _ => None,
+        }
+    }
+
+    fn pointer_qualifiers(&mut self) -> Qualifiers {
+        let mut qualifiers = Qualifiers::default();
+        let mut nullability = None;
+        loop {
+            let current = self.attempt_qualifiers();
+            qualifiers.constant |= current.constant;
+            qualifiers.volatile |= current.volatile;
+            qualifiers.restricted |= current.restricted;
+            let Some(annotation) = self.nullability() else {
+                break;
+            };
+            if nullability.is_some_and(|previous| previous != annotation) {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur].pos,
+                    "conflicting pointer nullability annotations",
+                );
+            }
+            nullability = Some(annotation);
+            self.cur += 1;
+        }
+        qualifiers
+    }
+
     fn attempt_qualifiers(&mut self) -> Qualifiers {
         let mut q = Qualifiers::default();
         loop {
@@ -985,7 +1026,18 @@ impl<'a> AstBuilderImpl<'a> {
             self.cur = saved;
             return None;
         };
-        let suffix = self.attempt_qualifiers();
+        let suffix = if matches!(ty.unqualified(), Type::Ptr(_)) {
+            self.pointer_qualifiers()
+        } else {
+            let qualifiers = self.attempt_qualifiers();
+            if self.nullability().is_some() {
+                self.error_logger.print_error_position(
+                    self.tokens[self.cur].pos,
+                    "nullability requires a pointer type",
+                );
+            }
+            qualifiers
+        };
         q.constant |= suffix.constant;
         q.volatile |= suffix.volatile;
         q.restricted |= suffix.restricted;
