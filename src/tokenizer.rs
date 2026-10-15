@@ -23,7 +23,8 @@ pub const TYPES: [&str; 18] = [
     "__int128_t",
     "__uint128_t",
 ];
-const RESERVED_WORDS: [&str; 37] = [
+const RESERVED_WORDS: [&str; 38] = [
+    "__extension__",
     "return",
     "if",
     "else",

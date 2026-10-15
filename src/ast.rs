@@ -21,6 +21,8 @@ mod object_size;
 mod overflow;
 #[path = "prefetch.rs"]
 mod prefetch;
+#[path = "statement_expression.rs"]
+mod statement_expression;
 #[path = "type_query.rs"]
 mod type_query;
 #[path = "varargs.rs"]
@@ -2399,6 +2401,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn global_definition(&mut self) {
+        while self.attempt_reserved("__extension__").is_some() {}
         if self.attempt_static_assert() {
             return;
         }
@@ -3899,6 +3902,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn stmt(&mut self) -> Node {
+        while self.attempt_reserved("__extension__").is_some() {}
         self.declaration_attributes(false, None, true);
         if matches!(
             self.tokens[self.cur].s_value.as_str(),
@@ -4848,6 +4852,17 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     pub fn consume_block(&mut self) -> Option<Node> {
+        let (token, mut children, cleanup) = self.consume_block_parts()?;
+        children.extend(cleanup);
+        Some(Node {
+            token: Some(token),
+            nt: NodeType::Block,
+            children,
+            ..Node::default()
+        })
+    }
+
+    fn consume_block_parts(&mut self) -> Option<(Token, Vec<Node>, Vec<Node>)> {
         if let Some(t) = self.attempt_reserved("{") {
             self.scope_stack.push(HashMap::new());
             let object_depth = self.dynamic_objects.len();
@@ -4856,16 +4871,11 @@ impl<'a> AstBuilderImpl<'a> {
             while self.attempt_reserved("}").is_none() {
                 children.push(self.stmt());
             }
-            children.extend(self.cleanup_arrays(object_depth));
+            let cleanup = self.cleanup_arrays(object_depth);
             self.dynamic_objects.truncate(object_depth);
             self.vla_active.truncate(bound_depth);
             self.scope_stack.pop();
-            Some(Node {
-                token: Some(t),
-                nt: NodeType::Block,
-                children,
-                ..Node::default()
-            })
+            Some((t, children, cleanup))
         } else {
             None
         }
@@ -5239,6 +5249,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
     fn unary(&mut self) -> Node {
+        while self.attempt_reserved("__extension__").is_some() {}
         let saved = self.cur;
         if let Some(token) = self.attempt_reserved("(") {
             let pending_start = self.pending_bounds.len();
@@ -6227,10 +6238,16 @@ impl<'a> AstBuilderImpl<'a> {
     fn prim(&mut self) -> Node {
         let node = if let Some(token) = self.attempt_reserved("_Generic") {
             self.generic_selection(token)
-        } else if self.attempt_reserved("(").is_some() {
-            let node = self.expr();
-            self.expect_reserved(")");
-            node
+        } else if let Some(token) = self.attempt_reserved("(") {
+            if self.tokens[self.cur].tt == TokenType::Reserved
+                && self.tokens[self.cur].s_value == "{"
+            {
+                self.statement_expression(token)
+            } else {
+                let node = self.expr();
+                self.expect_reserved(")");
+                node
+            }
         } else if let Some(t) = self.attempt(TokenType::Str) {
             // String literal
             let element_type = match t.string_encoding {
