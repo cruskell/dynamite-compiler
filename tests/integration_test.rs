@@ -133,6 +133,24 @@ fn compile_and_run_with_c(code: &str, output_option: &str, companion: Option<&st
     compile_and_run_with_c_flags(code, output_option, companion, &[])
 }
 
+fn generated_program_timeout() -> std::time::Duration {
+    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+    {
+        static APPLE_SILICON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let translated = APPLE_SILICON.get_or_init(|| {
+            Command::new("/usr/sbin/sysctl")
+                .args(["-n", "hw.optional.arm64"])
+                .output()
+                .is_ok_and(|output| output.status.success() && output.stdout.trim_ascii() == b"1")
+        });
+        if *translated {
+            // Translated x86_64 startup can exceed the native execution budget.
+            return std::time::Duration::from_secs(60);
+        }
+    }
+    std::time::Duration::from_secs(10)
+}
+
 fn compile_and_run_with_c_flags(
     code: &str,
     output_option: &str,
@@ -187,9 +205,9 @@ fn compile_and_run_with_c_flags(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + generated_program_timeout();
     while child.try_wait().unwrap().is_none() {
-        if std::time::Instant::now() >= deadline {
+        if std::time::Instant::now() >= deadline && child.try_wait().unwrap().is_none() {
             child.kill().unwrap();
             child.wait().unwrap();
             remove_file(binary_name).unwrap();

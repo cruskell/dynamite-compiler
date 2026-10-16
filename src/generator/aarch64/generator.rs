@@ -1249,7 +1249,39 @@ impl<'a> AsmGenerator<'a> {
         lines.into()
     }
 
+    // Keep recursive logical chains out of the large dispatch frame in debug builds.
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
+        match node.nt {
+            NodeType::LogicalAnd | NodeType::LogicalOr => self.gen_logical(node, options),
+            _ => self.gen_node_inner(node, options),
+        }
+    }
+
+    fn gen_logical(&self, node: &Node, options: Options) -> Assembly {
+        let branch_num = node.token.as_ref().unwrap().pos;
+        vec![
+            self.gen_node(node.lhs.as_ref().unwrap(), options),
+            Self::pop(X8),
+            Assembly::inst2(CMP, X8, 0),
+            Assembly::inst1(
+                if node.nt == NodeType::LogicalAnd {
+                    JE
+                } else {
+                    JNE
+                },
+                EndFlag(branch_num),
+            ),
+            self.gen_node(node.rhs.as_ref().unwrap(), options),
+            Self::pop(X8),
+            format!("{}:", EndFlag(branch_num)).into(),
+            Assembly::inst2(CMP, X8, 0),
+            Assembly::inst2(CSET, X8, "ne"),
+            Self::push(X8),
+        ]
+        .into()
+    }
+
+    fn gen_node_inner(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
             NodeType::Prefetch(write, locality) => {
                 return self.gen_prefetch(node, write, locality, options);
@@ -1788,38 +1820,6 @@ impl<'a> AsmGenerator<'a> {
                     Self::pop(X8),
                     Assembly::inst2(MVN, X8, X8),
                     Self::normalize_integer(&node.resolve_type().unwrap(), X8),
-                    Self::push(X8),
-                ]
-                .into();
-            }
-            NodeType::LogicalAnd => {
-                let branch_num = node.token.as_ref().unwrap().pos;
-                return vec![
-                    self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    Assembly::inst2(CMP, X8, 0),
-                    Assembly::inst1(JE, EndFlag(branch_num)),
-                    self.gen_node(node.rhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    format!("{}:", EndFlag(branch_num)).into(),
-                    Assembly::inst2(CMP, X8, 0),
-                    Assembly::inst2(CSET, X8, "ne"),
-                    Self::push(X8),
-                ]
-                .into();
-            }
-            NodeType::LogicalOr => {
-                let branch_num = node.token.as_ref().unwrap().pos;
-                return vec![
-                    self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    Assembly::inst2(CMP, X8, 0),
-                    Assembly::inst1(JNE, EndFlag(branch_num)),
-                    self.gen_node(node.rhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    format!("{}:", EndFlag(branch_num)).into(),
-                    Assembly::inst2(CMP, X8, 0),
-                    Assembly::inst2(CSET, X8, "ne"),
                     Self::push(X8),
                 ]
                 .into();
