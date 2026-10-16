@@ -291,7 +291,19 @@ impl<'a> AsmGenerator<'a> {
             Type::Integer128 { .. } => "  .zero 16".into(),
             Type::Float16 => "  .zero 2".into(),
             Type::Vector(..) => format!("  .zero {}", ty.size_of()).into(),
-            Type::LongDouble(bits) if *bits != 64 => "  .zero 16".into(),
+            Type::LongDouble(bits) if *bits != 64 => {
+                let value = if let Some(GlobalVariableData::Elem(value)) = data {
+                    value.parse::<u128>().unwrap()
+                } else {
+                    0
+                };
+                format!(
+                    "  .8byte {}\n  .8byte {}",
+                    value as u64,
+                    (value >> 64) as u64
+                )
+                .into()
+            }
             Type::Float(_) | Type::LongDouble(_) => format!(
                 "  .{}byte {}",
                 ty.size_of(),
@@ -370,6 +382,22 @@ impl<'a> AsmGenerator<'a> {
     }
 
     fn gen_func(&self, name: &str, func: &Func, offset: usize) -> Assembly {
+        if func.body.is_some()
+            && func
+                .cty
+                .function_signature_ref()
+                .is_some_and(|(args, result, _)| {
+                    args.iter()
+                        .chain(std::iter::once(result))
+                        .any(Type::contains_extended_long_double)
+                })
+        {
+            self.error_logger.print_error_position(
+                func.token.as_ref().map_or(0, |token| token.pos),
+                "extended long double function definitions require the LLVM backend",
+            );
+        }
+
         if func.body.is_none() || func.inline_only() {
             return if func.weak_import {
                 self.weak_reference(name)
@@ -1252,6 +1280,15 @@ impl<'a> AsmGenerator<'a> {
 
     // Keep recursive logical chains out of the large dispatch frame in debug builds.
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
+        if node
+            .resolve_type_view()
+            .is_some_and(|ty| matches!(ty.unqualified(), Type::LongDouble(80 | 128)))
+        {
+            self.error_logger.print_error_position(
+                node.token.as_ref().map_or(0, |token| token.pos),
+                "extended long double value operations require the LLVM backend",
+            );
+        }
         if node.nt == NodeType::StackAlloc {
             self.error_logger.print_error_position(
                 node.token.as_ref().unwrap().pos,

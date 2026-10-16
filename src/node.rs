@@ -156,6 +156,7 @@ pub struct Node {
     pub rhs: Option<Box<Node>>,
     // for number
     pub value: Option<usize>,
+    pub extended_float: Option<Box<u128>>,
     // for "if", "for", "while" statement
     pub cond: Option<Box<Node>>,
     pub then: Option<Box<Node>>,

@@ -1147,6 +1147,26 @@ fn native_alloca_has_a_source_diagnostic() {
     assert!(message.contains("alloca requires the LLVM backend") && message.contains('^'));
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn memory_builtins_call_the_runtime_once(output_option: &str, optimization: &str) {
+    let code = "int calls;int size(void){calls++;return 4;}int main(){char a[8]={1,2,3,4};char b[8]={};void *p=__builtin_memcpy(b,a,size());if(p!=b || calls!=1 || b[3]!=4)return 1;p=__builtin_memmove(b+1,b,4);if(p!=b+1 || b[1]!=1 || b[4]!=4)return 2;p=__builtin_memset(b,257,size());return p!=b || calls!=2 || b[0]!=1 || b[3]!=1 || b[4]!=4;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "int main(){char a[4];__builtin_memset(a,0);return 0;}",
+    "int main(){char a[4];__builtin_memcpy(a,1,4);return 0;}",
+    "int main(){char a[4];__builtin_memmove(a,a,4,4);return 0;}",
+])]
+fn invalid_memory_builtins_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn array_parameter_declarators(output_option: &str) {
     let code = "int sum(int n,int a[*]);int sum(int n,int a[const static n]){return a[0]+a[n-1]+sizeof(a);}int matrix(int n,int a[*][*]);int matrix(int n,int a[volatile static 2][n]){return a[1][n-1];}int main(){int a[3]={2,3,5};int b[2][3]={{0},{0,0,7}};return sum(3,a)+matrix(3,b)-22;}";
@@ -3391,7 +3411,10 @@ fn rejects_unsupported_raised_typedef_uses(code: &str) {
     assert_frontend_error(code);
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(not(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_os = "macos")
+)))]
 #[test_matrix([
     "long double value=1.0L;",
     "int main(){return 1.0L==1.0;}",
@@ -3402,6 +3425,90 @@ fn rejects_unsupported_raised_typedef_uses(code: &str) {
 ])]
 fn unsupported_long_double_formats_are_diagnosed(code: &str) {
     assert_frontend_error(code);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn x87_global_storage_preserves_constant_bits(output_option: &str, optimization: &str) {
+    let code = "long double exact=18446744073709551615.0L;union Value{long double value;unsigned char bytes[16];};union Value payload={.value=0x1.fffffffffffffffep63L};long double nan=__builtin_nanl(\"0x123456789abcdef\");int check(long double *,union Value *,long double *);int main(){return check(&exact,&payload,&nan);}";
+    let companion = "union Value{long double value;unsigned char bytes[16];};int check(long double *a,union Value *b,long double *c){unsigned long bits=0;unsigned char *out=(unsigned char*)&bits;unsigned char *in=(unsigned char*)c;for(int i=0;i<8;i++){out[i]=in[i];}return *a!=18446744073709551615.0L || b->value!=*a || bits!=0xc123456789abcdefUL;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test_matrix(["-O0", "-O2"])]
+fn x87_long_double_values_interoperate_with_clang(optimization: &str) {
+    let code = r#"
+unsigned long implicit=18446744073709551615.0L;
+unsigned long explicit=(unsigned long)18446744073709551615.0L;
+_Bool tiny=0x1p-2000L;
+int conditional=0x1p-2000L?7:9;
+float rounded=0x1.000001000000001p0L;
+long double exact=18446744073709551615.0L;
+long double hex=0x1.fffffffffffffffep63L;
+long double computed=(18446744073709551615.0L-1.0L)/2.0L;
+int comparison=18446744073709551615.0L>18446744073709551614.0L;
+long double foreign(long double,int,double);
+int verify(int,...);int check_global(long double *);int call_receiver(void);
+long double receiver(long double first,int count,...){__builtin_va_list ap;__builtin_va_start(ap,count);long double result=first;for(int i=0;i<count;i++){result+=__builtin_va_arg(ap,long double);}__builtin_va_end(ap);return result;}
+long double local(long double x,long double y){return x+y;}
+long double promote(unsigned long x){return x;}
+int main(){
+unsigned long n=18446744073709551615UL;
+long double x=promote(n);x-=1.0L;x++;x--;
+long double negative=-1.25L;
+return implicit!=n || explicit!=n || !tiny || conditional!=7 || rounded!=0x1.000002p0f || call_receiver() || exact!=promote(n) || hex!=exact || (unsigned long)x!=n-1
+ || computed!=9223372036854775807.0L || !comparison
+ || local(1.25L,2.5L)!=3.75L || foreign(1.25L,2,3.5)!=6.75L
+ || __builtin_fabsl(negative)!=1.25L || !(__builtin_nanl("")!=0.0L)
+ || !(__builtin_infl()>exact) || !(_Bool)x || (_Bool)0.0L
+ || verify(3,exact,computed,local(1.0L,2.0L)) || check_global(&exact);
+}
+"#;
+    let companion = r#"
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+long double receiver(long double,int,...);
+int call_receiver(void){return receiver(1.25L,2,2.5L,3.75L)!=7.5L;}
+long double local(long double,long double);
+long double foreign(long double x,int y,double z){return local(x,(long double)y+z);}
+int verify(int count,...){va_list ap;va_start(ap,count);long double a=va_arg(ap,long double),b=va_arg(ap,long double),c=va_arg(ap,long double);va_end(ap);return a!=18446744073709551615.0L || b!=9223372036854775807.0L || c!=3.0L;}
+int check_global(long double *p){char text[64];snprintf(text,sizeof(text),"%.0Lf",*p);return strcmp(text,"18446744073709551615")!=0;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, "llvm", Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test_matrix([
+    "struct S{int x;};long double f(struct S);int main(){return 0;}",
+    "struct S{int x;};void f(int,...);int main(){struct S s={};f(0,s,1.0L);return 0;}",
+])]
+fn x87_aggregate_abi_combinations_are_diagnosed(code: &str) {
+    assert!(std::panic::catch_unwind(|| dynamite_compiler::generate(code, "llvm", false)).is_err());
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn native_x87_values_have_a_source_diagnostic() {
+    assert!(
+        std::panic::catch_unwind(|| dynamite_compiler::generate(
+            "long double f(long double x){return x+1.0L;}",
+            "asm",
+            false
+        ))
+        .is_err()
+    );
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -6325,7 +6432,10 @@ fn invalid_floating_absolute_builtins_are_diagnosed(code: &str) {
     assert_frontend_error(code);
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(not(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_os = "macos")
+)))]
 #[test_matrix(["asm", "llvm"])]
 fn floating_absolute_builtins_reject_unsupported_long_double(output_option: &str) {
     assert!(
@@ -6398,7 +6508,10 @@ fn invalid_floating_nan_builtins_are_diagnosed(code: &str) {
     assert_frontend_error(code);
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(not(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_os = "macos")
+)))]
 #[test_matrix(["asm", "llvm"])]
 fn floating_nan_builtins_reject_unsupported_long_double(output_option: &str) {
     assert!(
@@ -6464,7 +6577,10 @@ fn invalid_floating_infinity_builtins_are_diagnosed(code: &str) {
     assert_frontend_error(code);
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(not(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_os = "macos")
+)))]
 #[test_matrix(["__builtin_infl", "__builtin_huge_vall"], ["asm", "llvm"])]
 fn floating_infinity_builtins_reject_unsupported_long_double(name: &str, output_option: &str) {
     let code = format!("double value={name}();");

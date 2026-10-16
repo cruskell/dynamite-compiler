@@ -280,6 +280,12 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn float_literal(ty: &Type, bits: usize) -> String {
+        if ty.float_bits() == Some(80) {
+            use rustc_apfloat::Float;
+            return crate::floating::llvm_literal(
+                crate::floating::from_double(f64::from_bits(bits as u64)).to_bits(),
+            );
+        }
         format!("0x{:016X}", ty.float_value(bits).to_bits())
     }
     fn alignment_type(alignment: usize) -> String {
@@ -446,7 +452,15 @@ impl<'a> IrGenerator<'a> {
             Type::Integer128 { .. } => "<2 x i64> zeroinitializer".into(),
             Type::Float16 => "half zeroinitializer".into(),
             Type::Vector(..) => format!("{} zeroinitializer", Self::gen_type(ty)),
-            Type::LongDouble(bits) if *bits != 64 => {
+            Type::LongDouble(80) => {
+                let bits = if let Some(GlobalVariableData::Elem(value)) = data {
+                    value.parse::<u128>().unwrap()
+                } else {
+                    0
+                };
+                format!("x86_fp80 {}", crate::floating::llvm_literal(bits))
+            }
+            Type::LongDouble(128) => {
                 format!("{} zeroinitializer", Self::gen_type(ty))
             }
             Type::Float(_) | Type::LongDouble(_) => {
@@ -735,6 +749,13 @@ impl<'a> IrGenerator<'a> {
 
     fn aggregate_function(&self, name: &str, func: &Func) -> String {
         let (types, result, variadic) = func.cty.function_signature_ref().unwrap();
+        if types
+            .iter()
+            .chain(std::iter::once(result))
+            .any(Type::contains_extended_long_double)
+        {
+            self.error_logger.print_error_position(func.token.as_ref().map_or(0, |token|token.pos), "extended long double cannot be combined with by-value aggregate parameters or results");
+        }
         let signature = Self::aggregate_signature(types, result, types.len(), variadic);
         let return_type = if matches!(result, Type::Struct(_)) {
             Self::aggregate_result_type(result)
@@ -881,6 +902,11 @@ impl<'a> IrGenerator<'a> {
             .map(|arg| arg.resolve_type_view().unwrap())
             .collect::<Vec<_>>();
         let result = node.resolve_type_view().unwrap();
+        if types.iter().any(|ty| ty.contains_extended_long_double())
+            || result.contains_extended_long_double()
+        {
+            self.error_logger.print_error_position(node.token.as_ref().map_or(0,|token|token.pos), "extended long double cannot be combined with by-value aggregate arguments or results");
+        }
         let signature =
             Self::aggregate_signature(&types, &result, node.parameter_types.len(), node.variadic);
         let mut lines = vec![];
@@ -1219,11 +1245,11 @@ impl<'a> IrGenerator<'a> {
                             "  ret {} {}",
                             Self::gen_type(return_ty),
                             if matches!(return_ty, Type::Ptr(_)) {
-                                "null"
+                                "null".to_string()
                             } else if return_ty.float_bits().is_some() {
-                                "0.0"
+                                Self::float_literal(return_ty, 0)
                             } else {
-                                "0"
+                                "0".to_string()
                             }
                         )
                     },
@@ -1336,8 +1362,9 @@ impl<'a> IrGenerator<'a> {
             let register = options.new_temporary();
             if *target == Type::Bool {
                 lines.push(format!(
-                    "  %{register} = fcmp une {} {value}, 0.0",
-                    Self::gen_type(source)
+                    "  %{register} = fcmp une {} {value}, {}",
+                    Self::gen_type(source),
+                    Self::float_literal(source, 0)
                 ));
                 let result = options.new_temporary();
                 lines.push(format!("  %{result} = zext i1 %{register} to i8"));
@@ -1460,11 +1487,11 @@ impl<'a> IrGenerator<'a> {
             },
             value,
             if pointer {
-                "null"
+                "null".to_string()
             } else if ty.float_bits().is_some() {
-                "0.0"
+                Self::float_literal(&ty, 0)
             } else {
-                "0"
+                "0".to_string()
             }
         ));
         format!("%{}", register)
@@ -1925,7 +1952,7 @@ impl<'a> IrGenerator<'a> {
                 let raw = options.new_temporary();
                 let masked = options.new_temporary();
                 let result = options.new_register();
-                let mask = (1u64 << (bits - 1)) - 1;
+                let mask = (1u128 << (bits - 1)) - 1;
                 lines.extend([
                     format!("  %{raw} = bitcast {float} {value} to i{bits}"),
                     format!("  %{masked} = and i{bits} %{raw}, {mask}"),
@@ -2084,7 +2111,10 @@ impl<'a> IrGenerator<'a> {
             NodeType::Num => {
                 let ty = node.resolve_type_view().unwrap();
                 options.register_queue.push(if ty.float_bits().is_some() {
-                    Self::float_literal(&ty, node.value.unwrap())
+                    node.extended_float.as_ref().map_or_else(
+                        || Self::float_literal(&ty, node.value.unwrap()),
+                        |bits| crate::floating::llvm_literal(**bits),
+                    )
                 } else {
                     node.value.unwrap().to_string()
                 });
@@ -2540,9 +2570,9 @@ impl<'a> IrGenerator<'a> {
                         Self::gen_type(&ty),
                         old,
                         if ty.float_bits().is_some() {
-                            "1.0"
+                            Self::float_literal(&ty, ty.float_constant(1.0))
                         } else {
-                            "1"
+                            "1".to_string()
                         }
                     ));
                 }

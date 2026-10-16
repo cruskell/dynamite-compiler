@@ -202,6 +202,15 @@ impl AstBuilderImpl<'_> {
                         "va_arg for types containing _Float16 is not supported",
                     );
                 }
+                if ty.float_bits() == Some(128)
+                    || (matches!(ty.unqualified(), Type::Struct(_))
+                        && ty.contains_extended_long_double())
+                {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "va_arg for this extended long double type is not supported",
+                    );
+                }
                 self.va_argument(ap, ty, &token)
             }
             "__builtin_va_copy" => {

@@ -394,10 +394,15 @@ binary64 representation, including `L` literals, arithmetic, and function calls.
 On x86_64, the 80-bit format occupies 16 bytes; Linux AArch64 uses 16-byte
 binary128 storage. These extended formats support declarations, size/alignment
 queries, zero-initialized storage, record copies, and pointer interoperation.
-Value operations, explicit scalar value initialization, function definitions
-with extended long-double parameters/results, and calls passing or returning
-these values are diagnosed. Unused scalar function declarations are accepted
-for system-header compatibility. Floating environment control and complex
+The LLVM backend supports x86_64 80-bit literals, arithmetic, scalar conversions,
+scalar function parameters/results, and variadic arguments. Decimal and hexadecimal
+constants and constant arithmetic use software floating-point evaluation to retain
+x87 precision and exponent range. Native backends diagnose extended value operations;
+they still support storage, pointer interoperation, and global constant data.
+Linux AArch64 binary128 remains storage-only. Passing records containing extended
+formats by value, or mixing extended scalars with by-value aggregate parameters or
+results, is diagnosed. Unused scalar function declarations are accepted for
+system-header compatibility. Floating environment control and complex
 types are not supported.
 
 ## Aggregate function values
@@ -1315,3 +1320,10 @@ function returns. The integer byte count is evaluated once and converted to the
 target's size type. The LLVM backend emits a dynamic `alloca`; native assembly
 backends diagnose this operation. File-scope uses and non-integer sizes are
 rejected. The libc `alloca` macro can use this builtin without frontend fallback.
+
+## Memory runtime builtins
+
+`__builtin_memcpy`, `__builtin_memmove`, and `__builtin_memset` use the matching
+C runtime functions on all backends. Their pointer results, argument conversions,
+and single evaluation of arguments follow ordinary typed calls. These builtins
+are advertised by `__has_builtin`, including for Linux CPU-set macros.

@@ -9,6 +9,7 @@ default-run = "dynamite_compiler"
 
 [dependencies]
 getopts = "0.2"
+rustc_apfloat = "0.2.3"
 
 [dev-dependencies]
 rand = "0.8.5"

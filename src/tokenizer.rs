@@ -489,6 +489,17 @@ impl Tokenizer {
             Token {
                 tt: TokenType::Float,
                 pos: start,
+                extended_float: if extended && cfg!(target_arch = "x86_64") {
+                    use rustc_apfloat::Float;
+                    let value = code[start..numeric_end]
+                        .parse::<crate::floating::Extended>()
+                        .map_err(|_| {
+                            error::SyntaxError::new(start, "invalid long double literal")
+                        })?;
+                    Some(Box::new(value.to_bits()))
+                } else {
+                    None
+                },
                 i_value: if single {
                     (value as f32).to_bits() as usize
                 } else {

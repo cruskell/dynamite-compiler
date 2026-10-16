@@ -6,6 +6,7 @@ use crate::func::Func;
 use crate::global::{GlobalVariable, GlobalVariableData};
 use crate::node::{AtomicOperation, Node, NodeType};
 use crate::token::{Token, TokenType};
+use rustc_apfloat::Float;
 use std::collections::{HashMap, HashSet};
 use std::{cell::RefCell, rc::Rc};
 
@@ -2798,7 +2799,7 @@ impl<'a> AstBuilderImpl<'a> {
                     if parameters
                         .iter()
                         .chain(std::iter::once(result))
-                        .any(Type::contains_extended_long_double)
+                        .any(|ty| matches!(ty.unqualified(), Type::LongDouble(128)))
                     {
                         self.error_logger.print_error_position(token.pos, "extended long double parameters and results in function definitions are not supported");
                     }
@@ -3014,7 +3015,7 @@ impl<'a> AstBuilderImpl<'a> {
                     "_Float16 value initialization is not supported",
                 );
             }
-            (Type::LongDouble(bits), _) if *bits != 64 => {
+            (Type::LongDouble(128), _) => {
                 self.error_logger.print_error_position(
                     token.pos,
                     "extended long double value initialization is not supported",
@@ -3312,6 +3313,27 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_conversion(ty, &expression);
             return GlobalVariableData::Address { symbol, offset };
         }
+        if ty.float_bits() == Some(80) {
+            return GlobalVariableData::Elem(self.eval_extended(&expression).to_bits().to_string());
+        }
+        if expression.resolve_type_view().unwrap().float_bits() == Some(80) {
+            let value = self.eval_extended(&expression);
+            if *ty.unqualified() == Type::Bool {
+                return GlobalVariableData::Elem(i64::from(!value.is_zero()).to_string());
+            }
+            if let Some((bits, signed)) = ty.integer_info() {
+                let integer = if signed {
+                    value.to_i128(bits.into()).value as i64
+                } else {
+                    value.to_u128(bits.into()).value as i64
+                };
+                return GlobalVariableData::Elem(integer.to_string());
+            }
+            if let Some(bits) = ty.float_bits() {
+                let value = crate::floating::to_double(crate::floating::round(value, bits));
+                return GlobalVariableData::Elem((ty.float_constant(value) as i64).to_string());
+            }
+        }
         let value = if ty.float_bits().is_some() {
             ty.float_constant(self.eval_float(&expression)) as i64
         } else if expression
@@ -3411,12 +3433,93 @@ impl<'a> AstBuilderImpl<'a> {
         ))
     }
 
+    fn eval_extended(&mut self, node: &Node) -> crate::floating::Extended {
+        use crate::floating::{Extended, from_double};
+        let ty = node.resolve_type().unwrap();
+        if let Some((_, signed)) = ty.integer_info() {
+            let value = self.eval(node);
+            return if signed {
+                Extended::from_i128(value.into()).value
+            } else {
+                Extended::from_u128(value as u64 as u128).value
+            };
+        }
+        if ty.float_bits() != Some(80) {
+            return from_double(self.eval_float(node));
+        }
+        match node.nt {
+            NodeType::Num => node.extended_float.as_ref().map_or_else(
+                || from_double(f64::from_bits(node.value.unwrap() as u64)),
+                |bits| Extended::from_bits(**bits),
+            ),
+            NodeType::Cast => self.eval_extended(node.lhs.as_ref().unwrap()),
+            NodeType::FloatAbs => self.eval_extended(node.lhs.as_ref().unwrap()).abs(),
+            NodeType::Add | NodeType::Sub | NodeType::Mul | NodeType::Div => {
+                let lhs = self.eval_extended(node.lhs.as_ref().unwrap());
+                let rhs = self.eval_extended(node.rhs.as_ref().unwrap());
+                match node.nt {
+                    NodeType::Add => (lhs + rhs).value,
+                    NodeType::Sub => (lhs - rhs).value,
+                    NodeType::Mul => (lhs * rhs).value,
+                    NodeType::Div => (lhs / rhs).value,
+                    _ => unreachable!(),
+                }
+            }
+            NodeType::Conditional => {
+                let condition = node.cond.as_ref().unwrap();
+                let nonzero = if condition.resolve_type_view().unwrap().float_bits() == Some(80) {
+                    !self.eval_extended(condition).is_zero()
+                } else {
+                    self.eval_float(condition) != 0.0
+                };
+                self.eval_extended(if nonzero {
+                    node.then.as_ref().unwrap()
+                } else {
+                    node.els.as_ref().unwrap()
+                })
+            }
+            _ => {
+                self.error_logger.print_error_position(
+                    node.token.as_ref().unwrap().pos,
+                    "floating initializer is not constant",
+                );
+                unreachable!()
+            }
+        }
+    }
+
+    fn eval_truth(&mut self, node: &Node) -> bool {
+        match node.resolve_type_view().unwrap().float_bits() {
+            Some(80) => !self.eval_extended(node).is_zero(),
+            Some(_) => self.eval_float(node) != 0.0,
+            None => self.eval(node) != 0,
+        }
+    }
     fn eval_float_as(&mut self, node: &Node, ty: &Type) -> f64 {
         let value = self.eval_float(node);
         ty.float_value(ty.float_constant(value))
     }
     fn eval_float(&mut self, node: &Node) -> f64 {
         let ty = node.resolve_type().unwrap();
+        if ty.float_bits() == Some(80) {
+            return crate::floating::to_double(self.eval_extended(node));
+        }
+        if node.nt == NodeType::Cast
+            && ty.float_bits().is_some()
+            && node
+                .lhs
+                .as_ref()
+                .unwrap()
+                .resolve_type_view()
+                .unwrap()
+                .float_bits()
+                == Some(80)
+        {
+            return crate::floating::to_double(crate::floating::round(
+                self.eval_extended(node.lhs.as_ref().unwrap()),
+                ty.float_bits().unwrap(),
+            ));
+        }
         if ty.integer_info().is_some() {
             return if ty.integer_info().unwrap().1 {
                 self.eval(node) as f64
@@ -3445,7 +3548,7 @@ impl<'a> AstBuilderImpl<'a> {
                     / self.eval_float_as(node.rhs.as_ref().unwrap(), &ty)
             }
             NodeType::Conditional => {
-                if self.eval_float(node.cond.as_ref().unwrap()) != 0.0 {
+                if self.eval_truth(node.cond.as_ref().unwrap()) {
                     self.eval_float(node.then.as_ref().unwrap())
                 } else {
                     self.eval_float(node.els.as_ref().unwrap())
@@ -3479,6 +3582,33 @@ impl<'a> AstBuilderImpl<'a> {
             .as_ref()
             .is_some_and(|lhs| lhs.resolve_type().unwrap().float_bits().is_some())
         {
+            if node
+                .lhs
+                .as_ref()
+                .unwrap()
+                .resolve_type_view()
+                .unwrap()
+                .float_bits()
+                == Some(80)
+                || node
+                    .rhs
+                    .as_ref()
+                    .unwrap()
+                    .resolve_type_view()
+                    .unwrap()
+                    .float_bits()
+                    == Some(80)
+            {
+                let lhs = self.eval_extended(node.lhs.as_ref().unwrap());
+                let rhs = self.eval_extended(node.rhs.as_ref().unwrap());
+                return i64::from(match node.nt {
+                    NodeType::Eq => lhs == rhs,
+                    NodeType::Ne => lhs != rhs,
+                    NodeType::Lt => lhs < rhs,
+                    NodeType::Le => lhs <= rhs,
+                    _ => unreachable!(),
+                });
+            }
             let lhs = self.eval_float(node.lhs.as_ref().unwrap());
             let rhs = self.eval_float(node.rhs.as_ref().unwrap());
             return i64::from(match node.nt {
@@ -3493,6 +3623,20 @@ impl<'a> AstBuilderImpl<'a> {
             NodeType::Num => return node.value.unwrap() as i64,
             NodeType::Cast => {
                 let child = node.lhs.as_ref().unwrap();
+                if child.resolve_type_view().unwrap().float_bits() == Some(80) {
+                    let value = self.eval_extended(child);
+                    let target = node.cty.as_ref().unwrap();
+                    if *target.unqualified() == Type::Bool {
+                        return i64::from(!value.is_zero());
+                    }
+                    if let Some((bits, signed)) = target.integer_info() {
+                        return if signed {
+                            value.to_i128(bits.into()).value as i64
+                        } else {
+                            value.to_u128(bits.into()).value as i64
+                        };
+                    }
+                }
                 let value = if child
                     .resolve_type()
                     .is_some_and(|ty| ty.float_bits().is_some())
@@ -3515,15 +3659,15 @@ impl<'a> AstBuilderImpl<'a> {
             }
 
             NodeType::LogicalAnd => {
-                return (self.eval(node.lhs.as_ref().unwrap()) != 0
-                    && self.eval(node.rhs.as_ref().unwrap()) != 0) as i64;
+                return (self.eval_truth(node.lhs.as_ref().unwrap())
+                    && self.eval_truth(node.rhs.as_ref().unwrap())) as i64;
             }
             NodeType::LogicalOr => {
-                return (self.eval(node.lhs.as_ref().unwrap()) != 0
-                    || self.eval(node.rhs.as_ref().unwrap()) != 0) as i64;
+                return (self.eval_truth(node.lhs.as_ref().unwrap())
+                    || self.eval_truth(node.rhs.as_ref().unwrap())) as i64;
             }
             NodeType::Conditional => {
-                return if self.eval(node.cond.as_ref().unwrap()) != 0 {
+                return if self.eval_truth(node.cond.as_ref().unwrap()) {
                     self.eval(node.then.as_ref().unwrap())
                 } else {
                     self.eval(node.els.as_ref().unwrap())
@@ -3832,7 +3976,7 @@ impl<'a> AstBuilderImpl<'a> {
                 .iter()
                 .filter_map(Node::resolve_type_view)
                 .chain(node.resolve_type_view())
-                .any(|ty| Type::decay_view(ty).contains_extended_long_double())
+                .any(|ty| matches!(Type::decay_view(ty).unqualified(), Type::LongDouble(128)))
         {
             self.error_logger.print_error_position(
                 node.token.as_ref().map_or(0, |token| token.pos),
@@ -3896,7 +4040,7 @@ impl<'a> AstBuilderImpl<'a> {
                     Some("128-bit integer value operations are not supported")
                 }
                 Some(Type::Float16) => Some("_Float16 value operations are not supported"),
-                Some(Type::LongDouble(bits)) if *bits != 64 => {
+                Some(Type::LongDouble(128)) => {
                     Some("extended long double value operations are not supported")
                 }
                 Some(Type::Vector(..)) => Some("vector value operations are not supported"),
@@ -6001,6 +6145,9 @@ impl<'a> AstBuilderImpl<'a> {
             return Node {
                 token: Some(token),
                 value: Some(bits as usize),
+                extended_float: (ty.float_bits() == Some(80)).then(|| {
+                    Box::new(crate::floating::Extended::qnan(Some(payload.into())).to_bits())
+                }),
                 cty: Some(ty),
                 ..Node::default()
             };
@@ -6055,7 +6202,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
     }
 
-    fn checked_memory_builtin(&mut self, token: Token) -> Node {
+    fn memory_builtin(&mut self, token: Token) -> Node {
         let pointer = Type::Ptr(Box::new(Type::Void));
         let const_pointer = Type::Ptr(Box::new(Type::Qualified(
             Box::new(Type::Void),
@@ -6064,17 +6211,21 @@ impl<'a> AstBuilderImpl<'a> {
                 ..Qualifiers::default()
             },
         )));
-        let (name, second) = match token.s_value.as_str() {
-            "__builtin___memcpy_chk" => ("__memcpy_chk", const_pointer),
-            "__builtin___memmove_chk" => ("__memmove_chk", const_pointer),
-            "__builtin___memset_chk" => ("__memset_chk", Type::I32),
+        let (name, second, checked) = match token.s_value.as_str() {
+            "__builtin___memcpy_chk" => ("__memcpy_chk", const_pointer, true),
+            "__builtin___memmove_chk" => ("__memmove_chk", const_pointer, true),
+            "__builtin___memset_chk" => ("__memset_chk", Type::I32, true),
+            "__builtin_memcpy" => ("memcpy", const_pointer, false),
+            "__builtin_memmove" => ("memmove", const_pointer, false),
+            "__builtin_memset" => ("memset", Type::I32, false),
             _ => unreachable!(),
         };
         let size = Type::integer(64, false);
-        let ty = Type::Func(
-            vec![pointer.clone(), second, size.clone(), size],
-            Box::new(pointer),
-        );
+        let mut parameters = vec![pointer.clone(), second, size.clone()];
+        if checked {
+            parameters.push(size);
+        }
+        let ty = Type::Func(parameters, Box::new(pointer));
         self.runtime_builtin(token, name, ty)
     }
 
@@ -6434,6 +6585,7 @@ impl<'a> AstBuilderImpl<'a> {
             Node {
                 nt: NodeType::Num,
                 value: Some(t.i_value),
+                extended_float: t.extended_float.clone(),
                 cty: Some(if t.s_value == "l" {
                     self.long_double_type(&t)
                 } else {
@@ -6596,9 +6748,14 @@ impl<'a> AstBuilderImpl<'a> {
             }
             if matches!(
                 t.s_value.as_str(),
-                "__builtin___memcpy_chk" | "__builtin___memmove_chk" | "__builtin___memset_chk"
+                "__builtin___memcpy_chk"
+                    | "__builtin___memmove_chk"
+                    | "__builtin___memset_chk"
+                    | "__builtin_memcpy"
+                    | "__builtin_memmove"
+                    | "__builtin_memset"
             ) {
-                return self.checked_memory_builtin(t);
+                return self.memory_builtin(t);
             }
             if t.s_value == "__builtin_object_size" {
                 return self.object_size_builtin(t);

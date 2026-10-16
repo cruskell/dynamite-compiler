@@ -129,6 +129,9 @@ fn has_unaligned_member(ty: &Type, offset: usize) -> bool {
 }
 
 pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
+    if matches!(arch, Arch::X86_64) && ty.float_bits() == Some(80) {
+        return vec![];
+    }
     if let Type::Arr(child, _) = ty.unqualified() {
         return vec![Part {
             offset: 0,
@@ -322,7 +325,7 @@ pub fn signature(
             let compact = matches!((&arch, os), (Arch::Aarch64, Os::MacOS)) && index < fixed;
             let size = if indirect {
                 8
-            } else if aggregate || compact {
+            } else if aggregate || compact || ty.float_bits() == Some(80) {
                 ty.size_of()
             } else {
                 8
