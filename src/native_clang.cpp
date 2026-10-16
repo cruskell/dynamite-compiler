@@ -47,6 +47,10 @@ extern "C" void dynamite_pp_free(char *data) { std::free(data); }
 static int invoke(int argc, const char *const *argv, const char *ir, size_t ir_size,
                             char **output, size_t *output_size,
                             char **diagnostics, size_t *diagnostics_size) {
+  // LLVM option and pass registration mutate process-wide state. Separate
+  // compiler processes remain independent; serialize SDK calls within a process.
+  static std::mutex library_mutex;
+  std::lock_guard<std::mutex> library_lock(library_mutex);
   std::string diagnostic_text;
   llvm::raw_string_ostream diagnostic_stream(diagnostic_text);
   auto diagnostic_options = llvm::makeIntrusiveRefCnt<clang::DiagnosticOptions>();

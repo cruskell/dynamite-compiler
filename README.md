@@ -62,7 +62,9 @@ cargo build --release --features clang-in-process
 `CXX` and `AR` select the native C++ compiler and archiver. Headers normally come
 from `llvm-config --includedir`; `DYNAMITE_CLANG_INCLUDE_DIR` can override the
 Clang header directory. This feature currently supports native Linux builds.
-It selects the SDK's Clang executable by default; any `DYNAMITE_CLANG` override
+SDK calls are serialized within one process because LLVM has global option
+registration state; Rust frontend workers and separate `make -jN` compiler
+processes remain independent. It selects the SDK's Clang executable by default; any `DYNAMITE_CLANG` override
 must use the same Clang 15 installation. Linking, preprocessing-only commands,
 and backend time-trace/report requests continue to use the Clang executable.
 C parsing and semantic checks always run through Dynamite.
