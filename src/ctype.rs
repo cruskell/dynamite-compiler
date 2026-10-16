@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cell::RefCell,
     fmt,
     rc::{Rc, Weak},
@@ -341,6 +342,35 @@ impl Type {
         }
     }
 
+    /// Preserve a borrowed view, or move through wrappers in an owned result.
+    pub(crate) fn unqualified_view(ty: Cow<'_, Self>) -> Cow<'_, Self> {
+        match ty {
+            Cow::Borrowed(ty) => Cow::Borrowed(ty.unqualified()),
+            Cow::Owned(mut ty) => {
+                while let Self::Qualified(child, _) | Self::Aligned(child, _) = ty {
+                    ty = *child;
+                }
+                Cow::Owned(ty)
+            }
+        }
+    }
+    /// Apply value conversions without copying types that remain unchanged.
+    pub(crate) fn decay_view(ty: Cow<'_, Self>) -> Cow<'_, Self> {
+        match Self::unqualified_view(ty) {
+            Cow::Borrowed(Self::Arr(child, _) | Self::Vla(child, _)) => {
+                Cow::Owned(Self::Ptr(child.clone()))
+            }
+            Cow::Borrowed(ty @ (Self::Func(..) | Self::VariadicFunc(..))) => {
+                Cow::Owned(Self::Ptr(Box::new(ty.clone())))
+            }
+            Cow::Owned(Self::Arr(child, _) | Self::Vla(child, _)) => Cow::Owned(Self::Ptr(child)),
+            Cow::Owned(ty @ (Self::Func(..) | Self::VariadicFunc(..))) => {
+                Cow::Owned(Self::Ptr(Box::new(ty)))
+            }
+            ty => ty,
+        }
+    }
+
     /// Whether value conversion yields a pointer, including arrays and functions.
     pub fn is_pointer_value(&self) -> bool {
         matches!(
@@ -662,10 +692,11 @@ impl Type {
         }
     }
     pub fn dest_type(&self) -> Option<Type> {
-        match self {
-            Type::Qualified(child, _) | Type::Aligned(child, _) => child.dest_type(),
-            Type::Ptr(c) => Some(*c.clone()),
-            Type::Arr(c, _) | Type::Vla(c, _) => Some(*c.clone()),
+        self.dest_type_ref().cloned()
+    }
+    pub(crate) fn dest_type_ref(&self) -> Option<&Type> {
+        match self.unqualified() {
+            Self::Ptr(child) | Self::Arr(child, _) | Self::Vla(child, _) => Some(child),
             _ => None,
         }
     }

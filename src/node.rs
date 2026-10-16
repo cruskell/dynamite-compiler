@@ -1,5 +1,6 @@
 use crate::ctype::{BitField, Type};
 use crate::token::Token;
+use std::borrow::Cow;
 use std::mem::swap;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -313,11 +314,14 @@ impl Node {
     }
 
     pub fn object_type(&self) -> Option<Type> {
+        self.object_type_view().map(Cow::into_owned)
+    }
+    pub(crate) fn object_type_view(&self) -> Option<Cow<'_, Type>> {
         match self.nt {
-            NodeType::LocalVar | NodeType::GlobalVar => self.cty.clone(),
-            NodeType::Deref => self.lhs.as_ref()?.resolve_type()?.dest_type(),
-            NodeType::SuffixIncr | NodeType::SuffixDecr => self.lhs.as_ref()?.object_type(),
-            _ => self.resolve_type(),
+            NodeType::LocalVar | NodeType::GlobalVar => self.cty.as_ref().map(Cow::Borrowed),
+            NodeType::Deref => self.lhs.as_ref()?.dest_type_view(),
+            NodeType::SuffixIncr | NodeType::SuffixDecr => self.lhs.as_ref()?.object_type_view(),
+            _ => self.resolve_type_view(),
         }
     }
     pub(crate) fn is_volatile_object(&self) -> bool {
@@ -326,7 +330,7 @@ impl Node {
                 self.cty.as_ref().is_some_and(|ty| ty.qualifiers().volatile)
             }
             NodeType::Deref => self
-                .object_type()
+                .object_type_view()
                 .is_some_and(|ty| ty.qualifiers().volatile),
             NodeType::SuffixIncr | NodeType::SuffixDecr => self
                 .lhs
@@ -337,86 +341,96 @@ impl Node {
         }
     }
     pub fn resolve_type(&self) -> Option<Type> {
+        self.resolve_type_view().map(Cow::into_owned)
+    }
+    /// Borrow stored expression types; own types constructed by value conversion.
+    pub(crate) fn resolve_type_view(&self) -> Option<Cow<'_, Type>> {
         if self.bit_field.is_some_and(|field| field.width < 32) {
-            return Some(Type::I32);
+            return Some(Cow::Owned(Type::I32));
         }
-        self.resolve_qualified_type().map(|ty| {
-            if let Type::Qualified(child, _) = &ty {
+        self.resolve_qualified_type_view().map(|ty| {
+            if let Type::Qualified(child, _) = ty.as_ref() {
                 if let Type::Arr(element, size) = child.unqualified() {
-                    return Type::Arr(
+                    return Cow::Owned(Type::Arr(
                         Box::new(Type::Qualified(element.clone(), ty.qualifiers())),
                         *size,
-                    );
+                    ));
                 }
                 if let Type::Vla(element, offset) = child.unqualified() {
-                    return Type::Vla(
+                    return Cow::Owned(Type::Vla(
                         Box::new(Type::Qualified(element.clone(), ty.qualifiers())),
                         *offset,
-                    );
+                    ));
                 }
             }
-            let mut ty = ty;
-            while let Type::Qualified(child, _) | Type::Aligned(child, _) = ty {
-                ty = *child;
-            }
-            ty
+            Type::unqualified_view(ty)
         })
     }
     pub(crate) fn resolve_qualified_type(&self) -> Option<Type> {
+        self.resolve_qualified_type_view().map(Cow::into_owned)
+    }
+    pub(crate) fn resolve_qualified_type_view(&self) -> Option<Cow<'_, Type>> {
         match self.nt {
             NodeType::Eq
             | NodeType::Ne
             | NodeType::Lt
             | NodeType::Le
             | NodeType::LogicalAnd
-            | NodeType::LogicalOr => Some(Type::I32),
+            | NodeType::LogicalOr => Some(Cow::Owned(Type::I32)),
             NodeType::Conditional => {
                 let then = self
                     .then
                     .as_ref()
                     .unwrap()
-                    .resolve_type()
-                    .map(|ty| ty.decayed());
+                    .resolve_type_view()
+                    .map(Type::decay_view);
                 let otherwise = self
                     .els
                     .as_ref()
                     .unwrap()
-                    .resolve_type()
-                    .map(|ty| ty.decayed());
+                    .resolve_type_view()
+                    .map(Type::decay_view);
                 if then.as_ref().is_some_and(|ty| ty.is_arithmetic())
                     && otherwise.as_ref().is_some_and(|ty| ty.is_arithmetic())
                 {
-                    Some(Type::arithmetic_type(
+                    Some(Cow::Owned(Type::arithmetic_type(
                         then.as_ref().unwrap(),
                         otherwise.as_ref().unwrap(),
-                    ))
+                    )))
+                } else if then.as_ref().is_some_and(|ty| matches!(**ty, Type::Ptr(_))) {
+                    then
+                } else if otherwise
+                    .as_ref()
+                    .is_some_and(|ty| matches!(**ty, Type::Ptr(_)))
+                {
+                    otherwise
                 } else {
-                    match (then, otherwise) {
-                        (Some(Type::Ptr(child) | Type::Arr(child, _) | Type::Vla(child, _)), _)
-                        | (_, Some(Type::Ptr(child) | Type::Arr(child, _) | Type::Vla(child, _))) => {
-                            Some(Type::Ptr(child))
-                        }
-                        (then, _) => then,
-                    }
+                    then
                 }
             }
-            NodeType::Cast | NodeType::FloatAbs | NodeType::InlineAsm(_, _) => self.cty.clone(),
-            NodeType::Num => Some(self.cty.clone().unwrap_or(Type::I32)),
-            NodeType::Sequence => self.children.last().and_then(Node::resolve_type),
+            NodeType::Cast | NodeType::FloatAbs | NodeType::InlineAsm(_, _) => {
+                self.cty.as_ref().map(Cow::Borrowed)
+            }
+            NodeType::Num => Some(
+                self.cty
+                    .as_ref()
+                    .map_or(Cow::Owned(Type::I32), Cow::Borrowed),
+            ),
+            NodeType::Sequence => self.children.last().and_then(Node::resolve_type_view),
             NodeType::Add | NodeType::Sub => {
-                let ty = self.lhs.as_ref().unwrap().resolve_type();
+                let ty = self.lhs.as_ref().unwrap().resolve_type_view();
                 if matches!(self.nt, NodeType::Sub)
-                    && self.rhs.as_ref().unwrap().dest_type().is_some()
+                    && self.rhs.as_ref().unwrap().dest_type_view().is_some()
                 {
-                    return Some(Type::I32);
+                    return Some(Cow::Owned(Type::I32));
                 }
-                if ty.as_ref().is_some_and(|ty| ty.dest_type().is_some()) {
+                if ty.as_ref().is_some_and(|ty| ty.dest_type_ref().is_some()) {
                     ty
                 } else {
-                    Some(Type::arithmetic_type(
+                    Some(Cow::Owned(Type::arithmetic_type(
                         &ty.unwrap(),
-                        &self.rhs.as_ref().unwrap().resolve_type().unwrap(),
-                    ))
+                        &self.rhs.as_ref().unwrap().resolve_type_view().unwrap(),
+                    )))
                 }
             }
             NodeType::Mul
@@ -424,18 +438,18 @@ impl Node {
             | NodeType::Mod
             | NodeType::BitAnd
             | NodeType::BitXor
-            | NodeType::BitOr => Some(Type::arithmetic_type(
-                &self.lhs.as_ref().unwrap().resolve_type().unwrap(),
-                &self.rhs.as_ref().unwrap().resolve_type().unwrap(),
-            )),
-            NodeType::BitNot | NodeType::BitLeft | NodeType::BitRight => Some(
+            | NodeType::BitOr => Some(Cow::Owned(Type::arithmetic_type(
+                &self.lhs.as_ref().unwrap().resolve_type_view().unwrap(),
+                &self.rhs.as_ref().unwrap().resolve_type_view().unwrap(),
+            ))),
+            NodeType::BitNot | NodeType::BitLeft | NodeType::BitRight => Some(Cow::Owned(
                 self.lhs
                     .as_ref()
                     .unwrap()
-                    .resolve_type()
+                    .resolve_type_view()
                     .unwrap()
                     .promoted(),
-            ),
+            )),
             NodeType::Prefetch(..)
             | NodeType::BitScan { .. }
             | NodeType::ZeroFill { .. }
@@ -447,28 +461,28 @@ impl Node {
             | NodeType::SubOverflow
             | NodeType::GlobalVar
             | NodeType::VaStart
-            | NodeType::VaEnd => self.cty.clone(),
+            | NodeType::VaEnd => self.cty.as_ref().map(Cow::Borrowed),
             NodeType::Addr => {
-                if let Some(ty) = self.lhs.as_ref().unwrap().object_type() {
-                    Some(Type::Ptr(Box::new(ty)))
+                if let Some(ty) = self.lhs.as_ref().unwrap().object_type_view() {
+                    Some(Cow::Owned(Type::Ptr(Box::new(ty.into_owned()))))
                 } else {
-                    self.cty.clone()
+                    self.cty.as_ref().map(Cow::Borrowed)
                 }
             }
-            NodeType::Deref => self.lhs.as_ref().unwrap().dest_type(),
+            NodeType::Deref => self.lhs.as_ref().unwrap().dest_type_view(),
             _ => {
                 if let Some(node) = self.lhs.as_ref() {
-                    if let Some(ty) = node.resolve_type() {
+                    if let Some(ty) = node.resolve_type_view() {
                         return Some(ty);
                     }
                 }
                 if let Some(node) = self.rhs.as_ref() {
-                    if let Some(ty) = node.resolve_type() {
+                    if let Some(ty) = node.resolve_type_view() {
                         return Some(ty);
                     }
                 }
                 if let Some(node) = self.then.as_ref() {
-                    if let Some(ty) = node.resolve_type() {
+                    if let Some(ty) = node.resolve_type_view() {
                         return Some(ty);
                     }
                 }
@@ -477,10 +491,15 @@ impl Node {
         }
     }
     pub fn dest_type(&self) -> Option<Type> {
-        if let Some(t) = self.resolve_type() {
-            t.dest_type()
-        } else {
-            None
+        self.dest_type_view().map(Cow::into_owned)
+    }
+    pub(crate) fn dest_type_view(&self) -> Option<Cow<'_, Type>> {
+        match Type::unqualified_view(self.resolve_type_view()?) {
+            Cow::Borrowed(ty) => ty.dest_type_ref().map(Cow::Borrowed),
+            Cow::Owned(Type::Ptr(child) | Type::Arr(child, _) | Type::Vla(child, _)) => {
+                Some(Cow::Owned(*child))
+            }
+            Cow::Owned(_) => None,
         }
     }
     pub fn to_debug_string(&self, indent: usize) -> String {
@@ -600,5 +619,117 @@ impl Node {
 impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.to_debug_string(2))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ctype::Qualifiers;
+
+    fn object(ty: Type) -> Node {
+        Node {
+            nt: NodeType::LocalVar,
+            cty: Some(ty),
+            ..Node::default()
+        }
+    }
+
+    #[test]
+    fn type_views_borrow_stored_types_and_preserve_object_qualification() {
+        let node = object(Type::Qualified(
+            Box::new(Type::Aligned(Box::new(Type::Ptr(Box::new(Type::I32))), 16)),
+            Qualifiers {
+                volatile: true,
+                ..Qualifiers::default()
+            },
+        ));
+        assert!(
+            matches!(node.resolve_qualified_type_view(), Some(Cow::Borrowed(ty)) if std::ptr::eq(ty, node.cty.as_ref().unwrap()))
+        );
+        let Some(Cow::Borrowed(ty)) = node.resolve_type_view() else {
+            panic!("stored value type should be borrowed")
+        };
+        assert!(std::ptr::eq(ty, node.cty.as_ref().unwrap().unqualified()));
+        assert_eq!(node.resolve_type().as_ref(), Some(ty));
+        assert!(node.is_volatile_object());
+
+        let deref = Node::new_with_op_and_lhs(
+            None,
+            NodeType::Deref,
+            object(Type::Ptr(Box::new(node.cty.clone().unwrap()))),
+        );
+        assert!(deref.is_volatile_object());
+        assert!(matches!(
+            deref.resolve_type_view(),
+            Some(Cow::Borrowed(Type::Ptr(_)))
+        ));
+        let sequence = Node {
+            nt: NodeType::Sequence,
+            children: vec![deref],
+            ..Node::default()
+        };
+        assert!(matches!(
+            sequence.resolve_type_view(),
+            Some(Cow::Borrowed(Type::Ptr(_)))
+        ));
+    }
+
+    #[test]
+    fn type_views_own_constructed_types_and_preserve_array_qualification() {
+        let qualifiers = Qualifiers {
+            constant: true,
+            ..Qualifiers::default()
+        };
+        for array in [
+            Type::Arr(Box::new(Type::I32), Some(3)),
+            Type::Vla(Box::new(Type::I32), 8),
+        ] {
+            let node = object(Type::Qualified(Box::new(array), qualifiers));
+            let Some(Cow::Owned(ty)) = node.resolve_type_view() else {
+                panic!("qualified array value type must be constructed")
+            };
+            assert_eq!(ty.dest_type_ref().unwrap().qualifiers(), qualifiers);
+            assert_eq!(node.resolve_type(), Some(ty));
+            let addr = Node::new_with_op_and_lhs(None, NodeType::Addr, node);
+            assert!(
+                matches!(addr.resolve_type_view(), Some(Cow::Owned(Type::Ptr(child))) if child.qualifiers() == qualifiers)
+            );
+        }
+        let mut field = object(Type::integer(32, false));
+        field.bit_field = Some(BitField {
+            width: 3,
+            shift: 0,
+            bytewise: false,
+        });
+        assert!(matches!(
+            field.resolve_type_view(),
+            Some(Cow::Owned(Type::I32))
+        ));
+    }
+
+    #[test]
+    fn conditional_type_views_borrow_pointers_and_decay_functions() {
+        let function = Type::Func(vec![Type::Ptr(Box::new(Type::I8))], Box::new(Type::I32));
+        for ty in [
+            Type::Ptr(Box::new(function.clone())),
+            function.clone(),
+            Type::Arr(Box::new(Type::I32), Some(2)),
+        ] {
+            let borrowed = matches!(ty, Type::Ptr(_));
+            let node = Node::new_if_node(
+                None,
+                Node::new_with_num(None, 1),
+                object(ty.clone()),
+                Some(Node::new_with_num(None, 0)),
+            );
+            let node = Node {
+                nt: NodeType::Conditional,
+                ..node
+            };
+            let view = node.resolve_type_view().unwrap();
+            assert_eq!(matches!(view, Cow::Borrowed(_)), borrowed);
+            assert_eq!(*view, ty.decayed());
+        }
     }
 }

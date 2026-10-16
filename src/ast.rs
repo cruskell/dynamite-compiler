@@ -3574,7 +3574,7 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn cast_integer(node: &mut Node, target: &Type) {
-        if target.is_arithmetic() && node.resolve_type().as_ref() != Some(target) {
+        if target.is_arithmetic() && node.resolve_type_view().as_deref() != Some(target) {
             let operand = std::mem::take(node);
             *node = Node {
                 nt: NodeType::Cast,
@@ -3614,8 +3614,8 @@ impl<'a> AstBuilderImpl<'a> {
                 | NodeType::Lt
                 | NodeType::Le
         ) {
-            let lhs = node.lhs.as_ref().unwrap().resolve_type().unwrap();
-            let rhs = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+            let lhs = node.lhs.as_ref().unwrap().resolve_type_view().unwrap();
+            let rhs = node.rhs.as_ref().unwrap().resolve_type_view().unwrap();
             if lhs.float_bits().is_some() || rhs.float_bits().is_some() {
                 let common = Type::arithmetic_type(&lhs, &rhs);
                 Self::cast_integer(node.lhs.as_mut().unwrap(), &common);
@@ -3632,7 +3632,7 @@ impl<'a> AstBuilderImpl<'a> {
         ) {
             if let Some(condition) = &mut node.cond {
                 if condition
-                    .resolve_type()
+                    .resolve_type_view()
                     .is_some_and(|ty| ty.float_bits().is_some())
                 {
                     Self::cast_integer(condition, &Type::Bool);
@@ -3642,7 +3642,7 @@ impl<'a> AstBuilderImpl<'a> {
         if matches!(node.nt, NodeType::LogicalAnd | NodeType::LogicalOr) {
             for operand in [&mut node.lhs, &mut node.rhs].into_iter().flatten() {
                 if operand
-                    .resolve_type()
+                    .resolve_type_view()
                     .is_some_and(|ty| ty.float_bits().is_some())
                 {
                     Self::cast_integer(operand, &Type::Bool);
@@ -3651,22 +3651,22 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if node.nt == NodeType::Conditional
             && node
-                .resolve_type()
+                .resolve_type_view()
                 .is_some_and(|ty| ty.float_bits().is_some())
         {
-            let common = node.resolve_type().unwrap();
+            let common = node.resolve_type_view().unwrap().into_owned();
             Self::cast_integer(node.then.as_mut().unwrap(), &common);
             Self::cast_integer(node.els.as_mut().unwrap(), &common);
         }
         match node.nt {
             NodeType::Assign => {
-                let target = node.lhs.as_ref().unwrap().resolve_type().unwrap();
+                let target = node.lhs.as_ref().unwrap().resolve_type_view().unwrap();
                 Self::cast_integer(node.rhs.as_mut().unwrap(), &target);
             }
             NodeType::CallFunc => {
                 for (index, arg) in node.args.iter_mut().rev().enumerate() {
                     let target = node.parameter_types.get(index).cloned().unwrap_or_else(|| {
-                        let ty = arg.resolve_type().unwrap().promoted();
+                        let ty = arg.resolve_type_view().unwrap().promoted();
                         if ty == Type::Float(32) {
                             Type::Float(64)
                         } else {
@@ -3681,10 +3681,10 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn can_convert(expected: &Type, operand: &Node) -> bool {
-        let actual = operand.resolve_type();
+        let actual = operand.resolve_type_view();
         match (
             expected.unqualified(),
-            actual.as_ref().map(Type::unqualified),
+            actual.as_deref().map(Type::unqualified),
         ) {
             (target, Some(source)) if target.is_arithmetic() && source.is_arithmetic() => true,
             (Type::Bool, Some(source)) if source.is_pointer_value() => true,
@@ -3754,8 +3754,8 @@ impl<'a> AstBuilderImpl<'a> {
             && node
                 .args
                 .iter()
-                .filter_map(Node::resolve_type)
-                .chain(node.resolve_type())
+                .filter_map(Node::resolve_type_view)
+                .chain(node.resolve_type_view())
                 .any(|ty| {
                     matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_reduced_alignment()
                 })
@@ -3766,8 +3766,8 @@ impl<'a> AstBuilderImpl<'a> {
             && node
                 .args
                 .iter()
-                .filter_map(Node::resolve_type)
-                .chain(node.resolve_type())
+                .filter_map(Node::resolve_type_view)
+                .chain(node.resolve_type_view())
                 .any(|ty| matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_float16())
         {
             self.error_logger.print_error_position(
@@ -3779,8 +3779,8 @@ impl<'a> AstBuilderImpl<'a> {
             && node
                 .args
                 .iter()
-                .filter_map(Node::resolve_type)
-                .chain(node.resolve_type())
+                .filter_map(Node::resolve_type_view)
+                .chain(node.resolve_type_view())
                 .any(|ty| matches!(ty.unqualified(), Type::Struct(_)) && ty.align_of() > 16)
         {
             self.error_logger.print_error_position(
@@ -3792,9 +3792,9 @@ impl<'a> AstBuilderImpl<'a> {
             && node
                 .args
                 .iter()
-                .filter_map(Node::resolve_type)
-                .chain(node.resolve_type())
-                .any(|ty| ty.decayed().contains_vector())
+                .filter_map(Node::resolve_type_view)
+                .chain(node.resolve_type_view())
+                .any(|ty| Type::decay_view(ty).contains_vector())
         {
             self.error_logger.print_error_position(
                 node.token.as_ref().map_or(0, |token| token.pos),
@@ -3802,7 +3802,7 @@ impl<'a> AstBuilderImpl<'a> {
             );
         }
         if !address_only {
-            let message = match node.resolve_type().as_ref().map(Type::unqualified) {
+            let message = match node.resolve_type_view().as_deref().map(Type::unqualified) {
                 Some(Type::Integer128 { .. }) => {
                     Some("128-bit integer value operations are not supported")
                 }
@@ -3846,7 +3846,7 @@ impl<'a> AstBuilderImpl<'a> {
         ) {
             for operand in [&node.lhs, &node.rhs].into_iter().flatten() {
                 if operand
-                    .resolve_type()
+                    .resolve_type_view()
                     .is_some_and(|ty| ty.float_bits().is_some())
                 {
                     self.error_logger.print_error_position(
@@ -3868,8 +3868,8 @@ impl<'a> AstBuilderImpl<'a> {
                 | NodeType::Lt
                 | NodeType::Le
         ) {
-            let lhs = node.lhs.as_ref().unwrap().resolve_type().unwrap();
-            let rhs = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+            let lhs = node.lhs.as_ref().unwrap().resolve_type_view().unwrap();
+            let rhs = node.rhs.as_ref().unwrap().resolve_type_view().unwrap();
             if (lhs.float_bits().is_some() || rhs.float_bits().is_some())
                 && !(lhs.is_arithmetic() && rhs.is_arithmetic())
             {
@@ -3880,7 +3880,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
         }
         let no_value = |operand: &Node| {
-            if operand.resolve_type() == Some(Type::Void) {
+            if operand.resolve_type_view().as_deref() == Some(&Type::Void) {
                 self.error_logger.print_error_position(
                     operand.token.as_ref().unwrap().pos,
                     "void expression has no value",
@@ -3917,7 +3917,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if matches!(node.nt, NodeType::Assign) {
             self.expect_conversion(
-                &node.lhs.as_ref().unwrap().resolve_type().unwrap(),
+                &node.lhs.as_ref().unwrap().resolve_type_view().unwrap(),
                 node.rhs.as_ref().unwrap(),
             );
         }
@@ -3930,8 +3930,10 @@ impl<'a> AstBuilderImpl<'a> {
             }
         }
         if matches!(node.nt, NodeType::Conditional) {
-            let then_void = node.then.as_ref().unwrap().resolve_type() == Some(Type::Void);
-            let else_void = node.els.as_ref().unwrap().resolve_type() == Some(Type::Void);
+            let then_void =
+                node.then.as_ref().unwrap().resolve_type_view().as_deref() == Some(&Type::Void);
+            let else_void =
+                node.els.as_ref().unwrap().resolve_type_view().as_deref() == Some(&Type::Void);
             if then_void != else_void {
                 self.error_logger.print_error_position(
                     node.token.as_ref().unwrap().pos,
