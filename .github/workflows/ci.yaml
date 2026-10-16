@@ -26,15 +26,16 @@ jobs:
       - name: Run tests with native preprocessing
         run: DYNAMITE_PREPROCESSOR=native cargo test --verbose
 
-  build-ubuntu-in-process:
+  build-without-llvm-sdk:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cruskell/dynamite-compiler-dev:latest
+      image: rust:1.86.0-slim
     steps:
       - uses: actions/checkout@v7
-      - name: Install the Clang 15 SDK
-        run: apt-get update && apt-get install -y llvm-15-dev libclang-15-dev libclang-cpp15-dev g++
-      - name: Build with in-process Clang
-        run: cargo build --features clang-in-process --verbose
-      - name: Run tests with in-process Clang
-        run: cargo test --features clang-in-process --verbose
+      - name: Build all targets without Clang or an LLVM SDK
+        run: cargo build --all-targets --all-features --verbose
+      - name: Generate LLVM IR without Clang or an LLVM SDK
+        run: |
+          printf '#include <stddef.h>\n#define VALUE 42\nint main(void) { return VALUE + sizeof(char) - 1; }\n' > /tmp/sdk-free.c
+          DYNAMITE_PREPROCESSOR=native target/debug/dynamite_compiler -o llvm /tmp/sdk-free.c > /tmp/sdk-free.ll
+          grep -q '@main(' /tmp/sdk-free.ll

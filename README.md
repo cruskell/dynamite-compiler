@@ -50,26 +50,16 @@ adapter in C builds:
 make -j4 CC=/absolute/path/to/target/release/dynamite-cc
 ```
 
-On Linux, an optional Clang 15 SDK integration avoids starting Clang processes for
-file preprocessing and LLVM IR lowering:
+Building Dynamite requires Rust and its platform linker, but no LLVM/Clang SDK,
+C++ bridge, or LLVM development headers and libraries. LLVM IR generation is
+implemented directly in Rust. The former `clang-in-process` Cargo feature has
+been removed; `--all-features` builds also require no LLVM SDK.
 
-```sh
-sudo apt-get install clang-15 llvm-15-dev libclang-15-dev libclang-cpp15-dev g++
-cargo build --release --features clang-in-process
-```
+The driver invokes the external Clang executable for LLVM IR lowering and
+linking, and for preprocessing when the native preprocessor is not selected.
+`DYNAMITE_CLANG` selects that executable (default: `clang` from `PATH`). Removing
+the SDK integration does not remove this external toolchain requirement.
 
-`LLVM_CONFIG` selects `llvm-config-15`; the selected SDK must be version 15.
-`CXX` and `AR` select the native C++ compiler and archiver. Headers normally come
-from `llvm-config --includedir`; `DYNAMITE_CLANG_INCLUDE_DIR` can override the
-Clang header directory. This feature currently supports native Linux builds.
-SDK calls are serialized within one process because LLVM has global option
-registration state; Rust frontend workers and separate `make -jN` compiler
-processes remain independent. It selects the SDK's Clang executable by default; any `DYNAMITE_CLANG` override
-must use the same Clang 15 installation. Linking, preprocessing-only commands,
-and backend time-trace/report requests continue to use the Clang executable.
-C parsing and semantic checks always run through Dynamite.
-
-The ordinary build retains its subprocess backend and needs no LLVM SDK.
 On Linux x86_64, standalone `-M`/`-MM` dependency scans use Dynamite's Rust
 preprocessor by default for supported host options. It scans directives and
 includes without expanding unrelated function bodies. Stateful macros such as
@@ -79,8 +69,8 @@ macro definitions, include guards, counters, and dependency lists reset per inpu
 Parameter references are indexed when a macro is defined, expanded arguments are
 memoized within an invocation, and header/dependency membership uses hash tables.
 
-The same implementation can preprocess C compilation and `-E` without any
-Clang/LLVM SDK calls:
+The same implementation can preprocess C compilation and `-E` without invoking
+Clang:
 
 ```sh
 DYNAMITE_PREPROCESSOR=native make -j4 CC=/absolute/path/to/target/release/dynamite-cc

@@ -6,8 +6,6 @@ mod floating;
 pub mod func;
 pub mod generator;
 pub mod global;
-#[cfg(feature = "clang-in-process")]
-pub mod native_clang;
 pub mod node;
 pub mod preprocessor;
 pub mod timing;

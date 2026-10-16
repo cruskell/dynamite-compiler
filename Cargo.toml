@@ -7,9 +7,6 @@ default-run = "dynamite_compiler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-clang-in-process = []
-
 [dependencies]
 smol_str = "=0.2.2"
 getopts = "0.2"
