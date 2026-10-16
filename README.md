@@ -1337,3 +1337,10 @@ extensions such as `mkstemp` when no stricter standard is requested. Explicit
 `-std=c99` and other supported `-std` options override this default. This does
 not change Dynamite's advertised C99 version or enable unsupported language
 capabilities.
+
+Unused `static inline` function bodies are omitted from generated output.
+Reachability starts from emitted ordinary definitions and global initializers,
+and follows direct calls and function addresses through inline bodies. This
+retains transitive helpers and callbacks while avoiding unused header routines'
+link dependencies, including in -O0 builds. All bodies are still parsed and
+semantically checked; ordinary definitions and global storage remain emitted.

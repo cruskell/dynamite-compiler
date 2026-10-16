@@ -64,13 +64,15 @@ impl<'a> IrGenerator<'a> {
         }
     }
     pub fn generate(&self, ast: ProgramAst) -> String {
-        let references = if ast.functions.values().any(|function| function.hidden)
-            || ast.global_variables.values().any(|object| object.hidden)
-        {
-            crate::generator::referenced_symbols(&ast)
-        } else {
-            std::collections::HashSet::new()
-        };
+        let references =
+            if ast.functions.values().any(|function| {
+                function.hidden || (function.internal && function.inline_definition)
+            }) || ast.global_variables.values().any(|object| object.hidden)
+            {
+                crate::generator::referenced_symbols(&ast)
+            } else {
+                std::collections::HashSet::new()
+            };
         let generator = Self {
             error_logger: self.error_logger,
             symbol_names: ast.symbol_names.clone(),
@@ -97,6 +99,10 @@ impl<'a> IrGenerator<'a> {
                 .collect::<Vec<String>>(),
             ast.functions
                 .iter()
+                .filter(|(name, function)| {
+                    !(function.internal && function.inline_definition)
+                        || references.contains(name.as_str())
+                })
                 .filter(|(name, function)| {
                     !function.hidden
                         || (function.body.is_some() && !function.inline_only())
