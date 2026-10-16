@@ -1,4 +1,7 @@
-//! Native C build driver. Clang handles preprocessing, LLVM lowering, and linking.
+//! Native C build driver with external Clang or LLVM tools.
+
+#[path = "dynamite-cc/llvm_tools.rs"]
+mod llvm_tools;
 
 use dynamite_compiler::timing::Timer;
 use std::{
@@ -303,6 +306,28 @@ impl Arguments {
         Ok(result)
     }
 
+    fn link_arguments(&self, outputs: &[PathBuf]) -> Vec<String> {
+        let mut objects = outputs.iter();
+        let mut arguments = vec![];
+        for argument in &self.linker {
+            match argument {
+                LinkArgument::Option(option) => arguments.push(option.clone()),
+                LinkArgument::Input(index) => {
+                    let input = &self.inputs[*index];
+                    arguments.push(if input.source {
+                        objects.next().unwrap().to_string_lossy().into_owned()
+                    } else {
+                        input.name.clone()
+                    });
+                }
+            }
+        }
+        if let Some(output) = &self.output {
+            arguments.extend(["-o".into(), output.clone()]);
+        }
+        arguments
+    }
+
     fn output_for(&self, input: &Input) -> PathBuf {
         if let Some(output) = &self.output {
             return output.into();
@@ -414,6 +439,16 @@ fn compile(
         let _timer = Timer::new("write_ir");
         fs::write(&ir_path, &ir).map_err(|e| format!("failed to write LLVM IR: {e}"))?;
     }
+    if llvm_tools::selected()? {
+        let _timer = Timer::new("lower");
+        llvm_tools::lower(
+            &args.backend,
+            &ir_path,
+            &output,
+            args.mode == Mode::Assembly,
+        )?;
+        return Ok(output);
+    }
     let mut command = Command::new(clang);
     let mut backend_index = 0;
     while backend_index < args.backend.len() {
@@ -458,11 +493,12 @@ fn compile(
 fn run(arguments: &[String]) -> Result<i32, String> {
     if arguments.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
-            "Usage: dynamite-cc [--jobs N] [Clang options] FILE...\nCompile C through Dynamite and lower LLVM IR with Clang. Supports -c, -S, -o, -I/-D/-U, and dependency files. Default: one worker."
+            "Usage: dynamite-cc [--jobs N] [Clang options] FILE...\nCompile C through Dynamite. DYNAMITE_BACKEND=llvm selects external llc/opt/LLD on Linux x86_64 GNU; the default backend is Clang. Supports -c, -S, -o, -I/-D/-U, and dependency files. Default: one worker."
         );
         return Ok(0);
     }
     let args = Arguments::parse(arguments)?;
+    let llvm = llvm_tools::selected()?;
     let clang = std::env::var("DYNAMITE_CLANG").unwrap_or_else(|_| "clang".into());
     if args.preprocess_only {
         let preprocessor = std::env::var("DYNAMITE_PREPROCESSOR").unwrap_or_default();
@@ -534,6 +570,22 @@ fn run(arguments: &[String]) -> Result<i32, String> {
         .filter(|input| input.source)
         .collect::<Vec<_>>();
     if sources.is_empty() {
+        if llvm {
+            if arguments == ["--version"] {
+                println!(
+                    "dynamite-cc {} (LLVM tools backend)",
+                    env!("CARGO_PKG_VERSION")
+                );
+                return Ok(0);
+            }
+            if arguments == ["-dumpmachine"] {
+                println!("x86_64-pc-linux-gnu");
+                return Ok(0);
+            }
+            let _timer = Timer::new("link_or_other");
+            llvm_tools::link(&args.link_arguments(&[]))?;
+            return Ok(0);
+        }
         if arguments.iter().any(|arg| arg == "--version") {
             println!("dynamite-cc {} (clang backend)", env!("CARGO_PKG_VERSION"));
         }
@@ -583,28 +635,14 @@ fn run(arguments: &[String]) -> Result<i32, String> {
     if args.mode != Mode::Link {
         return Ok(0);
     }
-    let mut objects = outputs.iter();
-    let mut command = Command::new(&clang);
-    for argument in &args.linker {
-        match argument {
-            LinkArgument::Option(option) => {
-                command.arg(option);
-            }
-            LinkArgument::Input(index) => {
-                let input = &args.inputs[*index];
-                if input.source {
-                    command.arg(objects.next().unwrap());
-                } else {
-                    command.arg(&input.name);
-                }
-            }
-        }
-    }
-    if let Some(output) = &args.output {
-        command.arg("-o").arg(output);
-    }
+    let arguments = args.link_arguments(&outputs);
     let _timer = Timer::new("link");
-    status(&mut command)
+    if llvm {
+        llvm_tools::link(&arguments)?;
+        Ok(0)
+    } else {
+        status(Command::new(&clang).args(&arguments))
+    }
 }
 
 fn main() {
