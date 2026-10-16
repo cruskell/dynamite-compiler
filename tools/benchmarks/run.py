@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True,
                         help="New directory; existing results are never overwritten")
     parser.add_argument("--clang", default="clang")
+    parser.add_argument("--project", choices=["both", "redis", "git"], default="both")
     parser.add_argument("--dynamite", type=Path, default=REPO / "target/release/dynamite-cc")
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--jobs", type=int, default=4)
@@ -34,8 +35,15 @@ def main():
     if not clang:
         parser.error("Clang executable was not found")
     root = args.output.resolve()
-    root.mkdir(parents=True, exist_ok=False)
     sources = {"redis": args.redis_source.resolve(), "git": args.git_source.resolve()}
+    if args.project != "both":
+        sources = {args.project: sources[args.project]}
+    for name, source in sources.items():
+        if root.is_relative_to(source):
+            parser.error("output must not be inside an upstream source directory")
+        if output(["git", "status", "--porcelain", "--ignored"], source):
+            parser.error(f"{name} source must be a pristine checkout, without build artifacts")
+    root.mkdir(parents=True, exist_ok=False)
     metadata = {
         "utc": datetime.now(timezone.utc).isoformat(),
         "platform": platform.platform(), "machine": platform.machine(),
@@ -57,7 +65,7 @@ def main():
             for compiler in order:
                 name = f"{project}-{compiler}-{run}"
                 work = root / name
-                shutil.copytree(source, work)
+                shutil.copytree(source, work, symlinks=True)
                 records = root / (name + "-records")
                 executable = args.dynamite.resolve() if compiler == "dynamite" else clang
                 env = dict(os.environ, BENCH_COMPILER=str(executable), BENCH_LOG=str(records),
@@ -78,7 +86,8 @@ def main():
                     result = subprocess.run(command, cwd=work, env=env, stdout=log, stderr=subprocess.STDOUT)
                 build = {"project": project, "compiler": compiler, "run": run,
                          "seconds": time.perf_counter() - start, "returncode": result.returncode,
-                         "command": command, "cwd": str(work), "records": str(records)}
+                         "command": command, "cwd": str(work), "records": str(records),
+                         "tracked_source_changes": output(["git", "status", "--porcelain", "--untracked-files=no"], work)}
                 metadata["builds"].append(build)
                 (root / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
                 print(json.dumps(build), flush=True)

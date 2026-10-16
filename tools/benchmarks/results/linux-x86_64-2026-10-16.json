@@ -1,0 +1,524 @@
+{
+  "date": "2026-10-16",
+  "host": {
+    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+    "cpu": "Intel Core i5-5575R @ 2.80GHz",
+    "logical_cpus": 4,
+    "rustc": "1.86.0",
+    "cargo_profile": "release",
+    "clang": "Ubuntu clang version 15.0.7\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin"
+  },
+  "compiler_source_commit": "af21ee4aa70ca29ba6d4ddd71a3904a1777871e0",
+  "compatibility_main_commit": "db5cfcff639ed7a21498325703c3c8892db6b8fa",
+  "compiler_binary_sha256": "b114a1818dbeab631910ea1099789e7a6a7b02ba5b2afdcf4faf8f4013779ad4",
+  "upstream_commits": {
+    "redis": "498ecd0d6d007db11ddb3aea9428552598a78622",
+    "git": "a018953688f1b10bddf91bff8747068f5f4746a4"
+  },
+  "conditions": {
+    "jobs": 4,
+    "runs_per_compiler": 2,
+    "order": [
+      "dynamite then clang",
+      "clang then dynamite"
+    ],
+    "filesystem_cache": "warm/not cleared",
+    "optimization": "-O0",
+    "debug": "-g0",
+    "standard": "gnu99",
+    "no_c_frontend_fallback": true,
+    "project_options": "See per-project make_arguments. Capability macros may select different source branches."
+  },
+  "projects": [
+    {
+      "project": "redis",
+      "compilers": {
+        "dynamite": {
+          "wall_seconds": [
+            15.875228210352361,
+            16.030139074660838
+          ],
+          "median_wall_seconds": 15.9526836425066,
+          "successful_c_compilations": [
+            184,
+            184
+          ],
+          "mean_compile_worker_seconds": 28.429196681827307,
+          "mean_compile_cpu_seconds": 26.594807499999998,
+          "max_compilation_rss_kib": 103296.0,
+          "mean_dependency_scan_worker_seconds": 4.965739813167602,
+          "mean_link_worker_seconds": 0.39520800299942493,
+          "mean_stage_worker_seconds": {
+            "drop_ast": 0.48795116399999994,
+            "drop_tokens": 0.1562478770000001,
+            "frontend_total": 18.12282260300001,
+            "generate": 1.2840111650000003,
+            "lower": 9.740375711000002,
+            "parse": 5.437308900000002,
+            "parse.declarations": 4.725196606500002,
+            "parse.inline": 0.0022579359999999995,
+            "parse.lower": 0.32681294450000004,
+            "parse.validate": 0.32556460600000015,
+            "preprocess": 8.860995191000002,
+            "preprocess.clang": 8.568400127999997,
+            "preprocess.map": 0.23624346849999994,
+            "preprocess.read": 0.007625464,
+            "tokenize": 1.7859685389999993,
+            "write_ir": 0.06678346600000001
+          },
+          "mean_clang_trace_seconds": {
+            "Backend": 4.035063999999999,
+            "CodeGenPasses": 3.8573145000000006,
+            "ExecuteCompiler": 5.809270999999999,
+            "OptModule": 3.8275499999999996
+          },
+          "make_arguments": [
+            "make",
+            "-j4",
+            "CC=/absolute/path/to/tools/benchmarks/cc.py",
+            "-C",
+            "src",
+            "MALLOC=libc",
+            "BUILD_TLS=no",
+            "SKIP_VEC_SETS=yes",
+            "OPT=-O0",
+            "OPTIMIZATION=-O0",
+            "DEBUG=",
+            "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+            "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+            "redis-server",
+            "redis-cli",
+            "redis-benchmark",
+            "redis-check-rdb",
+            "redis-check-aof",
+            "redis-sentinel"
+          ],
+          "tracked_source_changes": [
+            "",
+            ""
+          ],
+          "failed_probe_arguments": [
+            [
+              "--version"
+            ],
+            [
+              "--version"
+            ],
+            [
+              "--version"
+            ],
+            [
+              "-std=gnu11",
+              "-c",
+              "foo.c",
+              "-o",
+              "foo.o"
+            ],
+            [
+              "--version"
+            ],
+            [
+              "--version"
+            ],
+            [
+              "--version"
+            ],
+            [
+              "-std=gnu11",
+              "-c",
+              "foo.c",
+              "-o",
+              "foo.o"
+            ]
+          ]
+        },
+        "clang": {
+          "wall_seconds": [
+            13.889543443918228,
+            13.920039100572467
+          ],
+          "median_wall_seconds": 13.904791272245347,
+          "successful_c_compilations": [
+            184,
+            184
+          ],
+          "mean_compile_worker_seconds": 20.537119259592146,
+          "mean_compile_cpu_seconds": 19.549889,
+          "max_compilation_rss_kib": 119156.0,
+          "mean_dependency_scan_worker_seconds": 4.919451865367591,
+          "mean_link_worker_seconds": 0.3740026759915054,
+          "mean_stage_worker_seconds": {},
+          "mean_clang_trace_seconds": {
+            "Backend": 2.8816440000000005,
+            "CodeGenPasses": 2.7351595,
+            "ExecuteCompiler": 16.370471999999996,
+            "Frontend": 13.235432500000005,
+            "OptModule": 2.723350000000001
+          },
+          "make_arguments": [
+            "make",
+            "-j4",
+            "CC=/absolute/path/to/tools/benchmarks/cc.py",
+            "-C",
+            "src",
+            "MALLOC=libc",
+            "BUILD_TLS=no",
+            "SKIP_VEC_SETS=yes",
+            "OPT=-O0",
+            "OPTIMIZATION=-O0",
+            "DEBUG=",
+            "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+            "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+            "redis-server",
+            "redis-cli",
+            "redis-benchmark",
+            "redis-check-rdb",
+            "redis-check-aof",
+            "redis-sentinel"
+          ],
+          "tracked_source_changes": [
+            "",
+            ""
+          ],
+          "failed_probe_arguments": []
+        }
+      },
+      "dynamite_to_clang_wall_ratio": 1.1472796196767763
+    },
+    {
+      "project": "git",
+      "compilers": {
+        "dynamite": {
+          "wall_seconds": [
+            51.57174641173333,
+            51.7967526987195
+          ],
+          "median_wall_seconds": 51.684249555226415,
+          "successful_c_compilations": [
+            568,
+            568
+          ],
+          "mean_compile_worker_seconds": 169.34894392779097,
+          "mean_compile_cpu_seconds": 160.38183799999987,
+          "max_compilation_rss_kib": 100268.0,
+          "mean_dependency_scan_worker_seconds": 0,
+          "mean_link_worker_seconds": 3.194139316678047,
+          "mean_stage_worker_seconds": {
+            "drop_ast": 6.642451731999998,
+            "drop_tokens": 1.7490383130000011,
+            "frontend_total": 131.83534078999998,
+            "generate": 4.848193566000003,
+            "lower": 34.35832835249998,
+            "parse": 46.13480442150002,
+            "parse.declarations": 40.681533316499994,
+            "parse.inline": 0.028992874999999994,
+            "parse.lower": 2.658578096999999,
+            "parse.validate": 2.595099120000003,
+            "preprocess": 53.55226997100002,
+            "preprocess.clang": 51.555582689499985,
+            "preprocess.map": 1.831822874,
+            "preprocess.read": 0.013838173499999988,
+            "tokenize": 18.539755039,
+            "write_ir": 0.6237605529999998
+          },
+          "mean_clang_trace_seconds": {
+            "Backend": 11.249243000000007,
+            "CodeGenPasses": 10.436928500000008,
+            "ExecuteCompiler": 21.391780000000022,
+            "OptModule": 10.246865000000009
+          },
+          "make_arguments": [
+            "make",
+            "-j4",
+            "CC=/absolute/path/to/tools/benchmarks/cc.py",
+            "NO_RUST=YesPlease",
+            "NO_PRECOMPILED_HEADER=YesPlease",
+            "NO_GETTEXT=YesPlease",
+            "NO_TCLTK=YesPlease",
+            "NO_PERL=YesPlease",
+            "NO_PYTHON=YesPlease",
+            "CFLAGS=-O0 -g0 -std=gnu99",
+            "all"
+          ],
+          "tracked_source_changes": [
+            "",
+            ""
+          ],
+          "failed_probe_arguments": []
+        },
+        "clang": {
+          "wall_seconds": [
+            40.86859770398587,
+            40.91390791814774
+          ],
+          "median_wall_seconds": 40.891252811066806,
+          "successful_c_compilations": [
+            568,
+            568
+          ],
+          "mean_compile_worker_seconds": 126.32596147386357,
+          "mean_compile_cpu_seconds": 120.76820500000002,
+          "max_compilation_rss_kib": 120336.0,
+          "mean_dependency_scan_worker_seconds": 0,
+          "mean_link_worker_seconds": 3.241886019706726,
+          "mean_stage_worker_seconds": {},
+          "mean_clang_trace_seconds": {
+            "Backend": 5.959722000000004,
+            "CodeGenPasses": 5.563025999999999,
+            "ExecuteCompiler": 112.86624349999997,
+            "Frontend": 106.07834249999995,
+            "OptModule": 5.541903500000001
+          },
+          "make_arguments": [
+            "make",
+            "-j4",
+            "CC=/absolute/path/to/tools/benchmarks/cc.py",
+            "NO_RUST=YesPlease",
+            "NO_PRECOMPILED_HEADER=YesPlease",
+            "NO_GETTEXT=YesPlease",
+            "NO_TCLTK=YesPlease",
+            "NO_PERL=YesPlease",
+            "NO_PYTHON=YesPlease",
+            "CFLAGS=-O0 -g0 -std=gnu99",
+            "all"
+          ],
+          "tracked_source_changes": [
+            "",
+            ""
+          ],
+          "failed_probe_arguments": []
+        }
+      },
+      "dynamite_to_clang_wall_ratio": 1.2639439000322972
+    }
+  ],
+  "identical_preprocessed_inputs": [
+    {
+      "project": "redis",
+      "source": "adlist.c",
+      "input_bytes": 46370,
+      "rounds": 7,
+      "dynamite_stages_median": {
+        "tokenize": 0.001001523,
+        "parse.declarations": 0.003070155,
+        "parse.validate": 0.000274864,
+        "parse.lower": 0.00023587,
+        "parse.inline": 1.816e-06,
+        "parse": 0.003615449,
+        "generate": 0.000980824,
+        "drop_ast": 0.000329399,
+        "drop_tokens": 0.000194037,
+        "frontend_total": 0.006167361
+      },
+      "dynamite_ir_bytes": 49391,
+      "clang_ir_bytes": 44387,
+      "ir_counts": {
+        "dynamite": {
+          "declarations": 265,
+          "definitions": 22
+        },
+        "clang": {
+          "declarations": 2,
+          "definitions": 22
+        }
+      },
+      "clang_trace_median_seconds": {
+        "Frontend": 0.010336,
+        "Backend": 0.000938,
+        "ExecuteCompiler": 0.012548
+      },
+      "lowering_median_seconds": {
+        "dynamite": {
+          "process_wall": 0.029490373097360134,
+          "ExecuteCompiler": 0.008433,
+          "Backend": 0.006114
+        },
+        "clang": {
+          "process_wall": 0.02659021597355604,
+          "ExecuteCompiler": 0.006858,
+          "Backend": 0.005218
+        }
+      }
+    },
+    {
+      "project": "redis",
+      "source": "server.c",
+      "input_bytes": 738169,
+      "rounds": 7,
+      "dynamite_stages_median": {
+        "tokenize": 0.029047145,
+        "parse.declarations": 0.068536108,
+        "parse.validate": 0.00924312,
+        "parse.lower": 0.007857008,
+        "parse.inline": 3.2099e-05,
+        "parse": 0.086360651,
+        "generate": 0.03426883,
+        "drop_ast": 0.010930183,
+        "drop_tokens": 0.002766177,
+        "frontend_total": 0.163935775
+      },
+      "dynamite_ir_bytes": 1484479,
+      "clang_ir_bytes": 1183757,
+      "ir_counts": {
+        "dynamite": {
+          "declarations": 4526,
+          "definitions": 251
+        },
+        "clang": {
+          "declarations": 499,
+          "definitions": 251
+        }
+      },
+      "clang_trace_median_seconds": {
+        "Frontend": 0.172633,
+        "Backend": 0.017948,
+        "ExecuteCompiler": 0.192955
+      },
+      "lowering_median_seconds": {
+        "dynamite": {
+          "process_wall": 0.19146430771797895,
+          "ExecuteCompiler": 0.169654,
+          "Backend": 0.12527
+        },
+        "clang": {
+          "process_wall": 0.14139612391591072,
+          "ExecuteCompiler": 0.120293,
+          "Backend": 0.090991
+        }
+      }
+    },
+    {
+      "project": "git",
+      "source": "abspath.c",
+      "input_bytes": 788201,
+      "rounds": 7,
+      "dynamite_stages_median": {
+        "tokenize": 0.013538715,
+        "parse.declarations": 0.04579255,
+        "parse.validate": 0.003573469,
+        "parse.lower": 0.003455684,
+        "parse.inline": 4.2062e-05,
+        "parse": 0.0528608,
+        "generate": 0.005315893,
+        "drop_ast": 0.008081554,
+        "drop_tokens": 0.002678146,
+        "frontend_total": 0.082954362
+      },
+      "dynamite_ir_bytes": 299703,
+      "clang_ir_bytes": 46866,
+      "ir_counts": {
+        "dynamite": {
+          "declarations": 5744,
+          "definitions": 23
+        },
+        "clang": {
+          "declarations": 22,
+          "definitions": 23
+        }
+      },
+      "clang_trace_median_seconds": {
+        "Frontend": 0.102024,
+        "Backend": 0.000984,
+        "ExecuteCompiler": 0.104643
+      },
+      "lowering_median_seconds": {
+        "dynamite": {
+          "process_wall": 0.0470194797962904,
+          "ExecuteCompiler": 0.026083,
+          "Backend": 0.011965
+        },
+        "clang": {
+          "process_wall": 0.028522866778075695,
+          "ExecuteCompiler": 0.00846,
+          "Backend": 0.006645
+        }
+      }
+    },
+    {
+      "project": "git",
+      "source": "revision.c",
+      "input_bytes": 1138115,
+      "rounds": 7,
+      "dynamite_stages_median": {
+        "tokenize": 0.022207037,
+        "parse.declarations": 0.094230919,
+        "parse.validate": 0.010481599,
+        "parse.lower": 0.010210086,
+        "parse.inline": 5.5237e-05,
+        "parse": 0.115091068,
+        "generate": 0.029384637,
+        "drop_ast": 0.018631852,
+        "drop_tokens": 0.004086616,
+        "frontend_total": 0.189968051
+      },
+      "dynamite_ir_bytes": 1269466,
+      "clang_ir_bytes": 813547,
+      "ir_counts": {
+        "dynamite": {
+          "declarations": 7188,
+          "definitions": 208
+        },
+        "clang": {
+          "declarations": 213,
+          "definitions": 194
+        }
+      },
+      "clang_trace_median_seconds": {
+        "Frontend": 0.206942,
+        "Backend": 0.012269,
+        "ExecuteCompiler": 0.221302
+      },
+      "lowering_median_seconds": {
+        "dynamite": {
+          "process_wall": 0.1639238130301237,
+          "ExecuteCompiler": 0.142204,
+          "Backend": 0.097122
+        },
+        "clang": {
+          "process_wall": 0.10740056075155735,
+          "ExecuteCompiler": 0.085084,
+          "Backend": 0.065326
+        }
+      }
+    }
+  ],
+  "cpu_profile": {
+    "input": "Git revision.c, same preprocessed bytes as matched experiment",
+    "rounds": 40,
+    "event": "cpu-clock:u",
+    "frequency": 999,
+    "samples": 7547,
+    "lost_samples": 0,
+    "allocator_self_percent_at_least": 25.46,
+    "memmove_self_percent": 7.21,
+    "tokenizer_self_percent": 6.93,
+    "note": "Exclusive user CPU samples. Allocator total includes the six allocation/free routines above 0.5%; call-chain inclusive percentages are not used."
+  },
+  "validation": {
+    "unit_tests": 33,
+    "integration_tests": 2072,
+    "doc_tests": 1,
+    "redis_upstream_units": [
+      "unit/type/incr",
+      "unit/scripting",
+      "unit/type/hash",
+      "unit/type/string"
+    ],
+    "redis_upstream_ok_assertions": 669,
+    "measured_binaries": "Dynamite and Clang Redis: basic commands, exact increment beyond 2^53, Lua/JSON, RDB save/reload. Git: init/add/commit/status/log/diff/switch/gc/fsck."
+  },
+  "interpretation": [
+    "Stage values are mean sums of per-invocation elapsed time (worker seconds), not parallel build wall seconds.",
+    "frontend_total contains preprocess/tokenize/parse/generate/teardown; preprocess.* and parse.* are nested. Clang trace Frontend/Backend describe C compilation for Clang and IR compilation for Dynamite; nested LLVM trace totals must not be added.",
+    "Matched Dynamite frontend timers exclude file reads/output writes/process startup; Clang trace values exclude driver startup but have different teardown/IR serialization boundaries. Clang process wall time is not directly comparable to the in-process timer.",
+    "All final build copies preserve upstream symbolic links and have no tracked source changes. Exploratory Git results with copied documentation symlinks were discarded; Redis copies had no tracked changes.",
+    "Only Linux x86_64 and O0 application builds were measured. No cold-cache, macOS, AArch64 or whole-project O2 speed claim is made."
+  ],
+  "raw_artifacts": [
+    "temp/build-benchmark/measured-final/metadata.json",
+    "temp/build-benchmark/measured-final/summary.json",
+    "temp/build-benchmark/measured-final/matched/summary.json",
+    "temp/build-benchmark/measured/matched/frontend-perf.data",
+    "temp/build-benchmark/measured/matched/perf-flat.txt"
+  ]
+}

@@ -44,3 +44,35 @@ these traces. Backend, OptModule and CodeGenPasses overlap; do not add these
 nested trace totals. Sum-of-invocation elapsed times are worker seconds, not
 build wall time or CPU time; parallel work overlaps. CPU times and maximum RSS
 are recorded separately. Maximum compilation RSS is not peak whole-build RSS.
+
+For a serial frontend comparison on exactly the same preprocessed input:
+
+```sh
+cargo build --release --example profile_frontend
+python3 tools/benchmarks/matched.py temp/benchmark-run --clang clang-15 --rounds 7
+```
+
+This selects Redis adlist/server and Git abspath/revision translation units,
+preprocesses with Dynamite's capability profile, and passes identical unmarked
+C bytes to each frontend. The Dynamite example runs in-process, excluding file
+reads and output writes from its stage timer. Clang runs separately and its trace
+reports internal Frontend/Backend/ExecuteCompiler times. These microbenchmark
+boundaries differ from end-to-end driver latency: do not compare the in-process
+Dynamite timer with Clang process wall time. Both generated IR files are then
+lowered separately by the same Clang to expose IR-reading/backend differences.
+IR bytes and declaration/definition counts are recorded.
+
+On Linux, a CPU profile of the same in-process workload can be captured with:
+
+```sh
+perf record -e cpu-clock:u -F 999 --call-graph dwarf --no-inherit   -o temp/frontend.data -- target/release/examples/profile_frontend   temp/benchmark-run/matched/git-revision.i 40 temp/profile.ll
+perf report -i temp/frontend.data --stdio --no-children --call-graph none
+```
+
+Use appropriate local perf permissions. Self samples are exclusive; inclusive
+call-chain percentages may overlap and depend on unwind coverage. Compiler
+version probes piped through `head` may return a closed-pipe exit without failing
+make; these are retained in the failed-invocation list, separate from C builds.
+Copies preserve symbolic links, and source directories must have no tracked,
+untracked or ignored build changes. `--project git` or `--project redis` selects
+a single project when needed.
