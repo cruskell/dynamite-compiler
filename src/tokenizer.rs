@@ -1,7 +1,6 @@
 use crate::error;
 use crate::token::{StringEncoding, Token, TokenType};
 use crate::trie::Trie;
-use std::collections::HashSet;
 
 pub const TYPES: [&str; 18] = [
     "int",
@@ -23,46 +22,49 @@ pub const TYPES: [&str; 18] = [
     "__int128_t",
     "__uint128_t",
 ];
-const RESERVED_WORDS: [&str; 38] = [
-    "__extension__",
-    "return",
-    "if",
-    "else",
-    "while",
-    "for",
-    "break",
-    "sizeof",
-    "continue",
-    "do",
-    "switch",
-    "case",
-    "default",
-    "typedef",
-    "struct",
-    "enum",
-    "goto",
-    "static",
-    "extern",
-    "union",
-    "const",
-    "volatile",
-    "restrict",
-    "inline",
-    "__inline",
-    "__inline__",
-    "_Static_assert",
-    "_Generic",
-    "auto",
-    "register",
-    "_Alignof",
-    "_Alignas",
-    "_Thread_local",
-    "__thread",
-    "_Nullable",
-    "_Nonnull",
-    "_Null_unspecified",
-    "_Nullable_result",
-];
+fn is_reserved_word(value: &str) -> bool {
+    matches!(
+        value,
+        "__extension__"
+            | "return"
+            | "if"
+            | "else"
+            | "while"
+            | "for"
+            | "break"
+            | "sizeof"
+            | "continue"
+            | "do"
+            | "switch"
+            | "case"
+            | "default"
+            | "typedef"
+            | "struct"
+            | "enum"
+            | "goto"
+            | "static"
+            | "extern"
+            | "union"
+            | "const"
+            | "volatile"
+            | "restrict"
+            | "inline"
+            | "__inline"
+            | "__inline__"
+            | "_Static_assert"
+            | "_Generic"
+            | "auto"
+            | "register"
+            | "_Alignof"
+            | "_Alignas"
+            | "_Thread_local"
+            | "__thread"
+            | "_Nullable"
+            | "_Nonnull"
+            | "_Null_unspecified"
+            | "_Nullable_result"
+    )
+}
 
 const RESERVED_SYMBOLS: [&str; 51] = [
     "=", "+", "-", "*", "/", "%", "<", ">", "==", "!=", "+=", "-=", "*=", "/=", "%=", "<=", ">=",
@@ -325,11 +327,11 @@ impl Packing {
 pub struct Tokenizer {}
 
 impl Tokenizer {
-    fn reserved_token(pos: usize, s_value: String) -> Token {
+    fn reserved_token(pos: usize, s_value: &str) -> Token {
         Token {
             tt: TokenType::Reserved,
             pos,
-            s_value,
+            s_value: s_value.into(),
             ..Token::default()
         }
     }
@@ -341,11 +343,11 @@ impl Tokenizer {
             ..Token::default()
         }
     }
-    fn ident_token(pos: usize, s_value: String) -> Token {
+    fn ident_token(pos: usize, s_value: &str) -> Token {
         Token {
             tt: TokenType::Ident,
             pos,
-            s_value,
+            s_value: s_value.into(),
             ..Token::default()
         }
     }
@@ -522,11 +524,14 @@ impl Tokenizer {
         let mut tokens = vec![];
         let mut packing = Packing::default();
         let mut packing_changes = vec![];
-        let reserved_words = RESERVED_WORDS.into_iter().collect::<HashSet<_>>();
         let reserved_symbols = Trie::new(&RESERVED_SYMBOLS);
         let bytes = code.as_bytes();
         let mut pos = 0;
         while pos < bytes.len() {
+            if bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+                continue;
+            }
             let start = pos;
             if let Some((token, end)) = Self::version_token(code, pos) {
                 tokens.push(token);
@@ -611,7 +616,7 @@ impl Tokenizer {
                     let unsigned = suffix.contains('u')
                         || (!wide && value > i32::MAX as usize)
                         || value > i64::MAX as usize;
-                    token.s_value = format!(
+                    token.s_value = smol_str::format_smolstr!(
                         "{}{}",
                         if long_long {
                             "ll"
@@ -639,13 +644,11 @@ impl Tokenizer {
                         "__alignof" | "__alignof__" => "_Alignof",
                         value => value,
                     };
-                    tokens.push(
-                        if reserved_words.contains(value) || TYPES.contains(&value) {
-                            Self::reserved_token(start, value.to_string())
-                        } else {
-                            Self::ident_token(start, value.to_string())
-                        },
-                    );
+                    tokens.push(if is_reserved_word(value) || TYPES.contains(&value) {
+                        Self::reserved_token(start, value)
+                    } else {
+                        Self::ident_token(start, value)
+                    });
                 }
                 b'#' => {
                     while pos < bytes.len() && bytes[pos] != b'\n' {
@@ -723,7 +726,7 @@ impl Tokenizer {
                         tokens.push(Token {
                             tt: TokenType::Str,
                             pos: start,
-                            s_value: value.to_string(),
+                            s_value: value.into(),
                             string_encoding,
                             string_bytes: encoded,
                             ..Token::default()
@@ -736,7 +739,7 @@ impl Tokenizer {
                         return Err(error::SyntaxError::new(start, "unexpected character"));
                     }
                     pos += size;
-                    tokens.push(Self::reserved_token(start, code[start..pos].to_string()));
+                    tokens.push(Self::reserved_token(start, &code[start..pos]));
                 }
             }
         }
@@ -899,63 +902,63 @@ mod tests {
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
-                s_value: String::from("int"),
+                s_value: String::from("int").into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Ident,
                 pos: 4,
-                s_value: String::from("main"),
+                s_value: String::from("main").into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 8,
-                s_value: String::from("("),
+                s_value: String::from("(").into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 9,
-                s_value: String::from(")"),
+                s_value: String::from(")").into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 11,
-                s_value: String::from("{"),
+                s_value: String::from("{").into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 13,
-                s_value: String::from("return"),
+                s_value: String::from("return").into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Num,
                 pos: 20,
-                s_value: String::new(),
+                s_value: String::new().into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 21,
-                s_value: String::from(";"),
+                s_value: String::from(";").into(),
                 i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 23,
-                s_value: String::from("}"),
+                s_value: String::from("}").into(),
                 i_value: 0,
                 ..Token::default()
             },

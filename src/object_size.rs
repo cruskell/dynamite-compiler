@@ -1,4 +1,5 @@
 use super::*;
+use std::rc::Rc;
 
 #[derive(Clone, Copy)]
 struct ObjectRegion {
@@ -142,14 +143,14 @@ impl AstBuilderImpl<'_> {
         let has_bounds = self.pending_bounds.len() != bounds_start;
         self.pending_bounds.truncate(bounds_start);
         let const_void = Type::Qualified(
-            Box::new(Type::Void),
+            Rc::new(Type::Void),
             Qualifiers {
                 constant: true,
                 volatile: true,
                 ..Qualifiers::default()
             },
         );
-        self.expect_conversion(&Type::Ptr(Box::new(const_void)), &pointer);
+        self.expect_conversion(&Type::Ptr(Rc::new(const_void)), &pointer);
         if !Self::integer_constant(&mode) {
             self.error_logger.print_error_position(
                 token.pos,

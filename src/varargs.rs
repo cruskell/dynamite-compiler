@@ -1,4 +1,5 @@
 use super::*;
+use std::rc::Rc;
 
 fn number(value: usize) -> Node {
     Node::new_with_num(None, value)
@@ -25,14 +26,14 @@ fn address(node: Node) -> Node {
     Node::new_with_op_and_lhs(None, NodeType::Addr, node)
 }
 fn pointer() -> Type {
-    Type::Ptr(Box::new(Type::I8))
+    Type::Ptr(Rc::new(Type::I8))
 }
 fn field(base: Node, offset: usize, ty: Type) -> Node {
     let byte_pointer = binary(NodeType::Add, cast(base, pointer()), number(offset));
     Node::new_with_op_and_lhs(
         None,
         NodeType::Deref,
-        cast(byte_pointer, Type::Ptr(Box::new(ty))),
+        cast(byte_pointer, Type::Ptr(Rc::new(ty))),
     )
 }
 fn align_pointer(value: Node, alignment: usize) -> Node {
@@ -74,14 +75,14 @@ impl AstBuilderImpl<'_> {
             vec![
                 ("gp_offset", Type::integer(32, false)),
                 ("fp_offset", Type::integer(32, false)),
-                ("overflow_arg_area", Type::Ptr(Box::new(Type::Void))),
-                ("reg_save_area", Type::Ptr(Box::new(Type::Void))),
+                ("overflow_arg_area", Type::Ptr(Rc::new(Type::Void))),
+                ("reg_save_area", Type::Ptr(Rc::new(Type::Void))),
             ]
         } else {
             vec![
-                ("__stack", Type::Ptr(Box::new(Type::Void))),
-                ("__gr_top", Type::Ptr(Box::new(Type::Void))),
-                ("__vr_top", Type::Ptr(Box::new(Type::Void))),
+                ("__stack", Type::Ptr(Rc::new(Type::Void))),
+                ("__gr_top", Type::Ptr(Rc::new(Type::Void))),
+                ("__vr_top", Type::Ptr(Rc::new(Type::Void))),
                 ("__gr_offs", Type::I32),
                 ("__vr_offs", Type::I32),
             ]
@@ -114,7 +115,7 @@ impl AstBuilderImpl<'_> {
         };
         self.struct_definitions.push(owner);
         if cfg!(target_arch = "x86_64") {
-            Type::Arr(Box::new(Type::Struct(structure)), Some(1))
+            Type::Arr(Rc::new(Type::Struct(structure)), Some(1))
         } else {
             Type::Struct(structure)
         }
@@ -123,7 +124,7 @@ impl AstBuilderImpl<'_> {
     fn va_temporary(&mut self, token: &Token, ty: Type) -> Node {
         self.register_local_variable(
             Token {
-                s_value: format!(".va.{}.{}", token.pos, self.offset_size),
+                s_value: format!(".va.{}.{}", token.pos, self.offset_size).into(),
                 ..token.clone()
             },
             ty,

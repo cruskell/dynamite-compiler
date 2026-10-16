@@ -144,12 +144,13 @@ impl fmt::Debug for StructType {
     }
 }
 
+/// Recursive type components are shared; lowering uses copy-on-write mutations.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
     Void,
-    Qualified(Box<Type>, Qualifiers),
+    Qualified(Rc<Type>, Qualifiers),
     /// Object alignment supplied by a scalar typedef, independent of type identity.
-    Aligned(Box<Type>, usize),
+    Aligned(Rc<Type>, usize),
     Struct(StructType),
     Enum(EnumType),
     I8,
@@ -168,16 +169,16 @@ pub enum Type {
     Bool,
     Float16,
     /// Vector element type and lane count; value operations are not yet supported.
-    Vector(Box<Type>, usize),
+    Vector(Rc<Type>, usize),
     Float(u8),
     LongDouble(u8),
-    Ptr(Box<Type>),
+    Ptr(Rc<Type>),
     /// None denotes an omitted bound; Some(0) is a complete GNU zero-length array.
-    Arr(Box<Type>, Option<usize>),
+    Arr(Rc<Type>, Option<usize>),
     // The offset names the captured bound; runtime_size computes the language size.
-    Vla(Box<Type>, usize),
-    Func(Vec<Type>, Box<Type>),
-    VariadicFunc(Vec<Type>, Box<Type>),
+    Vla(Rc<Type>, usize),
+    Func(Rc<Vec<Type>>, Rc<Type>),
+    VariadicFunc(Rc<Vec<Type>>, Rc<Type>),
 }
 
 impl Type {
@@ -207,7 +208,7 @@ impl Type {
                 args.len() == other_args.len()
                     && args
                         .iter()
-                        .zip(other_args)
+                        .zip(other_args.iter())
                         .all(|(left, right)| left.parameter_compatible(right))
                     && result.qualifiers() == other_result.qualifiers()
                     && result.compatible(other_result)
@@ -259,7 +260,7 @@ impl Type {
         if let Some(first) = first {
             *self = if matches!(first.unqualified(), Self::Ptr(_)) {
                 // Opaque pointer ABI types also break recursive callback parameter types.
-                Self::Ptr(Box::new(Self::Void))
+                Self::Ptr(Rc::new(Self::Void))
             } else {
                 first
             };
@@ -283,7 +284,7 @@ impl Type {
                 args.len() == other_args.len()
                     && args
                         .iter()
-                        .zip(other_args)
+                        .zip(other_args.iter())
                         .all(|(left, right)| left.identical_unqualified(right))
                     && result.identical(other_result)
             }
@@ -295,10 +296,10 @@ impl Type {
     pub fn unqualified_for_type_query(&self) -> Self {
         match self.unqualified() {
             Self::Arr(child, count) => {
-                Self::Arr(Box::new(child.unqualified_for_type_query()), *count)
+                Self::Arr(Rc::new(child.unqualified_for_type_query()), *count)
             }
             Self::Vla(child, offset) => {
-                Self::Vla(Box::new(child.unqualified_for_type_query()), *offset)
+                Self::Vla(Rc::new(child.unqualified_for_type_query()), *offset)
             }
             ty => ty.clone(),
         }
@@ -337,7 +338,7 @@ impl Type {
     pub fn decayed(&self) -> Self {
         match self.unqualified() {
             Self::Arr(child, _) | Self::Vla(child, _) => Self::Ptr(child.clone()),
-            ty @ (Self::Func(..) | Self::VariadicFunc(..)) => Self::Ptr(Box::new(ty.clone())),
+            ty @ (Self::Func(..) | Self::VariadicFunc(..)) => Self::Ptr(Rc::new(ty.clone())),
             ty => ty.clone(),
         }
     }
@@ -348,7 +349,7 @@ impl Type {
             Cow::Borrowed(ty) => Cow::Borrowed(ty.unqualified()),
             Cow::Owned(mut ty) => {
                 while let Self::Qualified(child, _) | Self::Aligned(child, _) = ty {
-                    ty = *child;
+                    ty = Rc::unwrap_or_clone(child);
                 }
                 Cow::Owned(ty)
             }
@@ -361,11 +362,11 @@ impl Type {
                 Cow::Owned(Self::Ptr(child.clone()))
             }
             Cow::Borrowed(ty @ (Self::Func(..) | Self::VariadicFunc(..))) => {
-                Cow::Owned(Self::Ptr(Box::new(ty.clone())))
+                Cow::Owned(Self::Ptr(Rc::new(ty.clone())))
             }
             Cow::Owned(Self::Arr(child, _) | Self::Vla(child, _)) => Cow::Owned(Self::Ptr(child)),
             Cow::Owned(ty @ (Self::Func(..) | Self::VariadicFunc(..))) => {
-                Cow::Owned(Self::Ptr(Box::new(ty)))
+                Cow::Owned(Self::Ptr(Rc::new(ty)))
             }
             ty => ty,
         }
@@ -521,7 +522,7 @@ impl Type {
             let Self::Qualified(child, _) = std::mem::take(self) else {
                 unreachable!()
             };
-            *self = *child;
+            *self = Rc::unwrap_or_clone(child);
             self.lower_for_codegen();
             return;
         }
@@ -535,12 +536,12 @@ impl Type {
             | Self::Vector(child, _)
             | Self::Ptr(child)
             | Self::Arr(child, _)
-            | Self::Vla(child, _) => child.lower_for_codegen(),
+            | Self::Vla(child, _) => Rc::make_mut(child).lower_for_codegen(),
             Self::Func(args, result) | Self::VariadicFunc(args, result) => {
-                for arg in args {
+                for arg in Rc::make_mut(args) {
                     arg.lower_parameter_for_codegen();
                 }
-                result.lower_for_codegen();
+                Rc::make_mut(result).lower_for_codegen();
             }
             _ => {}
         }
@@ -562,9 +563,17 @@ impl Type {
     /// Reuse an owned signature's storage when constructing a call.
     pub(crate) fn into_function_signature(self) -> Option<(Vec<Type>, Type, bool)> {
         match self {
-            Self::Qualified(child, _) | Self::Aligned(child, _) => child.into_function_signature(),
-            Self::Func(args, result) => Some((args, *result, false)),
-            Self::VariadicFunc(args, result) => Some((args, *result, true)),
+            Self::Qualified(child, _) | Self::Aligned(child, _) => {
+                Rc::unwrap_or_clone(child).into_function_signature()
+            }
+            Self::Func(args, result) => Some((
+                Rc::unwrap_or_clone(args),
+                Rc::unwrap_or_clone(result),
+                false,
+            )),
+            Self::VariadicFunc(args, result) => {
+                Some((Rc::unwrap_or_clone(args), Rc::unwrap_or_clone(result), true))
+            }
             _ => None,
         }
     }
@@ -723,5 +732,46 @@ impl Type {
 impl Default for Type {
     fn default() -> Self {
         Self::I32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lowering_shared_types_preserves_source_qualifiers() {
+        let qualified = Type::Qualified(
+            Rc::new(Type::I32),
+            Qualifiers {
+                constant: true,
+                ..Qualifiers::default()
+            },
+        );
+        let source = Type::Ptr(Rc::new(qualified));
+        let mut lowered = source.clone();
+        lowered.lower_for_codegen();
+        assert!(source.dest_type_ref().unwrap().qualifiers().constant);
+        assert_eq!(lowered, Type::Ptr(Rc::new(Type::I32)));
+    }
+
+    #[test]
+    fn lowering_shared_signatures_preserves_other_declarations() {
+        let parameter = Type::Qualified(
+            Rc::new(Type::I32),
+            Qualifiers {
+                constant: true,
+                ..Qualifiers::default()
+            },
+        );
+        let source = Type::Func(Rc::new(vec![parameter]), Rc::new(Type::I32));
+        let mut lowered = source.clone();
+        lowered.lower_for_codegen();
+        assert!(
+            source.function_signature_ref().unwrap().0[0]
+                .qualifiers()
+                .constant
+        );
+        assert_eq!(lowered.function_signature_ref().unwrap().0, &[Type::I32]);
     }
 }

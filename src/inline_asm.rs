@@ -1,5 +1,7 @@
 //! Parse the numbered register-operand subset of GNU extended assembly.
 
+use std::rc::Rc;
+
 use super::*;
 use crate::node::render_inline_assembly;
 
@@ -129,10 +131,10 @@ impl AstBuilderImpl<'_> {
             let alignment = output.alignment;
             let temporary = self.register_local_variable(
                 Token {
-                    s_value: format!(".asm.output.{}.{index}", token.pos),
+                    s_value: format!(".asm.output.{}.{index}", token.pos).into(),
                     ..token.clone()
                 },
-                Type::Ptr(Box::new(output.object_type().unwrap())),
+                Type::Ptr(Rc::new(output.object_type().unwrap())),
             );
             let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, output);
             children.push(Node::new_with_op(

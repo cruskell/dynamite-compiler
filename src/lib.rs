@@ -6,6 +6,8 @@ mod floating;
 pub mod func;
 pub mod generator;
 pub mod global;
+#[cfg(feature = "clang-in-process")]
+pub mod native_clang;
 pub mod node;
 pub mod preprocessor;
 pub mod timing;
@@ -70,10 +72,41 @@ pub fn generate_file(
     Ok(generate_preprocessed(&source, output_option, is_debug))
 }
 
+/// Compile a single input in a short-lived CLI process.
+/// Retains AST and token allocations until process exit; persistent library callers
+/// should use `generate_file` so each translation unit releases its storage.
+pub fn generate_file_once(
+    path: &std::path::Path,
+    output_option: &str,
+    is_debug: bool,
+    clang: &str,
+    preprocessing_arguments: &[String],
+) -> Result<String, String> {
+    let source = {
+        let _timer = timing::Timer::new("preprocess");
+        preprocessor::preprocess_file(path, clang, preprocessing_arguments)?
+    };
+    Ok(generate_preprocessed_inner(
+        &source,
+        output_option,
+        is_debug,
+        true,
+    ))
+}
+
 fn generate_preprocessed(
     source: &preprocessor::Preprocessed,
     output_option: &str,
     is_debug: bool,
+) -> String {
+    generate_preprocessed_inner(source, output_option, is_debug, false)
+}
+
+fn generate_preprocessed_inner(
+    source: &preprocessor::Preprocessed,
+    output_option: &str,
+    is_debug: bool,
+    retain_memory: bool,
 ) -> String {
     let error_printer = source;
     let timer = timing::Timer::new("tokenize");
@@ -94,10 +127,18 @@ fn generate_preprocessed(
         }
     };
     let timer = timing::Timer::new("drop_ast");
-    drop(builder);
+    if retain_memory {
+        std::mem::forget(builder);
+    } else {
+        drop(builder);
+    }
     drop(timer);
     let timer = timing::Timer::new("drop_tokens");
-    drop(tokens);
+    if retain_memory {
+        std::mem::forget(tokens);
+    } else {
+        drop(tokens);
+    }
     drop(timer);
     output
 }

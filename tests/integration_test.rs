@@ -7876,12 +7876,19 @@ fn driver_stage_timings_are_optional_and_preserve_parallel_results() {
                 "drop_ast",
                 "drop_tokens",
                 "frontend_total",
-                "write_ir",
                 "lower",
             ] {
                 assert_eq!(stages.get(stage), Some(&2), "{stage}: {stderr}");
             }
             assert_eq!(stages.get("link"), Some(&1));
+            assert_eq!(
+                stages.get("write_ir"),
+                if cfg!(feature = "clang-in-process") {
+                    None
+                } else {
+                    Some(&2)
+                }
+            );
         } else {
             assert!(stages.is_empty());
         }
@@ -8070,4 +8077,29 @@ fn driver_rejects_colliding_outputs_and_unsupported_frontend_modes() {
         let result = files.cc(&arguments);
         assert!(!result.status.success(), "{result:?}");
     }
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn prototype_fast_path_keeps_existing_definitions_and_unevaluated_bounds(output_option: &str) {
+    let code = "int calls; int f(int a[++calls]); int g(int x); int g(int x){return x+1;} int g(int x); int main(){printf(\"%d,%d\",calls,g(41));return 0;}";
+    assert_eq!(compile_and_get_stdout(code, output_option), "0,42");
+}
+
+#[test]
+fn driver_preserves_backend_time_trace_requests() {
+    let files = DriverFixture::new();
+    files.write("main.c", "int main(){return 42;}");
+    files.success(&[
+        "-O0",
+        "-c",
+        "main.c",
+        "-o",
+        "main.o",
+        "-ftime-trace=trace.json",
+    ]);
+    assert!(
+        fs::read_to_string(files.0.join("trace.json"))
+            .unwrap()
+            .contains("traceEvents")
+    );
 }

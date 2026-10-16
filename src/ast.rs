@@ -73,28 +73,31 @@ impl Declarator {
         match self {
             Self::Name(token) => (token, base, vec![], HashMap::new(), vec![]),
             Self::Pointer(inner, q) => {
-                let ty = Type::Ptr(Box::new(base));
+                let ty = Type::Ptr(Rc::new(base));
                 inner.resolve(if q == Qualifiers::default() {
                     ty
                 } else {
-                    Type::Qualified(Box::new(ty), q)
+                    Type::Qualified(Rc::new(ty), q)
                 })
             }
-            Self::Array(inner, size) => inner.resolve(Type::Arr(Box::new(base), size)),
-            Self::VariableArray(inner, offset) => inner.resolve(Type::Vla(Box::new(base), offset)),
-            Self::ArrayQualifiers(inner, q) => inner.resolve(Type::Qualified(Box::new(base), q)),
+            Self::Array(inner, size) => inner.resolve(Type::Arr(Rc::new(base), size)),
+            Self::VariableArray(inner, offset) => inner.resolve(Type::Vla(Rc::new(base), offset)),
+            Self::ArrayQualifiers(inner, q) => inner.resolve(Type::Qualified(Rc::new(base), q)),
             Self::UnspecifiedArray(inner, token) => {
                 let (name, ty, parameters, scope, mut stars) =
-                    inner.resolve(Type::Vla(Box::new(base), usize::MAX));
+                    inner.resolve(Type::Vla(Rc::new(base), usize::MAX));
                 stars.push(token);
                 (name, ty, parameters, scope, stars)
             }
             Self::Function(inner, parameters, variadic, scope, stars) => {
-                let types = parameters.iter().map(|(_, ty, _)| ty.clone()).collect();
+                let types = parameters
+                    .iter()
+                    .map(|(_, ty, _)| ty.clone())
+                    .collect::<Vec<_>>();
                 let ty = if variadic {
-                    Type::VariadicFunc(types, Box::new(base))
+                    Type::VariadicFunc(Rc::new(types), Rc::new(base))
                 } else {
-                    Type::Func(types, Box::new(base))
+                    Type::Func(Rc::new(types), Rc::new(base))
                 };
                 // A direct name keeps this signature; nested declarators supply their own parameters.
                 let direct = matches!(inner.as_ref(), Self::Name(_));
@@ -299,52 +302,52 @@ pub fn reserved_functions() -> HashMap<String, Identifier> {
         (
             String::from("malloc"),
             Identifier::Static(Type::Func(
-                vec![Type::integer(64, false)],
-                Box::new(Type::Ptr(Box::new(Type::Void))),
+                Rc::new(vec![Type::integer(64, false)]),
+                Rc::new(Type::Ptr(Rc::new(Type::Void))),
             )),
         ),
         (
             String::from("free"),
             Identifier::Static(Type::Func(
-                vec![Type::Ptr(Box::new(Type::Void))],
-                Box::new(Type::Void),
+                Rc::new(vec![Type::Ptr(Rc::new(Type::Void))]),
+                Rc::new(Type::Void),
             )),
         ),
         (
             String::from("printf"),
             Identifier::Static(Type::VariadicFunc(
-                vec![Type::Ptr(Box::new(Type::Qualified(
-                    Box::new(Type::I8),
+                Rc::new(vec![Type::Ptr(Rc::new(Type::Qualified(
+                    Rc::new(Type::I8),
                     Qualifiers {
                         constant: true,
                         volatile: false,
                         restricted: false,
                     },
-                )))],
-                Box::new(Type::I32),
+                )))]),
+                Rc::new(Type::I32),
             )),
         ),
         (
             String::from("puts"),
             Identifier::Static(Type::Func(
-                vec![Type::Ptr(Box::new(Type::Qualified(
-                    Box::new(Type::I8),
+                Rc::new(vec![Type::Ptr(Rc::new(Type::Qualified(
+                    Rc::new(Type::I8),
                     Qualifiers {
                         constant: true,
                         volatile: false,
                         restricted: false,
                     },
-                )))],
-                Box::new(Type::I32),
+                )))]),
+                Rc::new(Type::I32),
             )),
         ),
         (
             String::from("putchar"),
-            Identifier::Static(Type::Func(vec![Type::I32], Box::new(Type::I32))),
+            Identifier::Static(Type::Func(Rc::new(vec![Type::I32]), Rc::new(Type::I32))),
         ),
         (
             String::from("exit"),
-            Identifier::Static(Type::Func(vec![Type::I32], Box::new(Type::I32))),
+            Identifier::Static(Type::Func(Rc::new(vec![Type::I32]), Rc::new(Type::I32))),
         ),
     ]
     .into_iter()
@@ -560,14 +563,14 @@ impl<'a> AstBuilderImpl<'a> {
             );
         }
         self.expect_reserved(")");
-        if let Some(previous) = self.symbol_names.get(&name.s_value) {
+        if let Some(previous) = self.symbol_names.get(name.s_value.as_str()) {
             if previous != value {
                 self.error_logger
                     .print_error_position(label.pos, "conflicting assembler labels");
             }
         }
         self.symbol_names
-            .insert(name.s_value.clone(), value.to_owned());
+            .insert(name.s_value.to_string(), value.to_owned());
         self.declaration_annotations();
     }
 
@@ -1126,16 +1129,16 @@ impl<'a> AstBuilderImpl<'a> {
                                 if qualifiers == Qualifiers::default() {
                                     pointer
                                 } else {
-                                    Type::Qualified(Box::new(pointer), qualifiers)
+                                    Type::Qualified(Rc::new(pointer), qualifiers)
                                 }
                             }
-                            Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(ty)),
+                            Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Rc::new(ty)),
                             _ => ty,
                         };
                         self.validate_type_layout(&ty, &self.tokens[self.cur]);
                         if let Some(name) = &name {
                             self.scope_stack.last_mut().unwrap().insert(
-                                name.s_value.clone(),
+                                name.s_value.to_string(),
                                 Identifier::Local(
                                     ty.clone(),
                                     usize::MAX - parameters.len(),
@@ -1230,7 +1233,7 @@ impl<'a> AstBuilderImpl<'a> {
             .scope_stack
             .last()
             .unwrap()
-            .contains_key(&token.s_value)
+            .contains_key(token.s_value.as_str())
         {
             self.error_logger
                 .print_error_position(token.pos, "invalid redeclaration");
@@ -1239,7 +1242,7 @@ impl<'a> AstBuilderImpl<'a> {
         let offset = self.next_deferred_local;
         self.next_deferred_local -= 1;
         self.scope_stack.last_mut().unwrap().insert(
-            token.s_value.clone(),
+            token.s_value.to_string(),
             Identifier::Local(ty.clone(), offset, false, alignment),
         );
         Node {
@@ -1292,7 +1295,10 @@ impl<'a> AstBuilderImpl<'a> {
             self.local_variable_initialization_with_count(object, token, Some(&mut count));
         let ty = self.infer_array_size(object.cty.clone().unwrap(), count, token);
         let name = object.token.clone().unwrap();
-        self.scope_stack.last_mut().unwrap().remove(&name.s_value);
+        self.scope_stack
+            .last_mut()
+            .unwrap()
+            .remove(name.s_value.as_str());
         let mut completed = self.register_local_variable_aligned(name, ty, object.alignment);
         if object.registered {
             self.mark_registered(&mut completed);
@@ -1369,12 +1375,17 @@ impl<'a> AstBuilderImpl<'a> {
         if ty.is_variable_array() {
             self.expect_object_type(&ty, &t);
             self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
-            if self.scope_stack.last().unwrap().contains_key(&t.s_value) {
+            if self
+                .scope_stack
+                .last()
+                .unwrap()
+                .contains_key(t.s_value.as_str())
+            {
                 self.error_logger
                     .print_error_position(t.pos, "invalid redeclaration");
             }
             self.scope_stack.last_mut().unwrap().insert(
-                t.s_value.clone(),
+                t.s_value.to_string(),
                 Identifier::Dynamic(ty.clone(), self.offset_size, false),
             );
             return Self::dynamic_node(ty, self.offset_size, t);
@@ -1383,12 +1394,17 @@ impl<'a> AstBuilderImpl<'a> {
         // Distinct internal slots preserve each zero-sized object's type and alignment.
         self.offset_size += ty.size_of().max(1);
         self.offset_size = self.offset_size.div_ceil(alignment) * alignment;
-        if self.scope_stack.last().unwrap().contains_key(&t.s_value) {
+        if self
+            .scope_stack
+            .last()
+            .unwrap()
+            .contains_key(t.s_value.as_str())
+        {
             self.error_logger
                 .print_error_position(t.pos, "invalid redeclaration");
         }
         self.scope_stack.last_mut().unwrap().insert(
-            t.s_value.clone(),
+            t.s_value.to_string(),
             Identifier::Local(ty.clone(), self.offset_size, false, alignment),
         );
         Node {
@@ -1402,7 +1418,13 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn mark_registered(&mut self, node: &mut Node) {
         let name = &node.token.as_ref().unwrap().s_value;
-        match self.scope_stack.last_mut().unwrap().get_mut(name).unwrap() {
+        match self
+            .scope_stack
+            .last_mut()
+            .unwrap()
+            .get_mut(name.as_str())
+            .unwrap()
+        {
             Identifier::Local(_, _, registered, _) | Identifier::Dynamic(_, _, registered) => {
                 *registered = true
             }
@@ -1471,7 +1493,7 @@ impl<'a> AstBuilderImpl<'a> {
             storage = Some(token.clone());
         }
         if qualifiers != Qualifiers::default() {
-            ty = Type::Qualified(Box::new(ty), qualifiers);
+            ty = Type::Qualified(Rc::new(ty), qualifiers);
         }
         if parameter && *ty.unqualified() == Type::Void {
             if let Some(token) = &storage {
@@ -1633,7 +1655,7 @@ impl<'a> AstBuilderImpl<'a> {
         Some(if q == Qualifiers::default() {
             ty
         } else {
-            Type::Qualified(Box::new(ty), q)
+            Type::Qualified(Rc::new(ty), q)
         })
     }
     fn long_double_type(&self, token: &Token) -> Type {
@@ -1968,7 +1990,12 @@ impl<'a> AstBuilderImpl<'a> {
                     "enumerator is outside the underlying type range",
                 );
             }
-            if self.scope_stack.last().unwrap().contains_key(&name.s_value) {
+            if self
+                .scope_stack
+                .last()
+                .unwrap()
+                .contains_key(name.s_value.as_str())
+            {
                 self.error_logger
                     .print_error_position(name.pos, "duplicate enumerator");
             }
@@ -1981,7 +2008,7 @@ impl<'a> AstBuilderImpl<'a> {
             };
             enumerators.push((name.s_value.clone(), value as i64));
             self.scope_stack.last_mut().unwrap().insert(
-                name.s_value,
+                name.s_value.to_string(),
                 Identifier::Constant(value as i64, constant_type),
             );
             value += 1;
@@ -1999,7 +2026,7 @@ impl<'a> AstBuilderImpl<'a> {
         let ty = self.enum_integer_type(smallest, largest, &token);
         let scope = self.scope_stack.last_mut().unwrap();
         for (name, value) in enumerators {
-            scope.insert(name, Identifier::Constant(value, ty.clone()));
+            scope.insert(name.to_string(), Identifier::Constant(value, ty.clone()));
         }
         if let Some(key) = key {
             scope.insert(
@@ -2042,7 +2069,7 @@ impl<'a> AstBuilderImpl<'a> {
             ".struct.{}",
             name.as_ref()
                 .map(|name| name.s_value.clone())
-                .unwrap_or_else(|| format!("anonymous.{}", token.pos))
+                .unwrap_or_else(|| format!("anonymous.{}", token.pos).into())
         );
         let defining = self.tokens[self.cur].s_value == "{";
         let existing = if defining {
@@ -2253,7 +2280,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 .map(|(name, _)| name)
                                 .collect::<Vec<_>>()
                         } else {
-                            vec![name.as_ref().unwrap().s_value.clone()]
+                            vec![name.as_ref().unwrap().s_value.to_string()]
                         };
                         for existing in &members {
                             let existing_names = if existing.anonymous {
@@ -2276,7 +2303,7 @@ impl<'a> AstBuilderImpl<'a> {
                         members.push(StructMember {
                             name: name.map_or_else(
                                 || format!(".anonymous.{}", members.len()),
-                                |name| name.s_value,
+                                |name| name.s_value.to_string(),
                             ),
                             anonymous,
                             requested_alignment,
@@ -2422,7 +2449,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let qualifiers = ty.qualifiers();
                 ty = Type::integer(64, signed);
                 if qualifiers != Qualifiers::default() {
-                    ty = Type::Qualified(Box::new(ty), qualifiers);
+                    ty = Type::Qualified(Rc::new(ty), qualifiers);
                 }
             }
             if attributes.transparent_union {
@@ -2437,11 +2464,11 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger.print_error_position(token.pos, "vector_size requires an ordinary integer or float scalar typedef with a matching element size");
                 }
                 let qualifiers = ty.qualifiers();
-                let vector = Type::Vector(Box::new(element.clone()), size / element.size_of());
+                let vector = Type::Vector(Rc::new(element.clone()), size / element.size_of());
                 ty = if qualifiers == Qualifiers::default() {
                     vector
                 } else {
-                    Type::Qualified(Box::new(vector), qualifiers)
+                    Type::Qualified(Rc::new(vector), qualifiers)
                 };
             }
             self.validate_type_layout(&ty, &token);
@@ -2463,10 +2490,10 @@ impl<'a> AstBuilderImpl<'a> {
                     {
                         self.error_logger.print_error_position(token.pos, "non-natural typedef alignment is supported only for scalar alignment reductions");
                     }
-                    ty = Type::Aligned(Box::new(ty), alignment);
+                    ty = Type::Aligned(Rc::new(ty), alignment);
                 }
             }
-            if let Some(previous) = self.scope_stack.last().unwrap().get(&token.s_value) {
+            if let Some(previous) = self.scope_stack.last().unwrap().get(token.s_value.as_str()) {
                 let valid = matches!(previous, Identifier::TypeDef(previous)
                     if !previous.is_variably_modified()
                         && !ty.is_variably_modified()
@@ -2487,7 +2514,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.scope_stack
                 .last_mut()
                 .unwrap()
-                .insert(token.s_value, Identifier::TypeDef(ty));
+                .insert(token.s_value.to_string(), Identifier::TypeDef(ty));
             if self.attempt_reserved(",").is_none() {
                 break;
             }
@@ -2632,7 +2659,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut base = self.expect_type();
         alignment = alignment.max(self.object_alignment_annotations());
         if qualifiers != Qualifiers::default() {
-            base = Type::Qualified(Box::new(base), qualifiers);
+            base = Type::Qualified(Rc::new(base), qualifiers);
         }
         inline |= self.attempt_inline().is_some();
         if self.attempt_reserved(";").is_some() {
@@ -2729,7 +2756,7 @@ impl<'a> AstBuilderImpl<'a> {
                         "unspecified array bound is only allowed in a function prototype",
                     );
                 }
-                if self.global_variables.contains_key(&token.s_value) {
+                if self.global_variables.contains_key(token.s_value.as_str()) {
                     self.error_logger
                         .print_error_position(token.pos, "function conflicts with object");
                 }
@@ -2739,7 +2766,7 @@ impl<'a> AstBuilderImpl<'a> {
                 if definition {
                     for (i, (name, ty, registered)) in parameters.into_iter().enumerate() {
                         let name = name.unwrap_or_else(|| Token {
-                            s_value: format!(".parameter.{i}"),
+                            s_value: format!(".parameter.{i}").into(),
                             ..token.clone()
                         });
                         let mut argument = self.register_local_variable(name, ty);
@@ -2752,15 +2779,15 @@ impl<'a> AstBuilderImpl<'a> {
                 self.scope_stack
                     .first_mut()
                     .unwrap()
-                    .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
-                if let Some(existing) = self.functions.get(&token.s_value) {
+                    .insert(token.s_value.to_string(), Identifier::Static(ty.clone()));
+                if let Some(existing) = self.functions.get(token.s_value.as_str()) {
                     if !existing.cty.compatible(&ty) {
                         self.error_logger
                             .print_error_position(token.pos, "incompatible function redeclaration");
                     }
                 }
                 self.functions
-                    .entry(token.s_value.clone())
+                    .entry(token.s_value.to_string())
                     .or_insert_with(|| Func {
                         cty: ty.clone(),
                         token: Some(token.clone()),
@@ -2769,9 +2796,9 @@ impl<'a> AstBuilderImpl<'a> {
                 let internal = internal
                     || self
                         .functions
-                        .get(&token.s_value)
+                        .get(token.s_value.as_str())
                         .is_some_and(|f| f.internal);
-                let previous = &self.functions[&token.s_value];
+                let previous = &self.functions[token.s_value.as_str()];
                 if attributes.gnu_inline && previous.body.is_some() && !previous.gnu_inline {
                     self.error_logger.print_error_position(
                         token.pos,
@@ -2795,10 +2822,31 @@ impl<'a> AstBuilderImpl<'a> {
                 } else {
                     internal || external || !inline || previous.external_definition
                 };
-                let function = self.functions.get_mut(&token.s_value).unwrap();
+                let function = self.functions.get_mut(token.s_value.as_str()).unwrap();
                 function.external_definition = external_definition;
                 function.noinline = noinline;
                 function.hidden = hidden;
+                if !definition {
+                    if function.body.is_none() {
+                        *function = Func {
+                            gnu_inline,
+                            noinline,
+                            weak_import,
+                            hidden,
+                            external_definition,
+                            cty: ty,
+                            token: Some(token),
+                            offset_size: self.offset_size,
+                            internal,
+                            ..Func::default()
+                        };
+                    }
+                    self.pending_bounds.clear();
+                    self.vla_active.clear();
+                    self.scope_stack.pop();
+                    self.expect_reserved(";");
+                    return;
+                }
                 let (_, result, _) = ty.function_signature_ref().unwrap();
                 if definition && result.unqualified() != &Type::Void {
                     self.expect_object_type(result, &token);
@@ -2858,7 +2906,7 @@ impl<'a> AstBuilderImpl<'a> {
                 if body.is_none() {
                     self.expect_reserved(";");
                 }
-                if self.functions[&token.s_value].body.is_some() {
+                if self.functions[token.s_value.as_str()].body.is_some() {
                     if body.is_some() {
                         if !replaceable_inline_body || !external_definition {
                             self.error_logger
@@ -2869,7 +2917,7 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                 }
                 self.functions.insert(
-                    token.s_value.clone(),
+                    token.s_value.to_string(),
                     Func {
                         inline_definition: inline && body.is_some(),
                         gnu_inline,
@@ -2889,10 +2937,10 @@ impl<'a> AstBuilderImpl<'a> {
                 );
                 return;
             }
-            if let Some(previous) = self.global_variables.get(&token.s_value) {
+            if let Some(previous) = self.global_variables.get(token.s_value.as_str()) {
                 ty = self.composite_object_declaration(&previous.ty, ty, &token);
             }
-            if self.functions.contains_key(&token.s_value) {
+            if self.functions.contains_key(token.s_value.as_str()) {
                 self.error_logger
                     .print_error_position(token.pos, "object conflicts with function");
             }
@@ -2900,9 +2948,9 @@ impl<'a> AstBuilderImpl<'a> {
             self.scope_stack
                 .last_mut()
                 .unwrap()
-                .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
+                .insert(token.s_value.to_string(), Identifier::Static(ty.clone()));
             self.global_variables
-                .entry(token.s_value.clone())
+                .entry(token.s_value.to_string())
                 .or_insert_with(|| GlobalVariable {
                     ty: ty.clone(),
                     alignment,
@@ -2922,12 +2970,12 @@ impl<'a> AstBuilderImpl<'a> {
             let common = attributes.common
                 || self
                     .global_variables
-                    .get(&token.s_value)
+                    .get(token.s_value.as_str())
                     .is_some_and(|object| object.common);
             let weak_import = attributes.weak_import
                 || self
                     .global_variables
-                    .get(&token.s_value)
+                    .get(token.s_value.as_str())
                     .is_some_and(|object| object.weak_import);
             if weak_import
                 && (common
@@ -2937,7 +2985,7 @@ impl<'a> AstBuilderImpl<'a> {
                     || data.is_some()
                     || self
                         .global_variables
-                        .get(&token.s_value)
+                        .get(token.s_value.as_str())
                         .is_some_and(|object| !object.declaration_only))
             {
                 self.error_logger.print_error_position(token.pos, "weak_import requires an external non-TLS object declaration without a definition");
@@ -2960,9 +3008,12 @@ impl<'a> AstBuilderImpl<'a> {
             self.scope_stack
                 .last_mut()
                 .unwrap()
-                .insert(token.s_value.clone(), Identifier::Static(ty.clone()));
+                .insert(token.s_value.to_string(), Identifier::Static(ty.clone()));
             {
-                let existing = self.global_variables.get_mut(&token.s_value).unwrap();
+                let existing = self
+                    .global_variables
+                    .get_mut(token.s_value.as_str())
+                    .unwrap();
                 if existing.internal != internal && !external {
                     self.error_logger
                         .print_error_position(token.pos, "conflicting object linkage");
@@ -3120,7 +3171,9 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn aggregate_type(ty: &Type, index: usize) -> Option<Type> {
         match ty.unqualified() {
-            Type::Arr(child, size) if size.is_none_or(|size| index < size) => Some(*child.clone()),
+            Type::Arr(child, size) if size.is_none_or(|size| index < size) => {
+                Some(child.as_ref().clone())
+            }
             Type::Struct(st) => st
                 .members()
                 .get(index)
@@ -4247,13 +4300,13 @@ impl<'a> AstBuilderImpl<'a> {
         {
             let token = self.attempt_ident().unwrap();
             self.expect_reserved(":");
-            if !self.defined_labels.insert(token.s_value.clone()) {
+            if !self.defined_labels.insert(token.s_value.to_string()) {
                 self.error_logger
                     .print_error_position(token.pos, "duplicate label");
             }
             let id = *self
                 .labels
-                .entry(token.s_value.clone())
+                .entry(token.s_value.to_string())
                 .or_insert(token.pos);
             return Node {
                 nt: NodeType::Label,
@@ -4270,7 +4323,10 @@ impl<'a> AstBuilderImpl<'a> {
                     .print_error_position(self.tokens[self.cur].pos, "goto requires a label");
                 unreachable!()
             });
-            let id = *self.labels.entry(name.s_value).or_insert(name.pos);
+            let id = *self
+                .labels
+                .entry(name.s_value.to_string())
+                .or_insert(name.pos);
             self.expect_reserved(";");
             return Node {
                 nt: NodeType::Goto,
@@ -4497,7 +4553,7 @@ impl<'a> AstBuilderImpl<'a> {
         if storage.is_some() || inline.is_some() || thread_local {
             let mut storage = storage.cloned().unwrap_or_else(|| {
                 inline.cloned().unwrap_or_else(|| Token {
-                    s_value: "static".to_owned(),
+                    s_value: "static".to_owned().into(),
                     ..self.tokens[self.cur - 1].clone()
                 })
             });
@@ -4505,7 +4561,7 @@ impl<'a> AstBuilderImpl<'a> {
                 storage.s_value.as_str(),
                 "inline" | "__inline" | "__inline__"
             ) {
-                storage.s_value = "extern".to_owned();
+                storage.s_value = "extern".to_owned().into();
             }
             requested_alignment = requested_alignment.max(self.object_alignment_annotations());
             let ty = self.expect_type();
@@ -4632,7 +4688,7 @@ impl<'a> AstBuilderImpl<'a> {
             bounds.extend(self.take_bounds());
             let external = storage.s_value == "extern";
             let name = if external {
-                token.s_value.clone()
+                token.s_value.to_string()
             } else {
                 format!(".static.{}.{}", token.pos, token.s_value)
             };
@@ -4670,10 +4726,10 @@ impl<'a> AstBuilderImpl<'a> {
                         },
                     );
                 }
-                self.scope_stack
-                    .last_mut()
-                    .unwrap()
-                    .insert(token.s_value, Identifier::StaticObject(ty, name));
+                self.scope_stack.last_mut().unwrap().insert(
+                    token.s_value.to_string(),
+                    Identifier::StaticObject(ty, name),
+                );
                 if self.attempt_reserved(",").is_none() {
                     break;
                 }
@@ -4695,13 +4751,13 @@ impl<'a> AstBuilderImpl<'a> {
                 .scope_stack
                 .last()
                 .unwrap()
-                .contains_key(&token.s_value)
+                .contains_key(token.s_value.as_str())
             {
                 self.error_logger
                     .print_error_position(token.pos, "invalid redeclaration");
             }
             self.scope_stack.last_mut().unwrap().insert(
-                token.s_value.clone(),
+                token.s_value.to_string(),
                 Identifier::StaticObject(ty.clone(), name.clone()),
             );
             let new_object = !self.global_variables.contains_key(&name);
@@ -4740,7 +4796,7 @@ impl<'a> AstBuilderImpl<'a> {
                 self.validate_global_initializer(&ty, data, &token);
             }
             self.scope_stack.last_mut().unwrap().insert(
-                token.s_value,
+                token.s_value.to_string(),
                 Identifier::StaticObject(ty.clone(), name.clone()),
             );
             {
@@ -4837,13 +4893,13 @@ impl<'a> AstBuilderImpl<'a> {
             .map_or(Qualifiers::default(), |ty| ty.qualifiers());
         let mut member = member.clone();
         if qualifiers != Qualifiers::default() {
-            member.ty = Type::Qualified(Box::new(member.ty), qualifiers);
+            member.ty = Type::Qualified(Rc::new(member.ty), qualifiers);
         }
         let address = Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, node);
         let bytes = Node {
             nt: NodeType::Cast,
             token: Some(token.clone()),
-            cty: Some(Type::Ptr(Box::new(Type::I8))),
+            cty: Some(Type::Ptr(Rc::new(Type::I8))),
             lhs: Some(Box::new(address)),
             ..Node::default()
         };
@@ -4856,7 +4912,7 @@ impl<'a> AstBuilderImpl<'a> {
         let pointer = Node {
             nt: NodeType::Cast,
             token: Some(token.clone()),
-            cty: Some(Type::Ptr(Box::new(member.ty.clone()))),
+            cty: Some(Type::Ptr(Rc::new(member.ty.clone()))),
             lhs: Some(Box::new(offset)),
             ..Node::default()
         };
@@ -4923,7 +4979,7 @@ impl<'a> AstBuilderImpl<'a> {
             let bytes = Node {
                 nt: NodeType::Cast,
                 token: Some(token.clone()),
-                cty: Some(Type::Ptr(Box::new(Type::I8))),
+                cty: Some(Type::Ptr(Rc::new(Type::I8))),
                 lhs: Some(Box::new(address)),
                 ..Node::default()
             };
@@ -5224,7 +5280,7 @@ impl<'a> AstBuilderImpl<'a> {
             let temporary = Node {
                 nt: NodeType::LocalVar,
                 token: Some(token.clone()),
-                cty: Some(Type::Ptr(Box::new(operand.object_type().unwrap()))),
+                cty: Some(Type::Ptr(Rc::new(operand.object_type().unwrap()))),
                 offset: Some(self.offset_size),
                 ..Node::default()
             };
@@ -5244,12 +5300,12 @@ impl<'a> AstBuilderImpl<'a> {
                     let byte_type = if qualifiers == Qualifiers::default() {
                         Type::I8
                     } else {
-                        Type::Qualified(Box::new(Type::I8), qualifiers)
+                        Type::Qualified(Rc::new(Type::I8), qualifiers)
                     };
                     let pointer = Node {
                         nt: NodeType::Cast,
                         token: Some(token.clone()),
-                        cty: Some(Type::Ptr(Box::new(byte_type))),
+                        cty: Some(Type::Ptr(Rc::new(byte_type))),
                         lhs: Some(Box::new(address.clone())),
                         ..Node::default()
                     };
@@ -5359,7 +5415,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.expect_assignable(&lhs);
         // Save the lvalue address so side effects in it occur exactly once.
         let field = lhs.bit_field;
-        let ty = Type::Ptr(Box::new(lhs.object_type().unwrap()));
+        let ty = Type::Ptr(Rc::new(lhs.object_type().unwrap()));
         self.offset_size =
             (self.offset_size + ty.size_of()).div_ceil(ty.align_of()) * ty.align_of();
         let temporary = Node {
@@ -5633,7 +5689,7 @@ impl<'a> AstBuilderImpl<'a> {
                             .print_error_position(bracket.pos, "offsetof result is too large");
                         unreachable!()
                     });
-                ty = *child.clone();
+                ty = child.as_ref().clone();
             }
             if self.attempt_reserved(".").is_none() {
                 break;
@@ -5700,7 +5756,7 @@ impl<'a> AstBuilderImpl<'a> {
                 if self.tokens[self.cur].s_value == "{" {
                     let inferred = matches!(ty, Type::Arr(_, None));
                     let name = Token {
-                        s_value: format!(".compound.{}", token.pos),
+                        s_value: format!(".compound.{}", token.pos).into(),
                         ..token.clone()
                     };
                     let literal = if self.return_type.is_some() {
@@ -5733,7 +5789,7 @@ impl<'a> AstBuilderImpl<'a> {
                         self.expect_object_type(&ty, token);
                         self.validate_global_initializer(&ty, &data, token);
                         self.global_variables.insert(
-                            name.s_value.clone(),
+                            name.s_value.to_string(),
                             GlobalVariable {
                                 ty: ty.clone(),
                                 alignment: 0,
@@ -5750,7 +5806,7 @@ impl<'a> AstBuilderImpl<'a> {
                             nt: NodeType::GlobalVar,
                             cty: Some(ty),
                             token: Some(token.clone()),
-                            global_name: name.s_value,
+                            global_name: name.s_value.to_string(),
                             ..Node::default()
                         }
                     };
@@ -5968,7 +6024,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.pending_bounds.truncate(bounds_start);
         let control_type = match control.resolve_type().unwrap() {
             Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
-            ty @ (Type::Func(..) | Type::VariadicFunc(..)) => Type::Ptr(Box::new(ty)),
+            ty @ (Type::Func(..) | Type::VariadicFunc(..)) => Type::Ptr(Rc::new(ty)),
             ty => ty,
         };
         self.expect_reserved(",");
@@ -6056,13 +6112,13 @@ impl<'a> AstBuilderImpl<'a> {
         };
         let name = format!(".static.{}.__func__", function.pos);
         let element = Type::Qualified(
-            Box::new(Type::I8),
+            Rc::new(Type::I8),
             Qualifiers {
                 constant: true,
                 ..Qualifiers::default()
             },
         );
-        let ty = Type::Arr(Box::new(element), Some(function.s_value.len() + 1));
+        let ty = Type::Arr(Rc::new(element), Some(function.s_value.len() + 1));
         self.global_variables
             .entry(name.clone())
             .or_insert_with(|| GlobalVariable {
@@ -6119,7 +6175,7 @@ impl<'a> AstBuilderImpl<'a> {
         let expected = cast(expected);
         let temporary = self.register_local_variable(
             Token {
-                s_value: format!(".expect.{}.{}", token.pos, self.offset_size),
+                s_value: format!(".expect.{}.{}", token.pos, self.offset_size).into(),
                 ..token.clone()
             },
             ty,
@@ -6162,8 +6218,8 @@ impl<'a> AstBuilderImpl<'a> {
             "__builtin_nanl" => ("nanl", self.long_double_type(&token)),
             _ => unreachable!(),
         };
-        let pointer = Type::Ptr(Box::new(Type::Qualified(
-            Box::new(Type::I8),
+        let pointer = Type::Ptr(Rc::new(Type::Qualified(
+            Rc::new(Type::I8),
             Qualifiers {
                 constant: true,
                 ..Qualifiers::default()
@@ -6172,7 +6228,7 @@ impl<'a> AstBuilderImpl<'a> {
         let call = self.runtime_builtin(
             token.clone(),
             name,
-            Type::Func(vec![pointer], Box::new(ty.clone())),
+            Type::Func(Rc::new(vec![pointer]), Rc::new(ty.clone())),
         );
         let literal = call
             .args
@@ -6250,9 +6306,9 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn memory_builtin(&mut self, token: Token) -> Node {
-        let pointer = Type::Ptr(Box::new(Type::Void));
-        let const_pointer = Type::Ptr(Box::new(Type::Qualified(
-            Box::new(Type::Void),
+        let pointer = Type::Ptr(Rc::new(Type::Void));
+        let const_pointer = Type::Ptr(Rc::new(Type::Qualified(
+            Rc::new(Type::Void),
             Qualifiers {
                 constant: true,
                 ..Qualifiers::default()
@@ -6272,14 +6328,14 @@ impl<'a> AstBuilderImpl<'a> {
         if checked {
             parameters.push(size);
         }
-        let ty = Type::Func(parameters, Box::new(pointer));
+        let ty = Type::Func(Rc::new(parameters), Rc::new(pointer));
         self.runtime_builtin(token, name, ty)
     }
 
     fn checked_format_builtin(&mut self, token: Token) -> Node {
-        let pointer = Type::Ptr(Box::new(Type::I8));
-        let format = Type::Ptr(Box::new(Type::Qualified(
-            Box::new(Type::I8),
+        let pointer = Type::Ptr(Rc::new(Type::I8));
+        let format = Type::Ptr(Rc::new(Type::Qualified(
+            Rc::new(Type::I8),
             Qualifiers {
                 constant: true,
                 ..Qualifiers::default()
@@ -6297,14 +6353,14 @@ impl<'a> AstBuilderImpl<'a> {
         self.runtime_builtin(
             token,
             name,
-            Type::VariadicFunc(parameters, Box::new(Type::I32)),
+            Type::VariadicFunc(Rc::new(parameters), Rc::new(Type::I32)),
         )
     }
 
     fn checked_bsd_string_builtin(&mut self, token: Token) -> Node {
-        let pointer = Type::Ptr(Box::new(Type::I8));
-        let source = Type::Ptr(Box::new(Type::Qualified(
-            Box::new(Type::I8),
+        let pointer = Type::Ptr(Rc::new(Type::I8));
+        let source = Type::Ptr(Rc::new(Type::Qualified(
+            Rc::new(Type::I8),
             Qualifiers {
                 constant: true,
                 ..Qualifiers::default()
@@ -6320,8 +6376,8 @@ impl<'a> AstBuilderImpl<'a> {
             token,
             name,
             Type::Func(
-                vec![pointer, source, size.clone(), size.clone()],
-                Box::new(size),
+                Rc::new(vec![pointer, source, size.clone(), size.clone()]),
+                Rc::new(size),
             ),
         )
     }
@@ -6471,7 +6527,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         let temporary = self.register_local_variable(
             Token {
-                s_value: format!(".popcount.{}.{}", token.pos, self.offset_size),
+                s_value: format!(".popcount.{}.{}", token.pos, self.offset_size).into(),
                 ..token.clone()
             },
             ty.clone(),
@@ -6555,7 +6611,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         let temporary = self.register_local_variable(
             Token {
-                s_value: format!(".bswap.{}.{}", token.pos, self.offset_size),
+                s_value: format!(".bswap.{}.{}", token.pos, self.offset_size).into(),
                 ..token.clone()
             },
             ty.clone(),
@@ -6624,7 +6680,7 @@ impl<'a> AstBuilderImpl<'a> {
             Node {
                 token: Some(t.clone()),
                 nt: NodeType::GlobalVar,
-                cty: Some(Type::Arr(Box::new(element_type), Some(count))),
+                cty: Some(Type::Arr(Rc::new(element_type), Some(count))),
                 dest: self.new_string_literal(&t),
                 ..Node::default()
             }
@@ -6704,8 +6760,11 @@ impl<'a> AstBuilderImpl<'a> {
                     t,
                     "bzero",
                     Type::Func(
-                        vec![Type::Ptr(Box::new(Type::Void)), Type::integer(64, false)],
-                        Box::new(Type::Void),
+                        Rc::new(vec![
+                            Type::Ptr(Rc::new(Type::Void)),
+                            Type::integer(64, false),
+                        ]),
+                        Rc::new(Type::Void),
                     ),
                 );
             }
@@ -6789,7 +6848,7 @@ impl<'a> AstBuilderImpl<'a> {
                     nt: NodeType::StackAlloc,
                     token: Some(t),
                     lhs: Some(Box::new(size)),
-                    cty: Some(Type::Ptr(Box::new(Type::Void))),
+                    cty: Some(Type::Ptr(Rc::new(Type::Void))),
                     ..Node::default()
                 };
             }
@@ -6815,7 +6874,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             let thread_local = self
                 .global_variables
-                .get(&t.s_value)
+                .get(t.s_value.as_str())
                 .is_some_and(|object| object.thread_local);
             if let Some(ident) = self.resolve_name(&t.s_value) {
                 match ident {
@@ -6848,7 +6907,7 @@ impl<'a> AstBuilderImpl<'a> {
                         token: Some(t.clone()),
                         nt: NodeType::GlobalVar,
                         cty: Some(ty.clone()),
-                        global_name: t.s_value.clone(),
+                        global_name: t.s_value.to_string(),
                         thread_local,
                         ..Node::default()
                     },
@@ -6894,14 +6953,14 @@ impl<'a> AstBuilderImpl<'a> {
         }
         let pointer = self.register_local_variable(
             Token {
-                s_value: format!(".suffix.pointer.{}", token.pos),
+                s_value: format!(".suffix.pointer.{}", token.pos).into(),
                 ..token.clone()
             },
-            Type::Ptr(Box::new(ty.clone())),
+            Type::Ptr(Rc::new(ty.clone())),
         );
         let previous = self.register_local_variable(
             Token {
-                s_value: format!(".suffix.value.{}", token.pos),
+                s_value: format!(".suffix.value.{}", token.pos).into(),
                 ..token.clone()
             },
             ty.clone(),
@@ -6960,7 +7019,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let (parameter_types, return_type, variadic) = node
                     .resolve_type()
                     .and_then(|ty| match ty {
-                        Type::Ptr(child) => child.into_function_signature(),
+                        Type::Ptr(child) => Rc::unwrap_or_clone(child).into_function_signature(),
                         _ => ty.into_function_signature(),
                     })
                     .unwrap_or_else(|| {
@@ -6996,7 +7055,7 @@ impl<'a> AstBuilderImpl<'a> {
                         let ty = argument.resolve_type().unwrap();
                         let temporary = self.register_local_variable(
                             Token {
-                                s_value: format!(".argument.{}.{}", t.pos, self.offset_size),
+                                s_value: format!(".argument.{}.{}", t.pos, self.offset_size).into(),
                                 ..t.clone()
                             },
                             ty,
@@ -7245,7 +7304,7 @@ mod tests {
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
-                s_value: "int".to_string(),
+                s_value: "int".to_string().into(),
                 i_value: 0,
                 ..Token::default()
             },
@@ -7253,28 +7312,28 @@ mod tests {
                 tt: TokenType::Ident,
                 pos: 0,
                 i_value: 0,
-                s_value: "x".to_string(),
+                s_value: "x".to_string().into(),
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
                 i_value: 0,
-                s_value: "=".to_string(),
+                s_value: "=".to_string().into(),
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Num,
                 pos: 0,
                 i_value: 42,
-                s_value: String::new(),
+                s_value: String::new().into(),
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
                 i_value: 0,
-                s_value: ";".to_string(),
+                s_value: ";".to_string().into(),
                 ..Token::default()
             },
         ];

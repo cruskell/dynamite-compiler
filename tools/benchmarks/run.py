@@ -31,6 +31,8 @@ def main():
                         help="Also compare a saved release compiler from before a change")
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--no-trace", action="store_true",
+                        help="Disable Clang time traces, preserving the in-process backend")
     args = parser.parse_args()
     if args.runs < 1 or args.jobs < 1:
         parser.error("runs and jobs must be positive")
@@ -62,7 +64,7 @@ def main():
         "compiler_binaries": {name: {"path": str(path),
                                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                               for name, path in compilers.items()},
-        "jobs": args.jobs, "runs": args.runs,
+        "jobs": args.jobs, "runs": args.runs, "clang_time_traces": not args.no_trace,
         "sources": {name: {"path": str(path), "commit": output(["git", "rev-parse", "HEAD"], path),
                            "status": output(["git", "status", "--porcelain"], path)}
                     for name, path in sources.items()},
@@ -81,7 +83,7 @@ def main():
                 records = root / (name + "-records")
                 executable = compilers[compiler]
                 env = dict(os.environ, BENCH_COMPILER=str(executable), BENCH_LOG=str(records),
-                           BENCH_TRACE="1", DYNAMITE_CLANG=clang)
+                           BENCH_TRACE="" if args.no_trace else "1", DYNAMITE_CLANG=clang)
                 command = ["make", f"-j{args.jobs}", "CC=" + str(REPO / "tools/benchmarks/cc.py")]
                 if project == "redis":
                     lua_flags = redis_flags + " -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP"

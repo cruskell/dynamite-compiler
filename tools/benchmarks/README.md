@@ -98,3 +98,11 @@ live/peak memory, and realloc requests count the entire new size. Aligned
 allocation APIs are not intercepted. Counter runs add atomic-operation overhead
 and must not supply performance timings. The interposer uses glibc internals
 and is an optional Linux profiling tool, not part of the compiler runtime.
+
+
+For a release compiler built with `--features clang-in-process`, pass `--no-trace`
+to `run.py`. This disables Clang time traces for every compiler in the comparison;
+requesting those traces would deliberately select Dynamite's subprocess backend.
+Dynamite's own stage timers remain enabled. Both configurations retain the same
+C flags and make parallelism. The feature needs a native Linux Clang/LLVM 15 SDK;
+see the repository README for installation and build options.
