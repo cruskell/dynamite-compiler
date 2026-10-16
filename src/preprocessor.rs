@@ -525,14 +525,7 @@ fn preprocess_input(
         let timer = crate::timing::Timer::new("preprocess.clang");
         let output = if let Some((_, arguments)) = file_input {
             command.args(arguments).arg(absolute_path.as_ref().unwrap());
-            #[cfg(feature = "clang-in-process")]
-            {
-                crate::native_clang::preprocess(&command)
-            }
-            #[cfg(not(feature = "clang-in-process"))]
-            {
-                command.output()
-            }
+            command.output()
         } else {
             command.arg("-");
             let mut child = command

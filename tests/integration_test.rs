@@ -7885,14 +7885,7 @@ fn driver_stage_timings_are_optional_and_preserve_parallel_results() {
                 assert_eq!(stages.get(stage), Some(&2), "{stage}: {stderr}");
             }
             assert_eq!(stages.get("link"), Some(&1));
-            assert_eq!(
-                stages.get("write_ir"),
-                if cfg!(feature = "clang-in-process") {
-                    None
-                } else {
-                    Some(&2)
-                }
-            );
+            assert_eq!(stages.get("write_ir"), Some(&2));
         } else {
             assert!(stages.is_empty());
         }

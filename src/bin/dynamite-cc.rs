@@ -410,12 +410,7 @@ fn compile(
     let ir = generate(Path::new(&input.name), "llvm", false, clang, &preprocessing)?;
     drop(timer);
     let ir_path = temporary.join(format!("{index}.ll"));
-    let native_lowering = cfg!(feature = "clang-in-process")
-        && !args
-            .backend
-            .iter()
-            .any(|arg| arg.starts_with("-ftime-trace") || arg == "-ftime-report");
-    if !native_lowering {
+    {
         let _timer = Timer::new("write_ir");
         fs::write(&ir_path, &ir).map_err(|e| format!("failed to write LLVM IR: {e}"))?;
     }
@@ -451,25 +446,7 @@ fn compile(
         .arg(&output)
         .arg("-Wno-override-module");
     let _timer = Timer::new("lower");
-    let code = if native_lowering {
-        #[cfg(feature = "clang-in-process")]
-        {
-            let result = dynamite_compiler::native_clang::lower(&command, &ir)
-                .map_err(|e| format!("LLVM lowering failed: {e}"))?;
-            use std::io::Write;
-            std::io::stdout()
-                .write_all(&result.stdout)
-                .map_err(|e| e.to_string())?;
-            std::io::stderr()
-                .write_all(&result.stderr)
-                .map_err(|e| e.to_string())?;
-            result.status.code().unwrap_or(1)
-        }
-        #[cfg(not(feature = "clang-in-process"))]
-        unreachable!()
-    } else {
-        status(&mut command)?
-    };
+    let code = status(&mut command)?;
     if code != 0 {
         return Err(format!("LLVM lowering failed for {}", input.name));
     }
@@ -486,11 +463,7 @@ fn run(arguments: &[String]) -> Result<i32, String> {
         return Ok(0);
     }
     let args = Arguments::parse(arguments)?;
-    let clang = std::env::var("DYNAMITE_CLANG").unwrap_or_else(|_| {
-        option_env!("DYNAMITE_NATIVE_CLANG")
-            .unwrap_or("clang")
-            .into()
-    });
+    let clang = std::env::var("DYNAMITE_CLANG").unwrap_or_else(|_| "clang".into());
     if args.preprocess_only {
         let preprocessor = std::env::var("DYNAMITE_PREPROCESSOR").unwrap_or_default();
         let native_backend_option = |arg: &String| {
