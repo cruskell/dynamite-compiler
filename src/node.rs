@@ -326,7 +326,10 @@ impl Node {
                         *offset,
                     );
                 }
-                return ty.unqualified().clone();
+            }
+            let mut ty = ty;
+            while let Type::Qualified(child, _) | Type::Aligned(child, _) = ty {
+                ty = *child;
             }
             ty
         })
