@@ -212,6 +212,49 @@ Redis persistence/Lua/extended-float and Git repository/gc/fsck smoke checks
 pass for all three compilers. Maximum per-compilation process RSS is essentially
 unchanged (Redis about 99 MiB, Git 94 MiB), not a peak whole-build measurement.
 
+A further header-processing change replaces a cloned function-signature
+comparison with a structural declarator check, stores diagnostic origins only
+at contiguous source-run boundaries, and borrows known unescaped marker
+filenames. Source lines/columns, UTF-8 boundaries, nested includes and EOF
+locations remain covered by regressions. Source-map lookup now counts newlines
+within a run when rendering diagnostics, avoiding per-line mapping allocations
+during successful compilation. Clang still runs once for preprocessing and once
+for IR lowering per C compilation.
+
+On identical preprocessed inputs, 15 alternating serial runs isolate the
+declarator change (source mapping is outside these timers):
+
+| Input | Frontend before → after | Reduction | Allocation requests before → after |
+| --- | ---: | ---: | ---: |
+| Redis adlist | 7.34 → 7.22 ms | 1.6% | 42,755 → 41,328 |
+| Redis server | 181.59 → 179.89 ms | 0.9% | 1,553,331 → 1,535,777 |
+| Git abspath | 93.88 → 90.79 ms | 3.3% | 601,587 → 559,990 |
+| Git revision | 213.32 → 210.05 ms | 1.5% | 1,278,665 → 1,226,882 |
+
+Allocation probes use three separate whole-process runs with the same boundaries
+and limitations as the preceding experiment. All four canonical LLVM IR outputs
+remain identical. Samples and hashes are in the
+[header-bookkeeping snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16-header-bookkeeping.json).
+
+Full clean builds use baseline/Dynamite/Clang, then reverse that order, with the
+same four-worker flags and unchanged sources:
+
+| Project | Before median | After median | Clang median |
+| --- | ---: | ---: | ---: |
+| Redis | 15.46 s | 15.42 s | 13.94 s |
+| Git | 46.96 s | 46.52 s | 41.00 s |
+
+Git improves in both repetitions, about 0.9% by median; Redis shows no clear
+whole-build gain. These remain small two-run samples on one host/flag set.
+The mean sum of source-map construction timers decreases from 0.239 to 0.142
+worker seconds for Redis and 1.813 to 1.237 for Git (40% / 32%); these overlapping
+worker sums are not build wall times. Replaying Clang's unchanged line markers
+for revision reduces origin entries from 35,833 to 1,448, or 859,992 to 34,752
+bytes of used origin payload, excluding Vec spare capacity and other state.
+Maximum per-compilation RSS remains essentially unchanged. Every build succeeds
+with 184 / 568 C compilations, and Redis/Git smoke checks pass for all three
+compilers.
+
 ## Proposed direction
 
 Dynamite aims to shorten the time from editing C code to seeing results and
