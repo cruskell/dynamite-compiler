@@ -98,3 +98,9 @@ live/peak memory, and realloc requests count the entire new size. Aligned
 allocation APIs are not intercepted. Counter runs add atomic-operation overhead
 and must not supply performance timings. The interposer uses glibc internals
 and is an optional Linux profiling tool, not part of the compiler runtime.
+
+For the experimental LLVM tools backend, set `DYNAMITE_BACKEND=llvm` and select
+matching `DYNAMITE_LLC`, `DYNAMITE_OPT`, and `DYNAMITE_LLD` executables. Use
+`--no-trace`, since Clang time-trace options are unsupported on that path.
+Select `DYNAMITE_PREPROCESSOR=native` to measure a build without invoking Clang.
+Keep preprocessing mode identical when comparing code-generation backends.

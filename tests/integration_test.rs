@@ -8200,3 +8200,129 @@ fn driver_preserves_backend_time_trace_requests() {
             .contains("traceEvents")
     );
 }
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[test]
+#[ignore = "requires llc, opt, and ld.lld; run by the LLVM tools CI job"]
+fn llvm_tools_backend_compiles_and_links_without_clang() {
+    let files = DriverFixture::new();
+    files.write(
+        "worker.c",
+        "#include <pthread.h>\n_Thread_local int value;void *worker(void *p){value=42;return (void *)(long)value;}",
+    );
+    files.write(
+        "main.c",
+        r#"
+#include <stddef.h>
+#include <pthread.h>
+#include <math.h>
+void *worker(void *);
+extern _Thread_local int value;
+int main(void){
+    pthread_t thread;void *result;
+    if(pthread_create(&thread,0,worker,0))return 1;
+    if(pthread_join(thread,&result))return 2;
+    long double x=9007199254740993.0L;x+=1.0L;
+    volatile double y=1764.0;
+    return (long)result!=42 || value!=0 || x!=9007199254740994.0L || sqrt(y)!=42.0;
+}
+"#,
+    );
+    for optimization in ["-O0", "-O2", "-O3", "-Os", "-Oz"] {
+        let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+            .current_dir(&files.0)
+            .env("DYNAMITE_BACKEND", "llvm")
+            .env("DYNAMITE_PREPROCESSOR", "native")
+            .env("DYNAMITE_CLANG", files.0.join("missing-clang"))
+            .args([
+                "--jobs",
+                "2",
+                optimization,
+                "-MMD",
+                "main.c",
+                "worker.c",
+                "-pthread",
+                "-lm",
+                "-o",
+                "program",
+            ])
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{optimization}: {result:?}");
+        assert_eq!(files.executable_status("program"), Some(0));
+        for index in 0..2 {
+            let deps = fs::read_to_string(files.0.join(format!("program-{index}.d"))).unwrap();
+            assert!(deps.starts_with("program:"), "{deps}");
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[test]
+#[ignore = "requires llc, opt, and ld.lld; run by the LLVM tools CI job"]
+fn llvm_tools_backend_preserves_shared_libraries_and_object_linking() {
+    let files = DriverFixture::new();
+    files.write("library.c", "int value(void){return 42;}");
+    files.write("main.c", "int value(void);int main(void){return value();}");
+    let cc = |arguments: &[&str]| {
+        let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+            .current_dir(&files.0)
+            .env("DYNAMITE_BACKEND", "llvm")
+            .env("DYNAMITE_PREPROCESSOR", "native")
+            .env("DYNAMITE_CLANG", files.0.join("missing-clang"))
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{arguments:?}: {result:?}");
+    };
+    cc(&["-O2", "-shared", "-fPIC", "library.c", "-o", "libvalue.so"]);
+    cc(&["-O0", "-c", "main.c", "-o", "main.o"]);
+    cc(&[
+        "main.o",
+        "-L",
+        ".",
+        "-lvalue",
+        "-Wl,-rpath,$ORIGIN",
+        "-o",
+        "program",
+    ]);
+    assert_eq!(files.executable_status("program"), Some(42));
+    cc(&[
+        "main.o", "-no-pie", "-L.", "-lvalue", "-Xlinker", "-rpath", "-Xlinker", "$ORIGIN", "-o",
+        "program",
+    ]);
+    assert_eq!(files.executable_status("program"), Some(42));
+    cc(&["-S", "library.c", "-o", "library.s"]);
+    assert!(
+        fs::read_to_string(files.0.join("library.s"))
+            .unwrap()
+            .contains("value:")
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[test]
+fn llvm_tools_backend_rejects_unsupported_options_without_clang_fallback() {
+    let files = DriverFixture::new();
+    files.write("main.c", "int main(void){return 0;}");
+    for option in [
+        "-Ofast",
+        "-march=native",
+        "-flto",
+        "-fsanitize=address",
+        "-emit-llvm",
+    ] {
+        let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+            .current_dir(&files.0)
+            .env("DYNAMITE_BACKEND", "llvm")
+            .env("DYNAMITE_PREPROCESSOR", "native")
+            .env("DYNAMITE_CLANG", files.0.join("missing-clang"))
+            .args([option, "-c", "main.c"])
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{option}: {result:?}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("LLVM"), "{stderr}");
+        assert!(!files.0.join("main.o").exists());
+    }
+}

@@ -32,7 +32,7 @@ def main():
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--no-trace", action="store_true",
-                        help="Disable Clang time traces, preserving the in-process backend")
+                        help="Disable Clang time traces (required for the LLVM tools backend)")
     args = parser.parse_args()
     if args.runs < 1 or args.jobs < 1:
         parser.error("runs and jobs must be positive")
@@ -66,6 +66,7 @@ def main():
                               for name, path in compilers.items()},
         "jobs": args.jobs, "runs": args.runs, "clang_time_traces": not args.no_trace,
         "dynamite_preprocessor": os.environ.get("DYNAMITE_PREPROCESSOR", "auto"),
+        "dynamite_backend": os.environ.get("DYNAMITE_BACKEND", "clang"),
         "sources": {name: {"path": str(path), "commit": output(["git", "rev-parse", "HEAD"], path),
                            "status": output(["git", "status", "--porcelain"], path)}
                     for name, path in sources.items()},

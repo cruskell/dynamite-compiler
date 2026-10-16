@@ -39,3 +39,11 @@ jobs:
           printf '#include <stddef.h>\n#define VALUE 42\nint main(void) { return VALUE + sizeof(char) - 1; }\n' > /tmp/sdk-free.c
           DYNAMITE_PREPROCESSOR=native target/debug/dynamite_compiler -o llvm /tmp/sdk-free.c > /tmp/sdk-free.ll
           grep -q '@main(' /tmp/sdk-free.ll
+      - name: Install external LLVM tools without Clang
+        run: apt-get update && apt-get install -y llvm-15 lld-15
+      - name: Test the LLVM tools backend without Clang
+        env:
+          DYNAMITE_LLC: llc-15
+          DYNAMITE_OPT: opt-15
+          DYNAMITE_LLD: ld.lld-15
+        run: cargo test llvm_tools_backend -- --ignored

@@ -60,6 +60,35 @@ linking, and for preprocessing when the native preprocessor is not selected.
 `DYNAMITE_CLANG` selects that executable (default: `clang` from `PATH`). Removing
 the SDK integration does not remove this external toolchain requirement.
 
+On Linux x86_64 GNU systems with Debian/Ubuntu library layouts, an experimental
+backend invokes LLVM tools directly instead of Clang for code generation and
+linking:
+
+```sh
+DYNAMITE_PREPROCESSOR=native DYNAMITE_BACKEND=llvm \
+DYNAMITE_LLC=llc-15 DYNAMITE_OPT=opt-15 DYNAMITE_LLD=ld.lld-15 \
+make -j4 CC=/absolute/path/to/target/release/dynamite-cc
+```
+
+`DYNAMITE_LLC`, `DYNAMITE_OPT`, and `DYNAMITE_LLD` default to `llc`, `opt`, and
+`ld.lld`; use matching LLVM versions (tested with 15). At `-O0`, `llc` emits
+objects directly. Higher optimization levels run `opt` before `llc`. LLD links
+PIE/non-PIE executables or shared libraries using the system glibc startup files
+and GNU runtime libraries. `DYNAMITE_GCC_RUNTIME` can select the directory
+containing `crtbeginS.o`, `crtendS.o`, and libgcc; otherwise the highest installed
+numeric version in `/usr/lib/gcc/x86_64-linux-gnu` is selected. No GCC executable
+or LLVM SDK is used. OS headers, startup objects, and runtime libraries are still
+required.
+
+This backend supports `-c`, `-S`, `-O0` through `-O3`, `-Og`, `-Os`, `-Oz`,
+PIC/PIE, `-shared`, `-no-pie`, `-pthread`, `-L`/`-l`, `-Wl,`, and `-Xlinker`.
+It rejects unsupported backend options instead of falling back to Clang.
+Cross targets, other library layouts, static linking, assembly/bitcode inputs,
+`-emit-llvm`, LTO, sanitizers, custom CPU flags, and Clang time traces are not
+supported. Debug flags are accepted, but Dynamite does not emit source debug
+information. The default backend remains Clang. Select native preprocessing as
+shown above to avoid Clang in the entire C-to-executable path.
+
 On Linux x86_64, standalone `-M`/`-MM` dependency scans use Dynamite's Rust
 preprocessor by default for supported host options. It scans directives and
 includes without expanding unrelated function bodies. Stateful macros such as
@@ -90,16 +119,15 @@ preprocessing by default: the native path builds Redis and Git, but full native
 preprocessing currently regresses Git's total build time.
 
 This change removes Clang from the selected preprocessing stages. LLVM
-IR-to-object lowering, assembly, and linking still use the existing external
-toolchain; libc/libm/pthread dependencies of compiled programs are unchanged.
+IR-to-object lowering, assembly, and linking still use external tools; libc/libm/pthread dependencies of compiled programs are unchanged.
 
 Single-input `-c`/`-S` CLI processes retain AST and token storage until exit to
 avoid individual deallocations. Multi-input and library compilation release it.
 Library type constructors now use `Rc` for recursive children and parameter
 lists, and token spellings use `SmolStr`; `.into()` converts owned values.
 
-The driver calls Dynamite's frontend directly, then uses Clang to lower LLVM IR
-and link. It removes the Python adapter and extra Dynamite process from each
+The driver calls Dynamite's frontend directly, then uses the selected external
+backend to lower LLVM IR and link. It removes the Python adapter and extra Dynamite process from each
 translation unit. File preprocessing also generates `-MD`/`-MMD` dependency
 files in the same preprocessing invocation, without a second dependency scan. Clang
 never compiles C as a fallback when Dynamite rejects a source file.
