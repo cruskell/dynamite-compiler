@@ -240,17 +240,30 @@ impl Type {
 
     /// Normalize a transparent-union parameter without changing ordinary union values or results.
     pub fn parameter_for_codegen(&self) -> Self {
-        if let Some(members) = self.transparent_union_members() {
-            let first = &members[0].ty;
-            if matches!(first.unqualified(), Self::Ptr(_)) {
+        let mut ty = self.clone();
+        ty.lower_parameter_for_codegen();
+        ty
+    }
+
+    pub(crate) fn lower_parameter_for_codegen(&mut self) {
+        let first = if let Self::Struct(record) = self.unqualified() {
+            let definition = record.definition();
+            let definition = definition.borrow();
+            definition
+                .transparent_union
+                .then(|| definition.members[0].ty.clone())
+        } else {
+            None
+        };
+        if let Some(first) = first {
+            *self = if matches!(first.unqualified(), Self::Ptr(_)) {
                 // Opaque pointer ABI types also break recursive callback parameter types.
                 Self::Ptr(Box::new(Self::Void))
             } else {
-                first.lowered_for_codegen()
-            }
-        } else {
-            self.lowered_for_codegen()
+                first
+            };
         }
+        self.lower_for_codegen();
     }
 
     /// Typedef redeclarations require identical types, not merely compatible array bounds or enums.
@@ -467,27 +480,39 @@ impl Type {
 
     /// Erase source qualifiers and enum identities after semantic validation.
     pub fn lowered_for_codegen(&self) -> Self {
+        let mut ty = self.clone();
+        ty.lower_for_codegen();
+        ty
+    }
+
+    /// Normalize an owned type after validation, reusing its child storage.
+    pub(crate) fn lower_for_codegen(&mut self) {
+        if matches!(self, Self::Qualified(..)) {
+            let Self::Qualified(child, _) = std::mem::take(self) else {
+                unreachable!()
+            };
+            *self = *child;
+            self.lower_for_codegen();
+            return;
+        }
         match self {
-            Self::Enum(value) => value.underlying.borrow().lowered_for_codegen(),
-            Self::Aligned(child, alignment) => {
-                Self::Aligned(Box::new(child.lowered_for_codegen()), *alignment)
+            Self::Enum(value) => {
+                let underlying = value.underlying.borrow().clone();
+                *self = underlying;
+                self.lower_for_codegen();
             }
-            Self::Qualified(child, _) => child.lowered_for_codegen(),
-            Self::Vector(child, lanes) => {
-                Self::Vector(Box::new(child.lowered_for_codegen()), *lanes)
+            Self::Aligned(child, _)
+            | Self::Vector(child, _)
+            | Self::Ptr(child)
+            | Self::Arr(child, _)
+            | Self::Vla(child, _) => child.lower_for_codegen(),
+            Self::Func(args, result) | Self::VariadicFunc(args, result) => {
+                for arg in args {
+                    arg.lower_parameter_for_codegen();
+                }
+                result.lower_for_codegen();
             }
-            Self::Ptr(child) => Self::Ptr(Box::new(child.lowered_for_codegen())),
-            Self::Arr(child, size) => Self::Arr(Box::new(child.lowered_for_codegen()), *size),
-            Self::Vla(child, offset) => Self::Vla(Box::new(child.lowered_for_codegen()), *offset),
-            Self::Func(args, result) => Self::Func(
-                args.iter().map(Self::parameter_for_codegen).collect(),
-                Box::new(result.lowered_for_codegen()),
-            ),
-            Self::VariadicFunc(args, result) => Self::VariadicFunc(
-                args.iter().map(Self::parameter_for_codegen).collect(),
-                Box::new(result.lowered_for_codegen()),
-            ),
-            _ => self.clone(),
+            _ => {}
         }
     }
     pub fn function_signature(&self) -> Option<(Vec<Type>, Type, bool)> {

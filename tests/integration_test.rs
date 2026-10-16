@@ -711,6 +711,18 @@ fn it_preserves_volatile_accesses_in_llvm() {
     assert!(ir.contains("load volatile i32"));
 }
 
+#[test_matrix(["asm", "llvm"])]
+fn volatile_array_and_pointer_updates_preserve_object_qualifiers(output_option: &str) {
+    let code = "typedef volatile int V;V g=3;int main(){V a[2]={4,5};V *volatile p=a;int x=*p++;int y=(*p)++;--g;return x+y+g-11;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+    if output_option == "llvm" {
+        let ir = dynamite_compiler::generate(code, "llvm", false);
+        assert!(ir.matches("load volatile i32").count() >= 4, "{ir}");
+        assert!(ir.contains("load volatile ptr"), "{ir}");
+        assert!(ir.contains("store volatile ptr"), "{ir}");
+    }
+}
+
 #[test_matrix([
     "typedef int A[3];const A a={[2]=7};int main(){return a[0]+a[2]-7;}",
     "struct S{unsigned long x;};const struct S s={.x=4294967296UL};int main(){return (s.x==4294967296UL)-1;}",

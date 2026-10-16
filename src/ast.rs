@@ -244,10 +244,12 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
         }
         for function in self.functions.values_mut() {
-            function.cty = function.cty.lowered_for_codegen();
+            function.cty.lower_for_codegen();
             for arg in &mut function.args {
                 Self::lower_source_types(arg);
-                arg.cty = arg.cty.as_ref().map(Type::parameter_for_codegen);
+                if let Some(ty) = &mut arg.cty {
+                    ty.lower_parameter_for_codegen();
+                }
             }
             if let Some(body) = &mut function.body {
                 Self::lower_source_types(body);
@@ -258,13 +260,13 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
         }
         for global in self.global_variables.values_mut() {
-            global.ty = global.ty.lowered_for_codegen();
+            global.ty.lower_for_codegen();
         }
         for definition in &self.struct_definitions {
             // Parameter normalization may inspect this record through a callback type.
             let mut members = definition.borrow().members.clone();
             for member in &mut members {
-                member.ty = member.ty.lowered_for_codegen();
+                member.ty.lower_for_codegen();
             }
             definition.borrow_mut().members = members;
         }
@@ -3546,17 +3548,13 @@ impl<'a> AstBuilderImpl<'a> {
     }
     fn lower_source_types(node: &mut Node) {
         Self::lower_transparent_call(node);
-        node.volatile_access |= node
-            .object_type()
-            .is_some_and(|ty| ty.qualifiers().volatile);
+        node.volatile_access |= node.is_volatile_object();
         if let Some(ty) = &mut node.cty {
-            *ty = ty.lowered_for_codegen();
+            ty.lower_for_codegen();
         }
-        node.parameter_types = node
-            .parameter_types
-            .iter()
-            .map(Type::parameter_for_codegen)
-            .collect();
+        for ty in &mut node.parameter_types {
+            ty.lower_parameter_for_codegen();
+        }
         for child in [
             &mut node.lhs,
             &mut node.rhs,

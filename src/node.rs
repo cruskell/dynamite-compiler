@@ -308,6 +308,22 @@ impl Node {
             _ => self.resolve_type(),
         }
     }
+    pub(crate) fn is_volatile_object(&self) -> bool {
+        match self.nt {
+            NodeType::LocalVar | NodeType::GlobalVar => {
+                self.cty.as_ref().is_some_and(|ty| ty.qualifiers().volatile)
+            }
+            NodeType::Deref => self
+                .object_type()
+                .is_some_and(|ty| ty.qualifiers().volatile),
+            NodeType::SuffixIncr | NodeType::SuffixDecr => self
+                .lhs
+                .as_ref()
+                .is_some_and(|node| node.is_volatile_object()),
+            // Value expressions discard outer object qualifiers in resolve_type.
+            _ => false,
+        }
+    }
     pub fn resolve_type(&self) -> Option<Type> {
         if self.bit_field.is_some_and(|field| field.width < 32) {
             return Some(Type::I32);
