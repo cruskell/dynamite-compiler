@@ -4624,7 +4624,22 @@ impl<'a> AstBuilderImpl<'a> {
     }
 
     fn zero_initializer(node: &Node, token: &Token) -> Node {
-        let ty = node.resolve_type().unwrap();
+        let ty = node.object_type().unwrap();
+        if matches!(ty.unqualified(), Type::Arr(..) | Type::Struct(_))
+            && !ty.is_variably_modified()
+            && !ty.contains_volatile_subobject()
+            && ty.size_of() != 0
+        {
+            return Node {
+                nt: NodeType::ZeroFill {
+                    bytes: ty.size_of(),
+                },
+                token: Some(token.clone()),
+                cty: Some(Type::Void),
+                lhs: Some(Box::new(node.clone())),
+                ..Node::default()
+            };
+        }
         let mut padding = vec![];
         if let Type::Struct(record) = ty.unqualified() {
             let is_union = record.definition().borrow().is_union;
@@ -4763,8 +4778,7 @@ impl<'a> AstBuilderImpl<'a> {
             };
         }
         if let Some(token) = self.attempt_reserved("{") {
-            let elements = Self::aggregate_elements(node, &token);
-            if elements.is_none() {
+            if !matches!(node.resolve_type(), Some(Type::Arr(..) | Type::Struct(_))) {
                 let initializer = self.local_variable_initialization(node, assign_token);
                 self.attempt_reserved(",");
                 self.expect_reserved("}");

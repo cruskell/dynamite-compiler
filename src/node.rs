@@ -72,6 +72,7 @@ pub enum NodeType {
     Cast,
     FloatAbs,
     BitScan { bits: u8, leading: bool },
+    ZeroFill { bytes: usize },
     LocalVar,
     GlobalVar,
     Add,
@@ -183,6 +184,7 @@ impl Node {
                 | NodeType::Prefetch(..)
                 | NodeType::Atomic(_)
                 | NodeType::Assign
+                | NodeType::ZeroFill { .. }
                 | NodeType::CallFunc
                 | NodeType::AddOverflow
                 | NodeType::SubOverflow
@@ -427,6 +429,7 @@ impl Node {
             ),
             NodeType::Prefetch(..)
             | NodeType::BitScan { .. }
+            | NodeType::ZeroFill { .. }
             | NodeType::Atomic(_)
             | NodeType::LocalVar
             | NodeType::CallFunc

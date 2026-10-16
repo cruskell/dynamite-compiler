@@ -1330,6 +1330,17 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
 
+            NodeType::ZeroFill { bytes } => {
+                return vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    Assembly::inst1(POP, RDI),
+                    Assembly::inst2(MOV, RCX, bytes),
+                    Assembly::inst2(XOR, EAX, EAX),
+                    Assembly::inst0(REPSTOSB),
+                    Assembly::inst1(PUSH, 0),
+                ]
+                .into();
+            }
             NodeType::BitScan { bits, leading } => {
                 let (input, count) = if bits == 32 { (EAX, ECX) } else { (RAX, RCX) };
                 let mut lines = vec![

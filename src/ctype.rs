@@ -562,6 +562,19 @@ impl Type {
             Type::Func(..) | Type::VariadicFunc(..) => 1,
         }
     }
+    pub(crate) fn contains_volatile_subobject(&self) -> bool {
+        self.qualifiers().volatile
+            || match self.unqualified() {
+                Self::Arr(child, _) | Self::Vla(child, _) => child.contains_volatile_subobject(),
+                Self::Struct(record) => record
+                    .members()
+                    .iter()
+                    .any(|member| member.ty.contains_volatile_subobject()),
+                // A volatile pointee does not make the pointer object volatile.
+                _ => false,
+            }
+    }
+
     pub fn contains_vector(&self) -> bool {
         match self.unqualified() {
             Self::Vector(..) => true,

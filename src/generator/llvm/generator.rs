@@ -70,6 +70,7 @@ impl<'a> IrGenerator<'a> {
         };
         [
             vec![
+                "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)".into(),
                 "declare void @llvm.va_start(ptr)".into(),
                 "declare void @llvm.va_end(ptr)".into(),
                 "declare void @llvm.prefetch.p0(ptr, i32, i32, i32)".into(),
@@ -1870,6 +1871,15 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
 
+            NodeType::ZeroFill { bytes } => {
+                let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
+                let pointer = options.register_queue.pop().unwrap();
+                lines.push(format!(
+                    "  call void @llvm.memset.p0.i64(ptr align 1 {pointer}, i8 0, i64 {bytes}, i1 false)"
+                ));
+                options.register_queue.push("0".into());
+                return lines;
+            }
             NodeType::BitScan { bits, leading } => {
                 let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
                 let operand = options.register_queue.pop().unwrap();
