@@ -306,6 +306,28 @@ impl Arguments {
         Ok(result)
     }
 
+    fn link_arguments(&self, outputs: &[PathBuf]) -> Vec<String> {
+        let mut objects = outputs.iter();
+        let mut arguments = vec![];
+        for argument in &self.linker {
+            match argument {
+                LinkArgument::Option(option) => arguments.push(option.clone()),
+                LinkArgument::Input(index) => {
+                    let input = &self.inputs[*index];
+                    arguments.push(if input.source {
+                        objects.next().unwrap().to_string_lossy().into_owned()
+                    } else {
+                        input.name.clone()
+                    });
+                }
+            }
+        }
+        if let Some(output) = &self.output {
+            arguments.extend(["-o".into(), output.clone()]);
+        }
+        arguments
+    }
+
     fn output_for(&self, input: &Input) -> PathBuf {
         if let Some(output) = &self.output {
             return output.into();
@@ -561,7 +583,7 @@ fn run(arguments: &[String]) -> Result<i32, String> {
                 return Ok(0);
             }
             let _timer = Timer::new("link_or_other");
-            llvm_tools::link(&args.forwarded)?;
+            llvm_tools::link(&args.link_arguments(&[]))?;
             return Ok(0);
         }
         if arguments.iter().any(|arg| arg == "--version") {
@@ -613,36 +635,13 @@ fn run(arguments: &[String]) -> Result<i32, String> {
     if args.mode != Mode::Link {
         return Ok(0);
     }
-    let mut objects = outputs.iter();
-    let mut command = Command::new(&clang);
-    for argument in &args.linker {
-        match argument {
-            LinkArgument::Option(option) => {
-                command.arg(option);
-            }
-            LinkArgument::Input(index) => {
-                let input = &args.inputs[*index];
-                if input.source {
-                    command.arg(objects.next().unwrap());
-                } else {
-                    command.arg(&input.name);
-                }
-            }
-        }
-    }
-    if let Some(output) = &args.output {
-        command.arg("-o").arg(output);
-    }
+    let arguments = args.link_arguments(&outputs);
     let _timer = Timer::new("link");
     if llvm {
-        let arguments = command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
         llvm_tools::link(&arguments)?;
         Ok(0)
     } else {
-        status(&mut command)
+        status(Command::new(&clang).args(&arguments))
     }
 }
 

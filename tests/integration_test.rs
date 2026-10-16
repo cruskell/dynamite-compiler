@@ -8278,6 +8278,9 @@ fn llvm_tools_backend_preserves_shared_libraries_and_object_linking() {
     cc(&["-O2", "-shared", "-fPIC", "library.c", "-o", "libvalue.so"]);
     cc(&["-O0", "-c", "main.c", "-o", "main.o"]);
     cc(&[
+        "-std=gnu99",
+        "-DUNUSED=1",
+        "-I.",
         "main.o",
         "-L",
         ".",
