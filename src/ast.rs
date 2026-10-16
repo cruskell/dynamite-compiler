@@ -429,7 +429,7 @@ impl<'a> AstBuilderImpl<'a> {
         match ty {
             Type::Qualified(child, q) => {
                 if q.restricted
-                    && !matches!(child.unqualified(), Type::Ptr(pointee) if pointee.function_signature().is_none())
+                    && !matches!(child.unqualified(), Type::Ptr(pointee) if pointee.function_signature_ref().is_none())
                 {
                     self.error_logger.print_error_position(
                         token.pos,
@@ -1559,7 +1559,7 @@ impl<'a> AstBuilderImpl<'a> {
         q.volatile |= suffix.volatile;
         q.restricted |= suffix.restricted;
         if q.restricted
-            && !matches!(ty.unqualified(), Type::Ptr(pointee) if pointee.function_signature().is_none())
+            && !matches!(ty.unqualified(), Type::Ptr(pointee) if pointee.function_signature_ref().is_none())
         {
             self.error_logger.print_error_position(
                 self.tokens[saved].pos,
@@ -2362,7 +2362,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             self.validate_type_layout(&ty, &token);
             if let Some(alignment) = alignments.into_iter().max() {
-                if !ty.is_complete_object() || ty.function_signature().is_some() {
+                if !ty.is_complete_object() || ty.function_signature_ref().is_some() {
                     self.error_logger.print_error_position(
                         token.pos,
                         "typedef alignment requires a complete object type",
@@ -2593,17 +2593,19 @@ impl<'a> AstBuilderImpl<'a> {
             });
             self.assembler_label(&token);
             let attributes = self.declaration_attributes_state.take().unwrap_or_default();
-            if attributes.noinline && ty.function_signature().is_none() {
+            if attributes.noinline && ty.function_signature_ref().is_none() {
                 self.error_logger
                     .print_error_position(token.pos, "noinline requires a function declaration");
             }
-            if attributes.gnu_inline && (!inline || ty.function_signature().is_none()) {
+            if attributes.gnu_inline && (!inline || ty.function_signature_ref().is_none()) {
                 self.error_logger.print_error_position(
                     token.pos,
                     "gnu_inline requires an inline function declaration",
                 );
             }
-            if attributes.common && (ty.function_signature().is_some() || attributes.weak_import) {
+            if attributes.common
+                && (ty.function_signature_ref().is_some() || attributes.weak_import)
+            {
                 self.error_logger.print_error_position(
                     token.pos,
                     "common requires an object declaration without weak_import",
@@ -2616,11 +2618,11 @@ impl<'a> AstBuilderImpl<'a> {
                     "variably modified declaration requires block scope",
                 );
             }
-            if inline && ty.function_signature().is_none() {
+            if inline && ty.function_signature_ref().is_none() {
                 self.error_logger
                     .print_error_position(token.pos, "inline requires a function declaration");
             }
-            if ty.function_signature().is_some() {
+            if ty.function_signature_ref().is_some() {
                 if alignment != 0 {
                     self.error_logger.print_error_position(
                         token.pos,
@@ -2707,9 +2709,9 @@ impl<'a> AstBuilderImpl<'a> {
                 let function = self.functions.get_mut(&token.s_value).unwrap();
                 function.external_definition = external_definition;
                 function.noinline = noinline;
-                let (_, result, _) = ty.function_signature().unwrap();
+                let (_, result, _) = ty.function_signature_ref().unwrap();
                 if definition && result.unqualified() != &Type::Void {
-                    self.expect_object_type(&result, &token);
+                    self.expect_object_type(result, &token);
                 }
                 self.return_pointer = if definition && matches!(result, Type::Struct(_)) {
                     self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
@@ -2718,12 +2720,9 @@ impl<'a> AstBuilderImpl<'a> {
                     None
                 };
                 self.variadic_last = args.last().and_then(|arg| arg.offset);
-                self.variadic_parameters = ty
-                    .function_signature()
-                    .unwrap()
-                    .2
-                    .then(|| ty.function_signature().unwrap().0);
-                self.return_type = Some(result);
+                let (parameters, _, variadic) = ty.function_signature_ref().unwrap();
+                self.variadic_parameters = variadic.then(|| parameters.to_vec());
+                self.return_type = Some(result.clone());
                 self.current_function = Some(token.clone());
                 self.labels.clear();
                 self.defined_labels.clear();
@@ -2732,10 +2731,10 @@ impl<'a> AstBuilderImpl<'a> {
                 self.mutable_static = None;
                 let mut body = self.consume_block();
                 if body.is_some() {
-                    let (parameters, result, _) = ty.function_signature().unwrap();
+                    let (parameters, result, _) = ty.function_signature_ref().unwrap();
                     if parameters
                         .iter()
-                        .chain(std::iter::once(&result))
+                        .chain(std::iter::once(result))
                         .any(|ty| matches!(ty.unqualified(), Type::Float16))
                     {
                         self.error_logger.print_error_position(token.pos,
@@ -4366,7 +4365,7 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 format!(".static.{}.{}", token.pos, token.s_value)
             };
-            if ty.function_signature().is_some() {
+            if ty.function_signature_ref().is_some() {
                 if thread_local {
                     self.error_logger.print_error_position(
                         token.pos,
@@ -4516,7 +4515,11 @@ impl<'a> AstBuilderImpl<'a> {
         loop {
             let (mut node, inferred) = self.new_local_variable(ty.clone(), alignment);
             if storage != AutomaticStorage::Default
-                && node.resolve_type().unwrap().function_signature().is_some()
+                && node
+                    .resolve_type()
+                    .unwrap()
+                    .function_signature_ref()
+                    .is_some()
             {
                 self.error_logger.print_error_position(
                     node.token.as_ref().unwrap().pos,
@@ -6632,8 +6635,8 @@ impl<'a> AstBuilderImpl<'a> {
                 let (parameter_types, return_type, variadic) = node
                     .resolve_type()
                     .and_then(|ty| match ty {
-                        Type::Ptr(child) => child.function_signature(),
-                        _ => ty.function_signature(),
+                        Type::Ptr(child) => child.into_function_signature(),
+                        _ => ty.into_function_signature(),
                     })
                     .unwrap_or_else(|| {
                         self.error_logger
@@ -6689,7 +6692,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let direct = matches!(node.nt, NodeType::GlobalVar)
                     && node
                         .resolve_type()
-                        .is_some_and(|ty| ty.function_signature().is_some());
+                        .is_some_and(|ty| ty.function_signature_ref().is_some());
                 let s_value = if direct {
                     node.global_name.clone()
                 } else {
