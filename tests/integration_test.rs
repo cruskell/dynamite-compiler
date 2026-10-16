@@ -1,3 +1,7 @@
+//! Frontend rejection cases run once because they fail before backend selection.
+//! Assembly without companion C uses one optimization setting: Clang does not
+//! optimize assembly input. LLVM IR and companion C retain both optimization levels.
+
 use std::{
     fs::{self, remove_file},
     io::Write,
@@ -44,15 +48,6 @@ fn it_compiles_string_c(output_option: &str) {
 }
 
 #[test_matrix(["asm", "llvm"])]
-fn it_compiles_simple_expr_c(output_option: &str) {
-    let code = &fs::read_to_string("./tests/c/simple_expr.c").unwrap();
-    let got = compile_and_get_stdout(code, output_option);
-    got.split("\n")
-        .filter(|s| !s.is_empty() && !s.ends_with("OK"))
-        .for_each(|s| panic!("assertion failed:\n  {}\n", s));
-}
-
-#[test_matrix(["asm", "llvm"])]
 fn it_compiles_expr_c(output_option: &str) {
     let code = &fs::read_to_string("./tests/c/expr.c").unwrap();
     let got = compile_and_get_stdout(code, output_option);
@@ -68,6 +63,22 @@ fn it_compiles_many_functions_c(output_option: &str) {
     got.split("\n")
         .filter(|s| !s.is_empty() && !s.ends_with("OK"))
         .for_each(|s| panic!("assertion failed:\n  {}\n", s));
+}
+
+fn assert_frontend_error(code: &str) {
+    use dynamite_compiler::ast::AstBuilder;
+
+    assert!(
+        std::panic::catch_unwind(|| {
+            let source = dynamite_compiler::preprocessor::preprocess(code, None).unwrap();
+            let tokens =
+                dynamite_compiler::tokenizer::Tokenizer::tokenize(&source.code, false).unwrap();
+            let mut builder = dynamite_compiler::ast::AstBuilderImpl::new(&source, &tokens);
+            builder.build(false);
+        })
+        .is_err(),
+        "frontend accepted invalid source: {code}"
+    );
 }
 
 fn compile_and_get_stdout(code: &str, output_option: &str) -> String {
@@ -595,8 +606,8 @@ fn it_supports_compound_literals(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn braced_string_array_initializers(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn braced_string_array_initializers((output_option, optimization): (&str, &str)) {
     let code = r#"
 char global[] = { "ab" "c", };
 unsigned char exact[3] = { "abc" };
@@ -638,12 +649,9 @@ int main() {
     "int main(){char a[2] = { \"abc\" };return 0;}",
     "char a[] = { \"ab\", 1 };int main(){return 0;}",
     "int main(){char a[] = { \"ab\", 1 };return 0;}"
-], ["asm", "llvm"])]
-fn invalid_braced_string_array_initializers(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_braced_string_array_initializers(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix([
@@ -1076,12 +1084,9 @@ fn array_parameter_declarators(output_option: &str) {
     "int star(int a[static *]);",
     "int bound(int a[static]);",
     "int f(int a[const 3]){a=0;return 0;}",
-], ["asm", "llvm"])]
-fn rejects_invalid_array_parameter_modifiers(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_array_parameter_modifiers(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -1112,12 +1117,9 @@ fn flexible_array_clang_interoperability(output_option: &str) {
     "struct Init{int n;int values[];};struct Init x={1,{2}};int main(){return 0;}",
     "struct Local{int n;int values[];};int main(){struct Local x={1,{2}};return 0;}",
     "struct Size{int n;int values[];};int main(){struct Size x;return sizeof(x.values);}",
-], ["asm", "llvm"])]
-fn rejects_invalid_flexible_array_members(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_flexible_array_members(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -1170,12 +1172,9 @@ fn anonymous_aggregate_clang_interoperability(output_option: &str) {
     "struct Duplicate{int x;union{int x;};};int main(){return 0;}",
     "struct Nested{struct{int x;};union{int x;};};int main(){return 0;}",
     "struct Qualified{struct{int x;};};int main(){const struct Qualified s={{1}};s.x=2;return 0;}",
-], ["asm", "llvm"])]
-fn rejects_invalid_anonymous_aggregate_members(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_anonymous_aggregate_members(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix([
@@ -1198,12 +1197,9 @@ fn restrict_qualified_pointers(output_option: &str) {
     "restrict int x;int main(){return 0;}",
     "int (*restrict function)(void);int main(){return 0;}",
     "struct S{int restrict x;};int main(){return 0;}",
-], ["asm", "llvm"])]
-fn rejects_invalid_restrict_types(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_restrict_types(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix([
@@ -1394,16 +1390,13 @@ fn noinline_attributes_follow_gnu_inline_local_bodies(output_option: &str) {
     "typedef int value __attribute__((noinline));",
     "int value(int p __attribute__((noinline)));",
     "int main(){extern int value(void) __attribute__((noinline));return 0;}",
-], ["asm", "llvm"])]
-fn invalid_noinline_attributes_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_noinline_attributes_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn gnu_inline_direct_calls_use_local_bodies(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn gnu_inline_direct_calls_use_local_bodies((output_option, optimization): (&str, &str)) {
     let code = r"
 #define HEADER extern inline __attribute__((gnu_inline))
 int missing(void);
@@ -1501,18 +1494,14 @@ int check_emitted(void){return emitted()!=9 || inherited(2)!=15 || replaced()!=1
     "extern inline __attribute__((gnu_inline)) int f(void){return 1;}extern inline __attribute__((gnu_inline)) int f(void){return 2;}",
     "inline int f(void){return 1;}int f(void){return 2;}",
     "inline struct S{int x __attribute__((gnu_inline));} f(void);",
-], ["asm", "llvm"])]
-fn invalid_gnu_inline_attributes_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_gnu_inline_attributes_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn typeof_preserves_arrays_functions_qualifiers_and_unevaluated_values(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r#"
 int values[3]={2,4,6};
@@ -1548,10 +1537,9 @@ int main(){
     );
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn typeof_variable_modified_types_capture_bounds_and_side_effects(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r"
 int main(){
@@ -1596,12 +1584,9 @@ int main(){
     "struct S{int x:3;};int main(){struct S s;typeof(s.x) x;return 0;}",
     "typeof(void) object;",
     "extern int values[];typeof(values) object;",
-], ["asm", "llvm"])]
-fn invalid_typeof_specifiers_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_typeof_specifiers_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -1621,12 +1606,9 @@ fn inline_uses_external_definition(output_option: &str) {
     "static int internal;inline int reference(void){return internal;}int main(){return 0;}",
     "static int hidden(void){return 1;}inline int caller(void){return hidden();}int main(){return 0;}",
     "int main(){inline int local;return 0;}",
-], ["asm", "llvm"])]
-fn rejects_invalid_inline(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_inline(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -1654,12 +1636,9 @@ fn static_assert_declarations(output_option: &str) {
     "_Static_assert((int)((double)1+1),\"nonconstant cast\");int main(){return 0;}",
     "_Static_assert(1,1);int main(){return 0;}",
     "int main(){int n=3;int a[n];_Static_assert(sizeof(a)>0,\"vla\");return 0;}",
-], ["asm", "llvm"])]
-fn rejects_invalid_static_assert(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_static_assert(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test]
@@ -1696,12 +1675,9 @@ fn register_array_parameter(output_option: &str) {
     "int main(){auto register int x;return 0;}",
     "int main(){register register int x;return 0;}",
     "int main(){auto int f(void);return 0;}",
-], ["asm", "llvm"])]
-fn rejects_invalid_automatic_storage(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_automatic_storage(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -1734,12 +1710,9 @@ fn generic_selection_preserves_expressions(output_option: &str) {
     "int main(){return _Generic(1.0%2,int:1,default:2);}",
     "int main(){const int x=1;_Generic(x,int:x,default:x)=2;return 0;}",
     "int main(){register int x=1;int *p=&_Generic(x,int:x,default:x);return 0;}",
-], ["asm", "llvm"])]
-fn rejects_invalid_generic_selection(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn rejects_invalid_generic_selection(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -1780,12 +1753,9 @@ fn aggregate_copy_preserves_source_qualifiers(output_option: &str) {
     "struct S{int x;};int main(){struct S a={1};const struct S b={2};b=a;return 0;}",
     "struct S{int x;};int main(){const struct S a={1};struct S *p=&a;return p->x;}",
     "struct A{int x;};struct B{int x;};int main(){struct A a;struct B b={1};a=b;return 0;}",
-], ["asm", "llvm"])]
-fn aggregate_copy_rejects_invalid_qualifier_conversions(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn aggregate_copy_rejects_invalid_qualifier_conversions(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -1876,8 +1846,8 @@ fn builtin_va_list_interoperates_with_system_c(output_option: &str) {
     );
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn compiler_capabilities_select_portable_fallbacks(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn compiler_capabilities_select_portable_fallbacks((output_option, optimization): (&str, &str)) {
     let code = r"
 #if defined(__clang__) || __has_builtin(__builtin_rotateleft32)
 #error Unsupported frontend advertised
@@ -1988,16 +1958,13 @@ int main(void){
     "int f(int a,int b){return a+b;}int use(int (*p)(int)){return 0;}int main(){return use(f);}",
     "int f(int a,...){return a;}int use(int (*p)(int)){return 0;}int main(){return use(f);}",
     "double f(int a){return a;}int use(int (*p)(int)){return 0;}int main(){return use(f);}",
-], ["asm", "llvm"])]
-fn incompatible_function_designators_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn incompatible_function_designators_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn function_designators_convert_to_pointer_values(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn function_designators_convert_to_pointer_values((output_option, optimization): (&str, &str)) {
     let code = r"
 int function(void){return 7;}int another(void){return 9;}int variadic(int n,...){return n;}
 int accept(_Bool value){return value;}
@@ -2024,16 +1991,13 @@ int main(void){
 #[test_matrix([
     "int f(void){return 0;}int main(){double x=(double)f;return 0;}",
     "int f(int n,...){return n;}int main(){float x=(float)f;return 0;}",
-], ["asm", "llvm"])]
-fn floating_function_designator_casts_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn floating_function_designator_casts_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn builtin_prefetch_preserves_address_side_effects(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn builtin_prefetch_preserves_address_side_effects((output_option, optimization): (&str, &str)) {
     let mut code = String::from(
         r#"
 #if !__has_builtin(__builtin_prefetch)
@@ -2100,8 +2064,8 @@ fn invalid_builtin_prefetch_calls_have_source_diagnostics(code: &str, output_opt
     assert!(message.contains('^'), "{message}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn register_input_inline_assembly_preserves_operands(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn register_input_inline_assembly_preserves_operands((output_option, optimization): (&str, &str)) {
     let (wide, narrow, pointer, update) = if cfg!(target_arch = "aarch64") {
         (
             "add %x0, %x1, %x2",
@@ -2140,10 +2104,9 @@ int main(){{
 }
 
 #[cfg(target_arch = "aarch64")]
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn register_input_inline_assembly_supports_aarch64_width_modifiers(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r#"
 int calls;unsigned int left(void){calls++;return 4294967295U;}unsigned int right(void){calls++;return 2;}
@@ -2189,8 +2152,10 @@ fn invalid_register_input_inline_assembly_has_source_diagnostics(code: &str, out
     assert!(message.contains('^'), "{message}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn simd_capability_profile_selects_portable_scalar_code(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn simd_capability_profile_selects_portable_scalar_code(
+    (output_option, optimization): (&str, &str),
+) {
     let code = r#"
 #if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__ARM_FEATURE_SVE) || defined(__SSE2__) || defined(__AVX2__) || defined(__AVX512F__)
 #error unimplemented vector intrinsic path selected
@@ -2210,8 +2175,10 @@ int main(){int a[4]={1,2,3,4},b[4]={5,6,7,8};return dot(a,b,4)!=70 || sizeof(voi
     );
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn readwrite_inline_assembly_evaluates_destinations_once(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn readwrite_inline_assembly_evaluates_destinations_once(
+    (output_option, optimization): (&str, &str),
+) {
     let template = if cfg!(target_arch = "aarch64") {
         "add %0, %0, #5"
     } else {
@@ -2424,8 +2391,8 @@ int main(){
     );
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn builtin_bzero_clears_only_the_requested_bytes(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn builtin_bzero_clears_only_the_requested_bytes((output_option, optimization): (&str, &str)) {
     let code = r#"
 #if !__has_builtin(__builtin_bzero)
 #error missing zeroing builtin
@@ -2474,8 +2441,8 @@ fn invalid_builtin_bzero_calls_have_source_diagnostics(code: &str, output_option
     assert!(message.contains('^'), "{message}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn integer128_capability_selects_portable_arithmetic(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn integer128_capability_selects_portable_arithmetic((output_option, optimization): (&str, &str)) {
     let code = r#"
 #ifdef __SIZEOF_INT128__
 #error Arithmetic for this extension is not supported
@@ -2493,10 +2460,9 @@ int main(){return multiply_low(7,9)!=63 || sizeof(storage)!=16 || _Alignof(__int
     );
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn register_output_inline_assembly_preserves_values_and_lvalues(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let (positive, negative, zero) = if cfg!(target_arch = "aarch64") {
         (
@@ -2882,12 +2848,9 @@ fn default_visibility_annotations_preserve_internal_llvm_symbols() {
     "int x __attribute__((visibility(1)));",
     "int x __attribute__((visibility(L\"default\")));",
     "int x __attribute__((visibility(\"default\",\"hidden\")));",
-], ["asm", "llvm"])]
-fn unsupported_visibility_annotations_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_visibility_annotations_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -2971,12 +2934,9 @@ fn weak_import_attributes_do_not_leak_between_declarators() {
     "int f(int parameter __attribute__((weak_import)));",
     "int main(){extern int object __attribute__((weak_import));return 0;}",
     "typedef int Alias __attribute__((weak_import));",
-], ["asm", "llvm"])]
-fn invalid_weak_import_declarations_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_weak_import_declarations_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["_Thread_local", "__thread"], ["-O0", "-O2"])]
@@ -3016,12 +2976,9 @@ int run(int(*f)(void)){pthread_t threads[2];for(int i=0;i<2;i++)if(pthread_creat
     "__thread int x; int x;",
     "int main(){__thread int x;return 0;}",
     "int main(){static __thread int f(void);return 0;}",
-], ["asm", "llvm"])]
-fn invalid_thread_local_declarations_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_thread_local_declarations_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["static __thread int x;", "extern _Thread_local int x;"])]
@@ -3097,12 +3054,9 @@ fn gnu_object_alignment_does_not_leak_between_declarators() {
     "struct S; struct S __attribute__((aligned(64)));",
     "int main(){_Alignas(16) register int x;return 0;}",
     "int main(){__attribute__((aligned(16))) return 0;}",
-], ["asm", "llvm"])]
-fn gnu_object_alignment_rejects_unsupported_contexts(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn gnu_object_alignment_rejects_unsupported_contexts(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix([
@@ -3112,12 +3066,9 @@ fn gnu_object_alignment_rejects_unsupported_contexts(code: &str, output_option: 
     "int value __attribute__((unknown_attribute));",
     "int value __attribute__((deprecated(\"unterminated\");",
     "int value __attribute__((unused);",
-], ["asm", "llvm"])]
-fn unsupported_or_malformed_attributes_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_or_malformed_attributes_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -3160,12 +3111,9 @@ int companion(void){return data+function(1);}
     "int value __asm__(\"\");",
     "int value __asm__(\"bad symbol\");",
     "int value __asm__(\"first\");extern int value __asm__(\"second\");",
-], ["asm", "llvm"])]
-fn invalid_assembler_labels_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_assembler_labels_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -3178,12 +3126,9 @@ fn pointer_nullability_preserves_types_and_execution(output_option: &str) {
     "int _Nullable value;",
     "int * _Nonnull _Nullable p;",
     "int main(){int x=1;int * _Nonnull const p=&x;p=0;return 0;}",
-], ["asm", "llvm"])]
-fn invalid_nullability_and_const_pointer_writes_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_nullability_and_const_pointer_writes_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -3211,12 +3156,9 @@ fn incomplete_array_redeclarations_preserve_the_composite_bound(output_option: &
     "extern const int a[];extern int a[3];",
     "extern int a[];int main(){return sizeof(a);}",
     "static int a[];",
-], ["asm", "llvm"])]
-fn invalid_incomplete_array_declarations_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_incomplete_array_declarations_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -3278,12 +3220,9 @@ struct Mixed foreign(struct Mixed value,long double delta){
 #[test_matrix([
     "long double value;",
     "int main(){return 1.0L==1.0;}",
-], ["asm", "llvm"])]
-fn unsupported_long_double_formats_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_long_double_formats_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -3341,12 +3280,9 @@ int check(struct Packet *value,_Float16 *array){
     "struct S;struct S (*p)(void);struct S{_Float16 x;};int main(){p();return 0;}",
     "struct S{_Float16 x;};void f(int,...);int main(){struct S s;f(0,s);return 0;}",
     "struct S{_Float16 x;};void f(int n,...){__builtin_va_list ap;__builtin_va_start(ap,n);__builtin_va_arg(ap,struct S);}",
-], ["asm", "llvm"])]
-fn unsupported_float16_values_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_float16_values_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -3399,12 +3335,9 @@ fn extended_integer_static_storage_is_zeroed(output_option: &str) {
     "int main(){__int128 x;if(x)return 1;return 0;}",
     "int main(){__int128 x;x;return 0;}",
     "int main(){__int128 x;x=x;return 0;}",
-], ["asm", "llvm"])]
-fn unsupported_extended_integer_values_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_extended_integer_values_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -3456,12 +3389,9 @@ int check(struct Outer x,struct Outer *p){
     "struct S{int x;} __attribute__((aligned(0)));",
     "struct __attribute__((aligned(8192))) S{int x;};",
     "int n;struct __attribute__((aligned(n))) S{int x;};",
-], ["asm", "llvm"])]
-fn invalid_record_alignment_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_record_alignment_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -3509,12 +3439,9 @@ int main() {
     "int main(){return __builtin_popcount(1,2);}",
     "int main(){int x;return __builtin_popcount(&x);}",
     "struct S{int n;};int main(){struct S x={1};return __builtin_popcountll(x);}"
-], ["asm", "llvm"])]
-fn invalid_population_count_builtins(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_population_count_builtins(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -3558,16 +3485,13 @@ int main() {
     "struct A{int x;};struct B{int x;};int f(const struct A x){return x.x;}int main(){struct B b={1};return f(b);}",
     "struct A{int x;};int f(struct A *p){return p->x;}int main(){const struct A a={1};return f(&a);}",
     "struct A{int x;};int main(){const struct A a={1};struct A b={2};a=b;return 0;}"
-], ["asm", "llvm"])]
-fn invalid_qualified_record_value_conversions(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_qualified_record_value_conversions(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn qualified_scalar_casts(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn qualified_scalar_casts((output_option, optimization): (&str, &str)) {
     let code = r#"
 typedef char *String;
 typedef int *Pointer;
@@ -3603,16 +3527,13 @@ int main() {
     "int main(){return (int * const)1.5 != 0;}",
     "int main(){int x;return (const double)&x;}",
     "struct S{int x;};int main(){return (const struct S)1;}"
-], ["asm", "llvm"])]
-fn invalid_qualified_scalar_casts(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_qualified_scalar_casts(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn typed_integer_complement_constants(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn typed_integer_complement_constants((output_option, optimization): (&str, &str)) {
     let code = r#"
 enum E : unsigned int { LIMIT=~0U, PREVIOUS=~1U };
 enum Wide : unsigned long { WIDE_LIMIT=~0UL };
@@ -3703,12 +3624,9 @@ int main(){
     "int main(){return __builtin_ctzll(1,2);}",
     "int main(){int x;return __builtin_clzl(&x);}",
     "struct S{int x;};int main(){struct S s={1};return __builtin_ctz(s);}"
-], ["asm", "llvm"])]
-fn invalid_integer_bit_scan_builtins(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_integer_bit_scan_builtins(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix([32,64,128,256,4096], ["asm", "llvm"], ["-O0", "-O2"])]
@@ -3757,16 +3675,15 @@ int check(struct Wide *a,struct Container *c,union Choice *u,unsigned long size,
     "struct __attribute__((aligned(64))) S{int x;};struct S f(void);",
     "struct S;struct S f(void);struct __attribute__((aligned(64))) S{int x;};",
     "struct __attribute__((aligned(64))) S{int x;};void f(int,...);struct S s;int main(){f(0,s);return 0;}"
-], ["asm", "llvm"])]
-fn unsupported_extended_record_stack_abi_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_extended_record_stack_abi_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn compile_time_constant_queries_do_not_evaluate_operands(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn compile_time_constant_queries_do_not_evaluate_operands(
+    (output_option, optimization): (&str, &str),
+) {
     let code = r#"
 _Static_assert(__builtin_constant_p(7),"literal");
 _Static_assert(__builtin_constant_p(2+3*4),"integer arithmetic");
@@ -3810,12 +3727,9 @@ int main(){
     "int main(){return __builtin_constant_p();}",
     "int main(){return __builtin_constant_p(1,2);}",
     "int main(){return __builtin_constant_p(unknown);}"
-], ["asm", "llvm"])]
-fn invalid_compile_time_constant_queries(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_compile_time_constant_queries(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -3859,10 +3773,9 @@ if(!cas{index}(&a,&a,({ty})42) || a!=({ty})42)return {index}+11;
     );
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn atomic_compare_exchange_preserves_pointers_and_argument_effects(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r"
 int object=7,expected=0,calls;
@@ -3946,12 +3859,9 @@ fn atomic_compare_exchange_preserves_volatile_expected_accesses_in_llvm() {
     "int main(){int x;long e;return __atomic_compare_exchange_n(&x,&e,1,0,5,5);}",
     "int main(){float x,e;return __atomic_compare_exchange_n(&x,&e,1,0,5,5);}",
     "int main(){int x,e;return __atomic_compare_exchange_n(&x,&e,1,0,5);}",
-], ["asm", "llvm"])]
-fn atomic_compare_exchange_rejects_invalid_arguments(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn atomic_compare_exchange_rejects_invalid_arguments(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -4039,12 +3949,9 @@ int run_publication(void*(*publish)(void*)){struct State s={0};pthread_t a,b;if(
     "int main(){int x;return __atomic_load_n(&x,6);}",
     "int main(){int x;return __atomic_store_n(&x,1,0);}",
     "int main(){int x;__atomic_store_n(&x,1);return 0;}"
-], ["asm", "llvm"])]
-fn invalid_atomic_load_store_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_atomic_load_store_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -4151,12 +4058,9 @@ int run_workers(void*(*generated)(void*)){struct Count c={0};pthread_t t[4];for(
     "int main(){int x;return __atomic_or_fetch(&x,1,7);}",
     "int main(){double x;return __atomic_fetch_xor(&x,1,0);}",
     "int main(){int x;return __atomic_add_fetch(&x,1);}"
-], ["asm", "llvm"])]
-fn invalid_atomic_read_modify_write_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_atomic_read_modify_write_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -4288,12 +4192,9 @@ int variadic(int n,...){va_list ap;va_start(ap,n);long long a=va_arg(ap,long lon
     "void f(long);void f(long long);",
     "int main(){char x;signed char *p=&x;return 0;}",
     "int main(){long x;long long *p=&x;return 0;}",
-], ["asm", "llvm"])]
-fn incompatible_integer_type_identities_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn incompatible_integer_type_identities_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -4328,12 +4229,9 @@ int main(){
     "int main(){int x;return __builtin_bswap64(&x);}",
     "struct S{int x;};int main(){struct S x;return __builtin_bswap32(x);}",
     "int x;int swapped=__builtin_bswap32(x);",
-], ["asm", "llvm"])]
-fn invalid_byte_swap_operands_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_byte_swap_operands_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -4408,12 +4306,9 @@ int main(){
     "int value;typedef int value;",
     "int main(){int n=3;typedef int T[n];typedef int T[n];return 0;}",
     "int main(){int n=3;typedef int T[n];typedef int T[3];return 0;}",
-], ["asm", "llvm"])]
-fn incompatible_typedef_redeclarations_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn incompatible_typedef_redeclarations_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -4435,12 +4330,9 @@ int main(){enum Values value=THIRD;return FIRST+SECOND+value-18;}
     "enum E{VALUE __attribute__((aligned(8)))=1};",
     "enum E{VALUE __attribute__((unknown))=1};",
     "enum E{VALUE __attribute__((deprecated(\"unfinished\"))};",
-], ["asm", "llvm"])]
-fn unsupported_or_malformed_enumerator_annotations_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_or_malformed_enumerator_annotations_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -4475,12 +4367,9 @@ int main(){
     "typedef int Function(void) __attribute__((aligned(1)));",
     "typedef struct Missing Record __attribute__((aligned(1)));",
     "typedef int Word __attribute__((aligned(3)));",
-], ["asm", "llvm"])]
-fn unsupported_typedef_alignment_changes_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_typedef_alignment_changes_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -4528,12 +4417,9 @@ int foreign(struct Record r,enum HugeRange max,enum SignedRange min){return r.fl
 #[test_matrix([
     "enum E { LAST=18446744073709551615UL, OVERFLOW };",
     "enum E { NEGATIVE=-1, TOO_LARGE=18446744073709551615UL };"
-], ["asm", "llvm"])]
-fn invalid_extended_enumerator_ranges(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_extended_enumerator_ranges(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -4638,18 +4524,14 @@ int main(){int n=2;int array[4];
     "int main(){return __builtin_types_compatible_p(1,int);}",
     "int main(){return __builtin_types_compatible_p(int value,int);}",
     "int main(){return __builtin_types_compatible_p(void[2],int);}",
-], ["asm", "llvm"])]
-fn invalid_types_compatible_queries_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_types_compatible_queries_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn enum_type_identities_preserve_scopes_and_representation(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r"
 enum First{FIRST=3};enum Second{SECOND=5};
@@ -4692,12 +4574,9 @@ int main(){
     "enum A:int{ONE};enum B:int{TWO};int main(){return _Generic(ONE,enum B:1);}",
     "enum A{ONE};enum B{TWO};int main(){return _Generic(1,enum A:0,enum B:1);}",
     "enum A{ONE};enum B:enum A{TWO};",
-], ["asm", "llvm"])]
-fn distinct_enum_type_mismatches_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn distinct_enum_type_mismatches_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -4775,12 +4654,9 @@ int check(struct Packet value){return value.tag!=7 || value.value!=250 || value.
     "enum E:unsigned{FIRST};enum E:unsigned{SECOND};",
     "enum E:unsigned{FIRST};enum E:unsigned;enum E:unsigned{SECOND};",
     "enum E:unsigned{VALUE=1.5};",
-], ["asm", "llvm"])]
-fn invalid_fixed_underlying_enums_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_fixed_underlying_enums_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -4803,12 +4679,9 @@ int main(){return read_value()-7;};;;
     "return 1;",
     "int value=;",
     "struct S{int x;};}",
-], ["asm", "llvm"])]
-fn nondeclarations_at_file_scope_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn nondeclarations_at_file_scope_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -4986,8 +4859,8 @@ int call_local_fp(void){
     assert_eq!(result.status.code(), Some(0), "failed case: {:?}", result);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn over_aligned_hfa_variadic_round_trip(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn over_aligned_hfa_variadic_round_trip((output_option, optimization): (&str, &str)) {
     let code = r#"
 #include <stdarg.h>
 struct Member{_Alignas(16) double x;double y;};
@@ -5077,12 +4950,9 @@ int check(struct Layout value,struct Declaration declaration,struct Mixed *mixed
     "int n;struct S{int x __attribute__((aligned(n)));};",
     "struct S{int x __attribute__((aligned(8))):3;};",
     "struct S{int __attribute__((aligned(8))) x:3;};",
-], ["asm", "llvm"])]
-fn invalid_member_alignment_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_member_alignment_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -5379,18 +5249,14 @@ int main(){
     "int main(){char a[2];return __builtin_object_size(a,-1);}",
     "int main(){char a[2];return __builtin_object_size(a,0.0);}",
     "struct S{int x;};int main(){struct S s;return __builtin_object_size(s,0);}",
-], ["asm", "llvm"])]
-fn invalid_object_size_queries_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_object_size_queries_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn checked_memory_builtins_preserve_results_and_single_evaluation(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r#"
 char destination[16];const char source[]="abcdef";
@@ -5466,12 +5332,9 @@ unsigned long read_count(void){return 5;}
     "int __memcpy_chk(int);int main(){char a[2];__builtin___memcpy_chk(a,a,1,2);}",
     "int main(){void *p=__builtin___memset_chk;}",
     "typedef int __memcpy_chk;int main(){char a[2];__builtin___memcpy_chk(a,a,1,2);}",
-], ["asm", "llvm"])]
-fn invalid_checked_memory_operands_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_checked_memory_operands_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -5526,12 +5389,9 @@ int main(){
     "void f(void);int main(){return __builtin_expect(f(),0);}",
     "int main(){long x=1;__builtin_expect(x,0)=2;}",
     "int main(){long x=1;long *p=&__builtin_expect(x,0);}",
-], ["asm", "llvm"])]
-fn invalid_branch_expectation_operands_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_branch_expectation_operands_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -5582,12 +5442,9 @@ int check_name(const char *name,const char *expected,unsigned long size){
     "int main(){char *p=__func__;}",
     "inline int f(){static int values[2];return values[0];}",
     "inline const char *f(){static const char *values[1]={\"x\"};return values[0];}",
-], ["asm", "llvm"])]
-fn invalid_predefined_function_names_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_predefined_function_names_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -5734,12 +5591,9 @@ fn checked_integer_subtraction_preserves_volatile_result_store() {
     "int main(){const int r=0;return __builtin_sub_overflow(1,2,&r);}",
     "int main(){return __builtin_sub_overflow(1,2,0);}",
     "int main(){double r;return __builtin_sub_overflow(1,2,&r);}",
-], ["asm", "llvm"])]
-fn checked_integer_subtraction_rejects_invalid_arguments(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn checked_integer_subtraction_rejects_invalid_arguments(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -5785,12 +5639,9 @@ fn checked_integer_addition_emits_one_volatile_destination_store() {
     "int main(){const int r=0;return __builtin_add_overflow(1,2,&r);}",
     "int main(){return __builtin_add_overflow(1,2,0);}",
     "int main(){double r;return __builtin_add_overflow(1,2,&r);}",
-], ["asm", "llvm"])]
-fn invalid_checked_integer_addition_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_checked_integer_addition_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -5821,8 +5672,10 @@ int main(){
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"]) ]
-fn checked_formatted_output_preserves_results_and_effects(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")]) ]
+fn checked_formatted_output_preserves_results_and_effects(
+    (output_option, optimization): (&str, &str),
+) {
     let code = r#"
 #include <string.h>
 char output[32];int destinations,sizes,flags,bounds,formats,texts,integers,floats;
@@ -5891,12 +5744,9 @@ unsigned long read_size(void){return 5;}
     "int main(){char a[4];return __builtin___snprintf_chk(a,4,a,4,\"x\");}",
     "int main(){char a[4];return __builtin___sprintf_chk(a,0,4,1);}",
     "int main(){void *p=__builtin___snprintf_chk;}",
-], ["asm", "llvm"])]
-fn invalid_checked_formatted_output_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_checked_formatted_output_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 // Older Linux libcs lack these BSD APIs; macOS exercises the system runtime.
@@ -5999,12 +5849,9 @@ install_failure_handler(storage);__builtin___{operation}_chk(storage,"",excessiv
     "int main(){char a[4];return __builtin___strlcpy_chk(a,\"x\",a,4);}",
     "int main(){char a[4];return __builtin___strlcat_chk(a,\"x\",4,a);}",
     "int main(){void *p=__builtin___strlcpy_chk;}",
-], ["asm", "llvm"])]
-fn invalid_checked_bsd_string_output_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_checked_bsd_string_output_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -6030,8 +5877,10 @@ int check(const void *a,const void *b,const void *c,const void *d){return a!=&ob
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn incomplete_external_records_observe_later_completion(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn incomplete_external_records_observe_later_completion(
+    (output_option, optimization): (&str, &str),
+) {
     let code = r#"
 extern struct Later later;struct Later *saved=&later;
 extern union Choice choice;union Choice *saved_union=&choice;
@@ -6053,18 +5902,14 @@ int main(){struct Later copy=later;return saved->value!=23 || saved->tail!=7 || 
     "extern struct S left,right;int main(){left=right;return 0;}",
     "extern struct S object;void consume(struct S);int main(){consume(object);return 0;}",
     "extern union U object;void consume(int,...);int main(){consume(0,object);return 0;}",
-], ["asm", "llvm"])]
-fn invalid_incomplete_external_record_uses_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_incomplete_external_record_uses_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn leading_nullability_on_pointer_typedefs_preserves_types(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r#"
 typedef int *Pointer;typedef int (*Callback)(int);
@@ -6094,12 +5939,9 @@ int main(){
     "typedef int *Pointer;_Nullable Pointer _Nonnull object;",
     "typedef int *Pointer;_Nonnull const _Nullable Pointer object;",
     "typedef int *Pointer;int main(){const _Nullable Pointer p=0;p=0;return 0;}",
-], ["asm", "llvm"])]
-fn invalid_leading_nullability_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_leading_nullability_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -6121,12 +5963,9 @@ int main(){struct Record r={available()};return r.value!=7 || sizeof(Word)!=4;}
     "int values[10_0];",
     "enum E{VALUE=10_0};",
     "struct S{int value __attribute__((aligned(1_0)));};",
-], ["asm", "llvm"])]
-fn attribute_versions_are_not_c_numeric_constants(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn attribute_versions_are_not_c_numeric_constants(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -6216,12 +6055,9 @@ int inspect(struct P*p,struct M*m,struct Q*q){{return p->b!=23 || m->b!=31 || q-
     "int object __attribute__((packed));",
     "typedef int Scalar __attribute__((packed));",
     "struct S{int member __attribute__((packed));};",
-], ["asm", "llvm"])]
-fn unsupported_gnu_packing_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_gnu_packing_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -6267,10 +6103,9 @@ fn floating_absolute_builtins_read_volatile_operands_once() {
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn floating_absolute_builtins_preserve_binary64_long_double(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = "long double initial=__builtin_fabsl(-2.5L);long double absolute(long double v){return __builtin_fabsl(v);}int main(){return initial!=2.5L || absolute(-3.25L)!=3.25L || _Generic(__builtin_fabsl(1),long double:0,default:1);}";
     let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
@@ -6283,12 +6118,9 @@ fn floating_absolute_builtins_preserve_binary64_long_double(
     "int main(){int value;return __builtin_fabs(&value);}",
     "int main(){void *p=__builtin_fabs;}",
     "void action(){}int main(){return __builtin_fabsf(action());}",
-], ["asm", "llvm"])]
-fn invalid_floating_absolute_builtins_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_floating_absolute_builtins_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
@@ -6342,8 +6174,8 @@ int check_runtime(double d,float f){return !isnan(d) || !isnan(f);}
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn floating_nan_builtins_support_binary64_long_double(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn floating_nan_builtins_support_binary64_long_double((output_option, optimization): (&str, &str)) {
     let code = r#"
 long double stored=__builtin_nanl("0x123");
 const char *payload(void){return "0x321";}
@@ -6363,12 +6195,9 @@ int main(void){union Bits{long double f;unsigned long u;};union Bits v={stored};
     "int main(){__builtin_nanf(1,2);return 0;}",
     "int main(){int n;__builtin_nan(&n);return 0;}",
     "int main(){__builtin_nan(L\"123\");return 0;}",
-], ["asm", "llvm"])]
-fn invalid_floating_nan_builtins_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_floating_nan_builtins_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
@@ -6417,10 +6246,9 @@ unsigned long reference64(int which){double value=which?__builtin_huge_val():__b
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn floating_infinity_builtins_preserve_binary64_long_double(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = "long double infinity=__builtin_infl();long double huge=__builtin_huge_vall();int main(){return infinity!=huge || !(infinity>1e300L) || __builtin_fabsl(-infinity)!=infinity || _Generic(__builtin_infl(),long double:0,default:1) || _Generic(__builtin_huge_vall(),long double:0,default:1);}";
     let result = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
@@ -6433,12 +6261,9 @@ fn floating_infinity_builtins_preserve_binary64_long_double(
     "int main(){return __builtin_huge_valf(1);}",
     "int main(){return __builtin_huge_val(1);}",
     "int main(){void *p=__builtin_inf;}",
-], ["asm", "llvm"])]
-fn invalid_floating_infinity_builtins_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_floating_infinity_builtins_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
@@ -6543,16 +6368,15 @@ int main(){struct Empty value={{}};if(sizeof(value)!=0)return 1;if(sizeof(global
     "int main(){int values[-1];return 0;}",
     "struct S{int n;int values[];int after;};",
     "int (*left)[0];int (*right)[2];int main(){left=right;return 0;}",
-], ["asm", "llvm"])]
-fn invalid_zero_length_array_contexts_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_zero_length_array_contexts_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn parenthesized_type_keyword_strings_remain_expressions(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn parenthesized_type_keyword_strings_remain_expressions(
+    (output_option, optimization): (&str, &str),
+) {
     let keywords = [
         "char",
         "short",
@@ -6591,8 +6415,8 @@ fn parenthesized_type_keyword_strings_remain_expressions(output_option: &str, op
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn static_objects_are_in_scope_in_their_initializers(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn static_objects_are_in_scope_in_their_initializers((output_option, optimization): (&str, &str)) {
     let code = r#"
 struct Link { struct Link *next; long size; };
 static struct Link root = { &root, sizeof(root) };
@@ -6626,12 +6450,9 @@ int main(void) {
     "int main(){static int incomplete[]={sizeof(incomplete)};return 0;}",
     "_Thread_local void *p=&p;",
     "int main(){static _Thread_local void *p=&p;return 0;}",
-], ["asm", "llvm"])]
-fn invalid_static_self_initializers_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_static_self_initializers_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test]
@@ -6663,12 +6484,9 @@ fn aggregate_brace_elision_matches_clang(body: &str, output_option: &str, optimi
     "int a[1][2]={1,2,3};int main(){return 0;}",
     "int main(){int a[1][2]={1,2,3};return 0;}",
     "union U{int x;long y;};union U u={1,2};int main(){return 0;}",
-], ["asm", "llvm"])]
-fn invalid_brace_elision_is_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_brace_elision_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix([
@@ -6699,12 +6517,9 @@ fn inferred_local_array_initializers_match_clang(
     "int main(){int a[]={sizeof(a)};return 0;}",
     "int main(){long a;{int a[]={sizeof(a)};}return 0;}",
     "int main(){int other[2];int a[]=other;return 0;}",
-], ["asm", "llvm"])]
-fn invalid_inferred_local_arrays_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_inferred_local_arrays_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -6752,16 +6567,13 @@ int main(void){Callback call=add;struct Future a={3,5};struct Future b=call(a);
     "struct S;struct S f(void){for(;;){}}",
     "struct S;struct S f(void);int main(){f();return 0;}",
     "struct S;void f(struct S);int main(){f(0);return 0;}",
-], ["asm", "llvm"])]
-fn incomplete_records_in_definitions_and_calls_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn incomplete_records_in_definitions_and_calls_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn interspersed_type_qualifiers_preserve_types(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn interspersed_type_qualifiers_preserve_types((output_option, optimization): (&str, &str)) {
     let code = r#"
 unsigned const char a=255;
 short volatile unsigned int b=65535;
@@ -6785,8 +6597,8 @@ int main(void){Word n=9;int value=read_byte((unsigned const char*)&a);b=5;
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn interspersed_long_double_qualifiers(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn interspersed_long_double_qualifiers((output_option, optimization): (&str, &str)) {
     let code = "long const double a=1.5L;double volatile long b=2.5L;int main(){return a+b!=4.0L;}";
     assert_eq!(
         compile_and_run_with_c_flags(code, output_option, None, &[optimization])
@@ -6804,12 +6616,9 @@ fn interspersed_long_double_qualifiers(output_option: &str, optimization: &str) 
     "double const unsigned x;",
     "long volatile float x;",
     "int restrict unsigned x;",
-], ["asm", "llvm"])]
-fn invalid_interspersed_type_specifiers_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_interspersed_type_specifiers_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -6849,12 +6658,9 @@ int main(void){static long local=(long)&values[2];
     "int object;float address=(long)&object;",
     "int object;int *address=(long)&object;",
     "_Thread_local int object;long address=(long)&object;",
-], ["asm", "llvm"])]
-fn invalid_integer_address_initializers_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_integer_address_initializers_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -6942,18 +6748,14 @@ int main(void){__extension__ Word local=value;int n=0;int result=ONCE(++n);
     "int main(){int n=({return 3;7;});return n;}",
     "int main(){while(1){int n=({break;7;});}return 0;}",
     "int main(){int n=({goto done;7;});done:return n;}",
-], ["asm", "llvm"])]
-fn invalid_or_unsupported_statement_expressions_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_or_unsupported_statement_expressions_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn multiple_asm_outputs_preserve_values_and_lvalue_effects(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r#"
 int calls;int value=11;int *get_pointer(void){calls++;return &value;}
@@ -6968,10 +6770,9 @@ int main(void){volatile int values[2]={3,5};int i=0;unsigned long wide=7;
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn multiple_asm_outputs_preserve_types_and_operand_numbers(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let arithmetic = if cfg!(target_arch = "aarch64") {
         r"add %w0, %w0, %w3\n\tadd %x1, %x1, %x4\n\tmov %w2, #17"
@@ -7011,12 +6812,9 @@ int main(void){{int a=-4;unsigned long b=9;volatile int c;int x=5;unsigned long 
     "int main(){int x=1,y=2;asm(\"\" : \"+r\"(x),\"+r\"(y) : \"r\"(1),\"r\"(2),\"r\"(3),\"r\"(4),\"r\"(5),\"r\"(6));}",
     "int main(){int x,y;asm(\"%2\" : \"=r\"(x),\"=r\"(y));}",
     "int main(){int x,y;asm(\"\" : \"=r\"(x),\"=&r\"(y));}",
-], ["asm", "llvm"])]
-fn unsupported_multiple_asm_outputs_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn unsupported_multiple_asm_outputs_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -7100,10 +6898,9 @@ int main(void){{{ty} value={value};U explicit={{.second=value}};
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn transparent_union_callback_types_can_refer_to_the_union(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let code = r#"
 union Recursive;
@@ -7116,8 +6913,10 @@ int main(void){return invoke(terminal)!=1;}
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
-fn transparent_union_attribute_forms_and_variadic_calls(output_option: &str, optimization: &str) {
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn transparent_union_attribute_forms_and_variadic_calls(
+    (output_option, optimization): (&str, &str),
+) {
     let code = r#"
 typedef __attribute__((transparent_union)) union Prefix{int *p;char *q;}Prefix;
 union Trailing{int *p;char *q;} __attribute__((__transparent_union__));
@@ -7150,12 +6949,9 @@ int main(void){int n=3;const int immutable=7;
     "typedef union U{int *p;}U __attribute__((transparent_union));int accept(U v){return 0;}int main(){double x;return accept(&x);}",
     "typedef union U{int *p;}U __attribute__((transparent_union));int accept(U v){return 0;}int main(){const int x=3;return accept(&x);}",
     "typedef union U{int *p;}U __attribute__((transparent_union));int main(){int x;U value;value=&x;return 0;}",
-], ["asm", "llvm"])]
-fn invalid_or_unsupported_transparent_unions_are_diagnosed(code: &str, output_option: &str) {
-    assert!(
-        std::panic::catch_unwind(|| dynamite_compiler::generate(code, output_option, false))
-            .is_err()
-    );
+])]
+fn invalid_or_unsupported_transparent_unions_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
 }
 
 #[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
@@ -7180,10 +6976,9 @@ int main(void){{unsigned high=4000000000U;unsigned (*callback)(unsigned)=ours;
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
-#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn memory_clobber_inline_assembly_preserves_memory_effects(
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let store = if cfg!(target_arch = "aarch64") {
         "str %w1, [%0]"
@@ -7233,8 +7028,11 @@ fn memory_clobber_inline_assembly_emits_llvm_barriers() {
     "struct Shape {unsigned first:1;unsigned :0;unsigned second:3;char tail;};",
     "#pragma pack(push,1)\nstruct Shape {char tag;unsigned first:3,second:9;char tail;};\n#pragma pack(pop)",
     "struct __attribute__((aligned(16))) Shape {char tag;unsigned flag:1;};",
-], ["asm", "llvm"], ["-O0", "-O2"])]
-fn record_zero_initialization_clears_padding(code: &str, output_option: &str, optimization: &str) {
+], [("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn record_zero_initialization_clears_padding(
+    code: &str,
+    (output_option, optimization): (&str, &str),
+) {
     let code = format!(
         r#"{code}
 int main(void){{
@@ -7266,11 +7064,10 @@ fn record_zero_initialization_retains_volatile_member_stores() {
     );
 }
 
-#[test_matrix(["and", "xor", "or"], ["asm", "llvm"], ["-O0", "-O2"])]
+#[test_matrix(["and", "xor", "or"], [("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn bitwise_operands_evaluate_left_to_right(
     operator: &str,
-    output_option: &str,
-    optimization: &str,
+    (output_option, optimization): (&str, &str),
 ) {
     let (operator, combine): (&str, fn(u64, u64) -> u64) = match operator {
         "and" => ("&", |a, b| a & b),
