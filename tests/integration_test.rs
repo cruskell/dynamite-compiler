@@ -1314,6 +1314,38 @@ fn gnu_qualifier_spellings(output_option: &str) {
     }
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn unused_static_inline_bodies_do_not_require_external_symbols(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+int missing(void) __attribute__((visibility("hidden")));
+static inline int dead_recursive(int n){return n?dead_recursive(n-1):missing();}
+static inline int dead_a(void);
+static inline int dead_b(void){return dead_a();}
+static inline int dead_a(void){return dead_b();}
+static inline int leaf(int x){return x+1;}
+static inline int bridge(int x){return leaf(x);}
+static inline int addressed(int x){return x+2;}
+struct Holder{int (*function)(int);};struct Holder callbacks[1]={{addressed}};
+int main(){return bridge(3)+callbacks[0].function(5)-11;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+    let output = dynamite_compiler::generate(code, output_option, false);
+    assert!(
+        !output.contains("dead_recursive")
+            && !output.contains("dead_a")
+            && !output.contains("dead_b")
+            && !output.contains("missing")
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn restrict_qualified_pointers(output_option: &str) {
     let code = "typedef int *P;int sum(int n,int a[restrict static n],const int *restrict b){P restrict p=a;int result=0;for(int i=0;i<n;i++){p[i]+=b[i];result+=p[i];}return result;}int main(){int a[3]={1,2,3};int b[3]={4,5,6};return sum(3,a,b)-21;}";

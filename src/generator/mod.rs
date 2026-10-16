@@ -32,15 +32,21 @@ pub(crate) fn asm_register_width(
 
 use crate::{ast::ProgramAst, error::ErrorLogger};
 
-/// Native hidden declarations need directives only when the symbol is referenced.
+/// References reachable from emitted definitions and global initializers.
+/// Unreferenced static inline bodies must not create linker dependencies.
 pub(crate) fn referenced_symbols<'a>(
     ast: &'a ProgramAst<'_>,
 ) -> std::collections::HashSet<&'a str> {
     use crate::{global::GlobalVariableData, node::Node};
     use std::collections::HashSet;
-    fn node_names<'a>(node: &'a Node, names: &mut HashSet<&'a str>) {
+    fn add_name<'a>(name: &'a str, names: &mut HashSet<&'a str>, pending: &mut Vec<&'a str>) {
+        if names.insert(name) {
+            pending.push(name);
+        }
+    }
+    fn node_names<'a>(node: &'a Node, names: &mut HashSet<&'a str>, pending: &mut Vec<&'a str>) {
         if !node.global_name.is_empty() {
-            names.insert(&node.global_name);
+            add_name(&node.global_name, names, pending);
         }
         for child in [
             &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
@@ -48,42 +54,54 @@ pub(crate) fn referenced_symbols<'a>(
         .into_iter()
         .flatten()
         {
-            node_names(child, names);
+            node_names(child, names, pending);
         }
         for child in node.children.iter().chain(&node.args) {
-            node_names(child, names);
+            node_names(child, names, pending);
         }
     }
-    fn data_names<'a>(data: &'a GlobalVariableData, names: &mut HashSet<&'a str>) {
+    fn data_names<'a>(
+        data: &'a GlobalVariableData,
+        names: &mut HashSet<&'a str>,
+        pending: &mut Vec<&'a str>,
+    ) {
         match data {
-            GlobalVariableData::Address { symbol, .. } => {
-                names.insert(symbol);
-            }
+            GlobalVariableData::Address { symbol, .. } => add_name(symbol, names, pending),
             GlobalVariableData::Elem(value) if value.starts_with('@') => {
-                names.insert(&value[1..]);
+                add_name(&value[1..], names, pending)
             }
             GlobalVariableData::Arr(values) => {
                 for value in values {
-                    data_names(value, names);
+                    data_names(value, names, pending);
                 }
             }
-            GlobalVariableData::Union { value, .. } => data_names(value, names),
+            GlobalVariableData::Union { value, .. } => data_names(value, names, pending),
             _ => {}
         }
     }
     let mut names = HashSet::new();
-    for function in ast
-        .functions
-        .values()
-        .filter(|function| !function.inline_only())
-    {
+    let mut pending = vec![];
+    for function in ast.functions.values().filter(|function| {
+        !function.inline_only() && !(function.internal && function.inline_definition)
+    }) {
         if let Some(body) = &function.body {
-            node_names(body, &mut names);
+            node_names(body, &mut names, &mut pending);
         }
     }
     for object in ast.global_variables.values() {
         if let Some(data) = &object.data {
-            data_names(data, &mut names);
+            data_names(data, &mut names, &mut pending);
+        }
+    }
+    while let Some(name) = pending.pop() {
+        if let Some(function) = ast
+            .functions
+            .get(name)
+            .filter(|function| function.internal && function.inline_definition)
+        {
+            if let Some(body) = &function.body {
+                node_names(body, &mut names, &mut pending);
+            }
         }
     }
     names

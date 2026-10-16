@@ -74,13 +74,15 @@ impl<'a> AsmGenerator<'a> {
                 )
                 .collect(),
         };
-        let references = if ast.functions.values().any(|function| function.hidden)
-            || ast.global_variables.values().any(|object| object.hidden)
-        {
-            crate::generator::referenced_symbols(&ast)
-        } else {
-            std::collections::HashSet::new()
-        };
+        let references =
+            if ast.functions.values().any(|function| {
+                function.hidden || (function.internal && function.inline_definition)
+            }) || ast.global_variables.values().any(|object| object.hidden)
+            {
+                crate::generator::referenced_symbols(&ast)
+            } else {
+                std::collections::HashSet::new()
+            };
         let hidden = ast
             .functions
             .iter()
@@ -124,6 +126,10 @@ impl<'a> AsmGenerator<'a> {
                 .into(),
                 ast.functions
                     .iter()
+                    .filter(|(name, function)| {
+                        !(function.internal && function.inline_definition)
+                            || references.contains(name.as_str())
+                    })
                     .map(|(name, f)| {
                         let func_offset_with_alignment = f.offset_size.div_ceil(16) * 16;
                         generator.gen_func(name, f, func_offset_with_alignment)
