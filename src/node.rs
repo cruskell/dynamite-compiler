@@ -42,9 +42,8 @@ pub(crate) fn render_inline_assembly(
             .peek()
             .copied()
             .filter(char::is_ascii_alphabetic)
-            .map(|ch| {
+            .inspect(|_| {
                 chars.next();
-                ch
             });
         let mut index = None;
         while let Some(ch) = chars.peek().copied().filter(char::is_ascii_digit) {

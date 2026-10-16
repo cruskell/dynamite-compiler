@@ -730,10 +730,10 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 if name.s_value.trim_matches('_') == "common" {
                     if self.parameter_depth != 0
-                        || !self
+                        || self
                             .declaration_attributes_state
                             .as_ref()
-                            .is_some_and(|attributes| !attributes.typedef_declarator)
+                            .is_none_or(|attributes| attributes.typedef_declarator)
                     {
                         self.error_logger.print_error_position(
                             name.pos,
@@ -2997,7 +2997,7 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             }
             (ty, GlobalVariableData::Address { .. })
-                if ty.is_arithmetic() && !ty.integer_info().is_some_and(|(bits, _)| bits == 64) =>
+                if ty.is_arithmetic() && ty.integer_info().is_none_or(|(bits, _)| bits != 64) =>
             {
                 self.error_logger
                     .print_error_position(token.pos, "integer initializer cannot be an address");
