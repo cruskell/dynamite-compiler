@@ -42,7 +42,7 @@ impl AstBuilderImpl<'_> {
             } else {
                 let temporary = self.register_local_variable(
                     Token {
-                        s_value: format!(".statement_expression.{}", token.pos),
+                        s_value: format!(".statement_expression.{}", token.pos).into(),
                         ..token.clone()
                     },
                     ty,

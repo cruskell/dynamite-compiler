@@ -23,7 +23,7 @@ pub struct Token {
     pub packing: Option<usize>,
     pub i_value: usize,
     pub extended_float: Option<Box<u128>>,
-    pub s_value: String,
+    pub s_value: smol_str::SmolStr,
     pub string_encoding: StringEncoding,
     pub string_bytes: Vec<u8>,
 }

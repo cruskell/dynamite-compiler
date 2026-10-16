@@ -2840,12 +2840,13 @@ impl<'a> IrGenerator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
 
     #[test]
     fn global_array_initializers_fill_missing_elements() {
         let logger = error::ErrorPrinter::new("");
         let generator = IrGenerator::new(&logger);
-        let ty = Type::Arr(Box::new(Type::I32), Some(3));
+        let ty = Type::Arr(Rc::new(Type::I32), Some(3));
         assert_eq!(
             generator.gen_initializer_element(&ty, None),
             "[3 x i32] zeroinitializer"
@@ -2855,7 +2856,7 @@ mod tests {
             generator.gen_initializer_element(&ty, Some(&data)),
             "[3 x i32] [i32 7, i32 0, i32 0]"
         );
-        let nested = Type::Arr(Box::new(ty), Some(2));
+        let nested = Type::Arr(Rc::new(ty), Some(2));
         let data = GlobalVariableData::Arr(vec![data]);
         assert_eq!(
             generator.gen_initializer_element(&nested, Some(&data)),

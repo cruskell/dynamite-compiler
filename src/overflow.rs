@@ -1,5 +1,7 @@
 //! Defer checked-arithmetic temporaries until unevaluated expressions have been removed.
 
+use std::rc::Rc;
+
 use super::*;
 
 fn number(value: usize, ty: Type, token: &Token) -> Node {
@@ -130,7 +132,7 @@ pub(super) fn lower(node: &mut Node, offset: &mut usize) {
     let signed = Type::integer(64, true);
     let left = temporary(unsigned.clone(), offset, &token);
     let right = temporary(unsigned.clone(), offset, &token);
-    let result_pointer = temporary(Type::Ptr(Box::new(target.clone())), offset, &token);
+    let result_pointer = temporary(Type::Ptr(Rc::new(target.clone())), offset, &token);
     let low = temporary(unsigned.clone(), offset, &token);
     let high = temporary(signed.clone(), offset, &token);
     let stored = temporary(target.clone(), offset, &token);

@@ -86,7 +86,7 @@ impl AstBuilderImpl<'_> {
             });
         let temporary = self.register_local_variable(
             Token {
-                s_value: format!(".transparent_argument.{}.{}", token.pos, self.offset_size),
+                s_value: format!(".transparent_argument.{}.{}", token.pos, self.offset_size).into(),
                 ..token.clone()
             },
             expected.unqualified().clone(),

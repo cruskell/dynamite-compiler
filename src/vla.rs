@@ -1,4 +1,5 @@
 use super::*;
+use std::rc::Rc;
 
 fn cast(node: Node, ty: Type) -> Node {
     Node {
@@ -138,7 +139,7 @@ impl AstBuilderImpl<'_> {
     pub(super) fn vla_temporary(&mut self, token: &Token, ty: Type) -> Node {
         self.register_local_variable(
             Token {
-                s_value: format!(".vla.{}.{}", token.pos, self.offset_size),
+                s_value: format!(".vla.{}.{}", token.pos, self.offset_size).into(),
                 ..token.clone()
             },
             ty,
@@ -147,7 +148,7 @@ impl AstBuilderImpl<'_> {
     pub(super) fn dynamic_node(ty: Type, offset: usize, token: Token) -> Node {
         let pointer = Node {
             nt: NodeType::LocalVar,
-            cty: Some(Type::Ptr(Box::new(ty))),
+            cty: Some(Type::Ptr(Rc::new(ty))),
             offset: Some(offset),
             token: Some(token.clone()),
             ..Node::default()
@@ -200,7 +201,7 @@ impl AstBuilderImpl<'_> {
         let call = Self::allocation_call(
             "malloc",
             size,
-            Type::Ptr(Box::new(Type::Void)),
+            Type::Ptr(Rc::new(Type::Void)),
             Type::integer(64, false),
         );
         self.dynamic_objects.push(pointer.clone());
@@ -208,11 +209,11 @@ impl AstBuilderImpl<'_> {
         binary(
             NodeType::Assign,
             pointer,
-            cast(call, Type::Ptr(Box::new(ty))),
+            cast(call, Type::Ptr(Rc::new(ty))),
         )
     }
     fn free_array(pointer: Node) -> Node {
-        let void_pointer = Type::Ptr(Box::new(Type::Void));
+        let void_pointer = Type::Ptr(Rc::new(Type::Void));
         Self::allocation_call(
             "free",
             cast(pointer, void_pointer.clone()),
@@ -316,7 +317,7 @@ impl AstBuilderImpl<'_> {
             let token = original.token.clone();
             let lhs = *original.lhs.unwrap();
             let rhs = *original.rhs.unwrap();
-            let bytes = Type::Ptr(Box::new(Type::I8));
+            let bytes = Type::Ptr(Rc::new(Type::I8));
             *node = if original.nt == NodeType::Sub && rhs.dest_type().is_some() {
                 let difference = binary(
                     NodeType::Sub,

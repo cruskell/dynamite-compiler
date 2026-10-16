@@ -1,6 +1,7 @@
 use super::{Arch, Os};
 use crate::ctype::Type;
 use std::borrow::Cow;
+use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub struct Part {
@@ -141,7 +142,7 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
     if matches!(ty.unqualified(), Type::Func(..) | Type::VariadicFunc(..)) {
         return vec![Part {
             offset: 0,
-            ty: Type::Ptr(Box::new(ty.clone())),
+            ty: Type::Ptr(Rc::new(ty.clone())),
         }];
     }
     if !matches!(ty.unqualified(), Type::Struct(_)) {
@@ -252,7 +253,7 @@ pub fn signature(
         let effective = match source {
             Type::Arr(child, _) => Cow::Owned(Type::Ptr(child.clone())),
             Type::Func(..) | Type::VariadicFunc(..) => {
-                Cow::Owned(Type::Ptr(Box::new(source.clone())))
+                Cow::Owned(Type::Ptr(Rc::new(source.clone())))
             }
             _ => Cow::Borrowed(source),
         };
@@ -273,7 +274,7 @@ pub fn signature(
         if indirect {
             parts = vec![Part {
                 offset: 0,
-                ty: Type::Ptr(Box::new(ty.clone())),
+                ty: Type::Ptr(Rc::new(ty.clone())),
             }];
         }
         let gp = parts
@@ -339,7 +340,7 @@ pub fn signature(
                     Part {
                         offset: 0,
                         ty: if indirect {
-                            Type::Ptr(Box::new(ty.clone()))
+                            Type::Ptr(Rc::new(ty.clone()))
                         } else {
                             ty.clone()
                         },

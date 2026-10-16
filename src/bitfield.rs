@@ -2,6 +2,7 @@ use crate::{
     ctype::{BitField, Type},
     node::{Node, NodeType},
 };
+use std::rc::Rc;
 
 fn cast(value: Node, ty: Type) -> Node {
     Node {
@@ -82,7 +83,7 @@ fn packed_byte(pointer: &Node, index: usize, volatile: bool) -> Node {
 fn packed_read(mut node: Node, offset: &mut usize) -> Node {
     let field = node.bit_field.take().unwrap();
     let ty = node.object_type().unwrap();
-    let pointer_type = Type::Ptr(Box::new(Type::integer(8, false)));
+    let pointer_type = Type::Ptr(Rc::new(Type::integer(8, false)));
     let pointer = temporary(pointer_type.clone(), offset, &node);
     let save_pointer = binary(
         NodeType::Assign,
@@ -115,7 +116,7 @@ fn packed_write(mut target: Node, value: Node, offset: &mut usize) -> Node {
     let source = target.clone();
     let field = target.bit_field.take().unwrap();
     let ty = target.object_type().unwrap();
-    let pointer_type = Type::Ptr(Box::new(Type::integer(8, false)));
+    let pointer_type = Type::Ptr(Rc::new(Type::integer(8, false)));
     let pointer = temporary(pointer_type.clone(), offset, &source);
     let save_pointer = binary(
         NodeType::Assign,
@@ -195,7 +196,7 @@ fn write(mut target: Node, value: Node, offset: &mut usize) -> Node {
     let field = target.bit_field.take().unwrap();
     let ty = target.object_type().unwrap();
     let storage = Type::integer(ty.integer_info().unwrap().0, false);
-    let pointer = temporary(Type::Ptr(Box::new(storage.clone())), offset, &source);
+    let pointer = temporary(Type::Ptr(Rc::new(storage.clone())), offset, &source);
     let save = binary(
         NodeType::Assign,
         pointer.clone(),

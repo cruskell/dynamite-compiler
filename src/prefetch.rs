@@ -1,13 +1,15 @@
 //! Parse advisory data-prefetch operations and their constant hints.
 
+use std::rc::Rc;
+
 use super::*;
 
 impl AstBuilderImpl<'_> {
     pub(super) fn prefetch_builtin(&mut self, token: Token) -> Node {
         self.expect_reserved("(");
         let pointer = self.assign();
-        let pointer_type = Type::Ptr(Box::new(Type::Qualified(
-            Box::new(Type::Void),
+        let pointer_type = Type::Ptr(Rc::new(Type::Qualified(
+            Rc::new(Type::Void),
             Qualifiers {
                 constant: true,
                 ..Qualifiers::default()

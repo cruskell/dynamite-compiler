@@ -50,6 +50,29 @@ adapter in C builds:
 make -j4 CC=/absolute/path/to/target/release/dynamite-cc
 ```
 
+On Linux, an optional Clang 15 SDK integration avoids starting Clang processes for
+file preprocessing and LLVM IR lowering:
+
+```sh
+sudo apt-get install clang-15 llvm-15-dev libclang-15-dev libclang-cpp15-dev g++
+cargo build --release --features clang-in-process
+```
+
+`LLVM_CONFIG` selects `llvm-config-15`; the selected SDK must be version 15.
+`CXX` and `AR` select the native C++ compiler and archiver. Headers normally come
+from `llvm-config --includedir`; `DYNAMITE_CLANG_INCLUDE_DIR` can override the
+Clang header directory. This feature currently supports native Linux builds.
+It selects the SDK's Clang executable by default; any `DYNAMITE_CLANG` override
+must use the same Clang 15 installation. Linking, preprocessing-only commands,
+and backend time-trace/report requests continue to use the Clang executable.
+C parsing and semantic checks always run through Dynamite.
+
+The ordinary build retains its subprocess backend and needs no LLVM SDK.
+Single-input `-c`/`-S` CLI processes retain AST and token storage until exit to
+avoid individual deallocations. Multi-input and library compilation release it.
+Library type constructors now use `Rc` for recursive children and parameter
+lists, and token spellings use `SmolStr`; `.into()` converts owned values.
+
 The driver calls Dynamite's frontend directly, then uses Clang to lower LLVM IR
 and link. It removes the Python adapter and extra Dynamite process from each
 translation unit. File preprocessing also generates `-MD`/`-MMD` dependency

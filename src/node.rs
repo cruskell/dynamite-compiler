@@ -2,6 +2,7 @@ use crate::ctype::{BitField, Type};
 use crate::token::Token;
 use std::borrow::Cow;
 use std::mem::swap;
+use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum AtomicRmwOperation {
@@ -354,13 +355,13 @@ impl Node {
             if let Type::Qualified(child, _) = ty.as_ref() {
                 if let Type::Arr(element, size) = child.unqualified() {
                     return Cow::Owned(Type::Arr(
-                        Box::new(Type::Qualified(element.clone(), ty.qualifiers())),
+                        Rc::new(Type::Qualified(element.clone(), ty.qualifiers())),
                         *size,
                     ));
                 }
                 if let Type::Vla(element, offset) = child.unqualified() {
                     return Cow::Owned(Type::Vla(
-                        Box::new(Type::Qualified(element.clone(), ty.qualifiers())),
+                        Rc::new(Type::Qualified(element.clone(), ty.qualifiers())),
                         *offset,
                     ));
                 }
@@ -467,7 +468,7 @@ impl Node {
             | NodeType::VaEnd => self.cty.as_ref().map(Cow::Borrowed),
             NodeType::Addr => {
                 if let Some(ty) = self.lhs.as_ref().unwrap().object_type_view() {
-                    Some(Cow::Owned(Type::Ptr(Box::new(ty.into_owned()))))
+                    Some(Cow::Owned(Type::Ptr(Rc::new(ty.into_owned()))))
                 } else {
                     self.cty.as_ref().map(Cow::Borrowed)
                 }
@@ -500,7 +501,7 @@ impl Node {
         match Type::unqualified_view(self.resolve_type_view()?) {
             Cow::Borrowed(ty) => ty.dest_type_ref().map(Cow::Borrowed),
             Cow::Owned(Type::Ptr(child) | Type::Arr(child, _) | Type::Vla(child, _)) => {
-                Some(Cow::Owned(*child))
+                Some(Cow::Owned(Rc::unwrap_or_clone(child)))
             }
             Cow::Owned(_) => None,
         }
@@ -641,7 +642,7 @@ mod tests {
     #[test]
     fn type_views_borrow_stored_types_and_preserve_object_qualification() {
         let node = object(Type::Qualified(
-            Box::new(Type::Aligned(Box::new(Type::Ptr(Box::new(Type::I32))), 16)),
+            Rc::new(Type::Aligned(Rc::new(Type::Ptr(Rc::new(Type::I32))), 16)),
             Qualifiers {
                 volatile: true,
                 ..Qualifiers::default()
@@ -660,7 +661,7 @@ mod tests {
         let deref = Node::new_with_op_and_lhs(
             None,
             NodeType::Deref,
-            object(Type::Ptr(Box::new(node.cty.clone().unwrap()))),
+            object(Type::Ptr(Rc::new(node.cty.clone().unwrap()))),
         );
         assert!(deref.is_volatile_object());
         assert!(matches!(
@@ -685,10 +686,10 @@ mod tests {
             ..Qualifiers::default()
         };
         for array in [
-            Type::Arr(Box::new(Type::I32), Some(3)),
-            Type::Vla(Box::new(Type::I32), 8),
+            Type::Arr(Rc::new(Type::I32), Some(3)),
+            Type::Vla(Rc::new(Type::I32), 8),
         ] {
-            let node = object(Type::Qualified(Box::new(array), qualifiers));
+            let node = object(Type::Qualified(Rc::new(array), qualifiers));
             let Some(Cow::Owned(ty)) = node.resolve_type_view() else {
                 panic!("qualified array value type must be constructed")
             };
@@ -713,11 +714,14 @@ mod tests {
 
     #[test]
     fn conditional_type_views_borrow_pointers_and_decay_functions() {
-        let function = Type::Func(vec![Type::Ptr(Box::new(Type::I8))], Box::new(Type::I32));
+        let function = Type::Func(
+            Rc::new(vec![Type::Ptr(Rc::new(Type::I8))]),
+            Rc::new(Type::I32),
+        );
         for ty in [
-            Type::Ptr(Box::new(function.clone())),
+            Type::Ptr(Rc::new(function.clone())),
             function.clone(),
-            Type::Arr(Box::new(Type::I32), Some(2)),
+            Type::Arr(Rc::new(Type::I32), Some(2)),
         ] {
             let borrowed = matches!(ty, Type::Ptr(_));
             let node = Node::new_if_node(
