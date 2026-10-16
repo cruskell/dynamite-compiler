@@ -255,6 +255,7 @@ impl AstBuilder for AstBuilderImpl<'_> {
         }
         drop(timer);
         let timer = crate::timing::Timer::new("parse.lower");
+        // Source-type lowering updates annotations; value conversions preserve them.
         for function in self.functions.values_mut() {
             function.cty.lower_for_codegen();
             for arg in &mut function.args {
@@ -1277,6 +1278,7 @@ impl<'a> AstBuilderImpl<'a> {
         for child in node.children.iter_mut().chain(&mut node.args) {
             Self::resolve_deferred_local(child, offset, object);
         }
+        node.refresh_arithmetic_type();
     }
 
     fn inferred_local_array_initializer(&mut self, object: &Node, token: &Token) -> (Node, Node) {
@@ -5980,12 +5982,7 @@ impl<'a> AstBuilderImpl<'a> {
             return Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, operand);
         }
         if let Some(t) = self.attempt_reserved("~") {
-            return Node {
-                token: Some(t.clone()),
-                nt: NodeType::BitNot,
-                lhs: Some(Box::new(self.unary())),
-                ..Node::default()
-            };
+            return Node::new_with_op_and_lhs(Some(t.clone()), NodeType::BitNot, self.unary());
         }
         if let Some(t) = self.attempt_reserved("!") {
             return Node {

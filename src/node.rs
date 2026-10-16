@@ -151,6 +151,7 @@ pub struct Node {
     pub volatile_access: bool,
     pub registered: bool,
     pub thread_local: bool,
+    /// Stored object/call/cast type, or an inferred scalar arithmetic result.
     pub cty: Option<Type>,
     pub token: Option<Token>,
     pub lhs: Option<Box<Node>>,
@@ -240,22 +241,84 @@ impl Node {
                 swap(&mut lhs, &mut rhs);
             }
         }
-        Self {
+        let mut node = Self {
             token,
             nt,
             lhs: Some(Box::new(lhs)),
             rhs: Some(Box::new(rhs)),
             ..Self::default()
-        }
+        };
+        node.refresh_arithmetic_type();
+        node
     }
     pub fn new_with_op_and_lhs(token: Option<Token>, nt: NodeType, lhs: Node) -> Self {
-        Self {
+        let mut node = Self {
             token,
             nt,
             lhs: Some(Box::new(lhs)),
             ..Self::default()
+        };
+        node.refresh_arithmetic_type();
+        node
+    }
+
+    /// Recompute an arithmetic result after changing its operands or their types.
+    /// Refresh children first when changing an existing expression tree.
+    pub fn refresh_arithmetic_type(&mut self) {
+        // Reuse cty so queries need neither a subtree walk nor a separate cache.
+        if matches!(
+            self.nt,
+            NodeType::Add
+                | NodeType::Sub
+                | NodeType::Mul
+                | NodeType::Div
+                | NodeType::Mod
+                | NodeType::BitAnd
+                | NodeType::BitXor
+                | NodeType::BitOr
+                | NodeType::BitNot
+                | NodeType::BitLeft
+                | NodeType::BitRight
+        ) {
+            self.cty = self
+                .infer_arithmetic_type_view()
+                .filter(|ty| ty.is_arithmetic())
+                .map(Cow::into_owned);
         }
     }
+
+    fn infer_arithmetic_type_view(&self) -> Option<Cow<'_, Type>> {
+        let lhs = self.lhs.as_ref()?.resolve_type_view()?;
+        match self.nt {
+            NodeType::Add | NodeType::Sub => {
+                let rhs = self.rhs.as_ref()?;
+                if self.nt == NodeType::Sub && rhs.dest_type_view().is_some() {
+                    Some(Cow::Owned(Type::I32))
+                } else if lhs.dest_type_ref().is_some() {
+                    Some(lhs)
+                } else {
+                    Some(Cow::Owned(Type::arithmetic_type(
+                        &lhs,
+                        rhs.resolve_type_view()?.as_ref(),
+                    )))
+                }
+            }
+            NodeType::Mul
+            | NodeType::Div
+            | NodeType::Mod
+            | NodeType::BitAnd
+            | NodeType::BitXor
+            | NodeType::BitOr => Some(Cow::Owned(Type::arithmetic_type(
+                &lhs,
+                self.rhs.as_ref()?.resolve_type_view()?.as_ref(),
+            ))),
+            NodeType::BitNot | NodeType::BitLeft | NodeType::BitRight => {
+                Some(Cow::Owned(lhs.promoted()))
+            }
+            _ => None,
+        }
+    }
+
     pub fn new_with_num(token: Option<Token>, value: usize) -> Self {
         Self {
             token,
@@ -420,39 +483,21 @@ impl Node {
                     .map_or(Cow::Owned(Type::I32), Cow::Borrowed),
             ),
             NodeType::Sequence => self.children.last().and_then(Node::resolve_type_view),
-            NodeType::Add | NodeType::Sub => {
-                let ty = self.lhs.as_ref().unwrap().resolve_type_view();
-                if matches!(self.nt, NodeType::Sub)
-                    && self.rhs.as_ref().unwrap().dest_type_view().is_some()
-                {
-                    return Some(Cow::Owned(Type::I32));
-                }
-                if ty.as_ref().is_some_and(|ty| ty.dest_type_ref().is_some()) {
-                    ty
-                } else {
-                    Some(Cow::Owned(Type::arithmetic_type(
-                        &ty.unwrap(),
-                        &self.rhs.as_ref().unwrap().resolve_type_view().unwrap(),
-                    )))
-                }
-            }
-            NodeType::Mul
+            NodeType::Add
+            | NodeType::Sub
+            | NodeType::Mul
             | NodeType::Div
             | NodeType::Mod
             | NodeType::BitAnd
             | NodeType::BitXor
-            | NodeType::BitOr => Some(Cow::Owned(Type::arithmetic_type(
-                &self.lhs.as_ref().unwrap().resolve_type_view().unwrap(),
-                &self.rhs.as_ref().unwrap().resolve_type_view().unwrap(),
-            ))),
-            NodeType::BitNot | NodeType::BitLeft | NodeType::BitRight => Some(Cow::Owned(
-                self.lhs
-                    .as_ref()
-                    .unwrap()
-                    .resolve_type_view()
-                    .unwrap()
-                    .promoted(),
-            )),
+            | NodeType::BitOr
+            | NodeType::BitNot
+            | NodeType::BitLeft
+            | NodeType::BitRight => self
+                .cty
+                .as_ref()
+                .map(Cow::Borrowed)
+                .or_else(|| self.infer_arithmetic_type_view()),
             NodeType::Prefetch(..)
             | NodeType::StackAlloc
             | NodeType::BitScan { .. }
@@ -637,6 +682,39 @@ mod tests {
             cty: Some(ty),
             ..Node::default()
         }
+    }
+
+    #[test]
+    fn arithmetic_types_are_stored_and_refreshed_after_operand_changes() {
+        let mut sum = Node::new_with_op(
+            None,
+            NodeType::Add,
+            object(Type::I32),
+            object(Type::integer(64, false)),
+        );
+        assert_eq!(sum.resolve_type(), Some(Type::integer(64, false)));
+        assert!(matches!(sum.resolve_type_view(), Some(Cow::Borrowed(_))));
+        sum.rhs.as_mut().unwrap().cty = Some(Type::Float(64));
+        sum.refresh_arithmetic_type();
+        assert_eq!(sum.resolve_type(), Some(Type::Float(64)));
+
+        let shift = Node::new_with_op(
+            None,
+            NodeType::BitLeft,
+            object(Type::I8),
+            object(Type::integer(64, false)),
+        );
+        assert_eq!(shift.resolve_type(), Some(Type::I32));
+        let inverse = Node::new_with_op_and_lhs(None, NodeType::BitNot, shift);
+        assert_eq!(inverse.resolve_type(), Some(Type::I32));
+
+        let direct = Node {
+            nt: NodeType::Mul,
+            lhs: Some(Box::new(sum)),
+            rhs: Some(Box::new(inverse)),
+            ..Node::default()
+        };
+        assert_eq!(direct.resolve_type(), Some(Type::Float(64)));
     }
 
     #[test]

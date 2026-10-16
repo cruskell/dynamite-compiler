@@ -299,48 +299,73 @@ impl AstBuilderImpl<'_> {
         });
     }
     pub(super) fn lower_variable_arithmetic(node: &mut Node) {
-        walk_mut(node, &mut |node| {
-            if !matches!(node.nt, NodeType::Add | NodeType::Sub) {
-                return;
-            }
-            let Some(element) = node.lhs.as_ref().and_then(|lhs| lhs.dest_type()) else {
-                return;
-            };
-            if !element.is_variable_array() {
-                return;
-            }
-            let original = std::mem::take(node);
-            let result_type = match original.resolve_type().unwrap() {
-                Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
-                ty => ty,
-            };
-            let token = original.token.clone();
-            let lhs = *original.lhs.unwrap();
-            let rhs = *original.rhs.unwrap();
-            let bytes = Type::Ptr(Rc::new(Type::I8));
-            *node = if original.nt == NodeType::Sub && rhs.dest_type().is_some() {
-                let difference = binary(
-                    NodeType::Sub,
-                    cast(lhs, Type::integer(64, true)),
-                    cast(rhs, Type::integer(64, true)),
-                );
-                cast(
-                    binary(
-                        NodeType::Div,
-                        difference,
-                        cast(Self::runtime_size(&element), Type::integer(64, true)),
-                    ),
-                    Type::integer(64, true),
-                )
-            } else {
-                let scaled = binary(
-                    NodeType::Mul,
-                    cast(rhs, Type::integer(64, true)),
-                    Self::runtime_size(&element),
-                );
-                cast(binary(original.nt, cast(lhs, bytes), scaled), result_type)
-            };
-            node.token = token;
-        });
+        Self::lower_variable_arithmetic_types(node);
+    }
+
+    // Report type changes so only ancestors of rewritten expressions need refreshing.
+    fn lower_variable_arithmetic_types(node: &mut Node) -> bool {
+        let mut changed = false;
+        for child in [
+            &mut node.lhs,
+            &mut node.rhs,
+            &mut node.cond,
+            &mut node.then,
+            &mut node.els,
+            &mut node.ini,
+            &mut node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            changed |= Self::lower_variable_arithmetic_types(child);
+        }
+        for child in node.children.iter_mut().chain(&mut node.args) {
+            changed |= Self::lower_variable_arithmetic_types(child);
+        }
+        if changed {
+            node.refresh_arithmetic_type();
+        }
+        if !matches!(node.nt, NodeType::Add | NodeType::Sub) {
+            return changed;
+        }
+        let Some(element) = node.lhs.as_ref().and_then(|lhs| lhs.dest_type()) else {
+            return changed;
+        };
+        if !element.is_variable_array() {
+            return changed;
+        }
+        let original = std::mem::take(node);
+        let result_type = match original.resolve_type().unwrap() {
+            Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
+            ty => ty,
+        };
+        let token = original.token.clone();
+        let lhs = *original.lhs.unwrap();
+        let rhs = *original.rhs.unwrap();
+        let bytes = Type::Ptr(Rc::new(Type::I8));
+        *node = if original.nt == NodeType::Sub && rhs.dest_type().is_some() {
+            let difference = binary(
+                NodeType::Sub,
+                cast(lhs, Type::integer(64, true)),
+                cast(rhs, Type::integer(64, true)),
+            );
+            cast(
+                binary(
+                    NodeType::Div,
+                    difference,
+                    cast(Self::runtime_size(&element), Type::integer(64, true)),
+                ),
+                Type::integer(64, true),
+            )
+        } else {
+            let scaled = binary(
+                NodeType::Mul,
+                cast(rhs, Type::integer(64, true)),
+                Self::runtime_size(&element),
+            );
+            cast(binary(original.nt, cast(lhs, bytes), scaled), result_type)
+        };
+        node.token = token;
+        true
     }
 }
