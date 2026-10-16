@@ -705,7 +705,14 @@ impl Preprocessor {
                     }
                     header.push(value);
                 }
-                let header = self.expand(header, file, depth + 1)?;
+                let header = if header
+                    .first()
+                    .is_some_and(|t| t.is("<") || t.text.starts_with('"'))
+                {
+                    header
+                } else {
+                    self.expand(header, file, depth + 1)?
+                };
                 let text = header.iter().map(|t| t.text.as_str()).collect::<String>();
                 let quoted = text.starts_with('"');
                 let value = if quoted {
@@ -1868,5 +1875,15 @@ mod tests {
             };
             assert_eq!(tokens(&output), expected, "{code}");
         }
+    }
+
+    #[test]
+    fn header_queries_preserve_literal_header_names() {
+        let directory = super::super::IncludeDirectory::new().unwrap();
+        fs::create_dir(directory.0.join("linux")).unwrap();
+        fs::write(directory.0.join("linux/value.h"), "").unwrap();
+        let mut pp = Preprocessor::new(vec![directory.0.clone()], vec![]);
+        pp.define("linux 1").unwrap();
+        pp.process("#if !defined(__has_include) || !__has_include(<linux/value.h>)\n#error literal header expanded\n#endif\n#define HEADER \"linux/value.h\"\n#if !__has_include(HEADER)\n#error header macro not expanded\n#endif\n",&directory.0.join("main.c")).unwrap();
     }
 }
