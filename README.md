@@ -117,8 +117,20 @@ overlaps; they must not be added to or compared directly with build wall time.
 | Clang IR-to-object invocation | 9.74 | 34.36 |
 
 Clang's C trace combines preprocessing/tokenization/parsing/semantics/IR
-construction into Frontend, rather than matching Dynamite's inner timers.
-Full trace totals, CPU/RSS data, link/dependency times, exact flags and repeated
+construction into Frontend, rather than matching Dynamite's inner timers. Its
+Frontend totals are 13.24/106.08 worker seconds for Redis/Git. Dynamite's enclosing
+frontend_total is 18.12/131.84, including the preprocessing subprocess and explicit
+AST/token teardown; those timer boundaries differ from Clang's Frontend.
+
+The common Clang backend's internal timer excludes driver startup and IR input
+parsing. These comparable trace/link totals are also worker seconds:
+
+| Phase | Redis Dynamite | Redis Clang | Git Dynamite | Git Clang |
+| --- | ---: | ---: | ---: | ---: |
+| Clang internal Backend | 4.04 | 2.88 | 11.25 | 5.96 |
+| Link invocations | 0.40 | 0.37 | 3.19 | 3.24 |
+
+Full trace totals, CPU/RSS data, dependency times, exact flags and repeated
 samples are in the [measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16.json).
 Capability profiles may select different code paths, so four additional serial
 comparisons use identical preprocessed inputs. These show the frontend core is
