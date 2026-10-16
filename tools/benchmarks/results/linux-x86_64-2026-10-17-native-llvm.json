@@ -1,0 +1,504 @@
+{
+  "date": "2026-10-17 Asia/Tokyo",
+  "utc_started": "2026-10-16T15:59:46.709990+00:00",
+  "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+  "cpu": "Intel Core i5-5575R, four logical CPUs",
+  "clang_version": "Ubuntu clang version 15.0.7",
+  "dynamite_commit": "de9de2422dc03c81267d4bbc2518409c4e8c955d",
+  "dynamite_measured_source_commit": "0455cd1547f89e1c3bc4f13f7441395f31374c3f",
+  "dynamite_binary_sha256": "315d3196a575f8f09e92b7b252cfa93222f715fc533819e18164c5baccbb3056",
+  "clang_binary_sha256": "22f8651e4eba296325daed391a432b11c3db82d8166da127ccb43b4f6f229e18",
+  "conditions": {
+    "rust": "1.86.0",
+    "dynamite_profile": "release, opt-level 3, debuginfo 1",
+    "dynamite_preprocessor": "native",
+    "dynamite_backend": "external llc/opt/LLD 15; DYNAMITE_CLANG=/nonexistent/clang",
+    "CFLAGS": "-O0 -g0 -std=gnu99",
+    "make_jobs": 4,
+    "runs_per_compiler": 2,
+    "order_per_project": [
+      "dynamite",
+      "clang",
+      "clang",
+      "dynamite"
+    ],
+    "compiler_cache": false,
+    "filesystem_cache_cleared": false,
+    "clang_time_traces": false,
+    "sources_modified": false,
+    "comparison_scope": "Complete application toolchains; predefined capability macros can select different source paths."
+  },
+  "sources": {
+    "redis": {
+      "commit": "498ecd0d6d007db11ddb3aea9428552598a78622",
+      "tracked_status": ""
+    },
+    "git": {
+      "commit": "a018953688f1b10bddf91bff8747068f5f4746a4",
+      "tracked_status": ""
+    }
+  },
+  "builds": [
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 1,
+      "seconds": 10.974155203439295,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "successful_C_compilations_excluding_probes": 184,
+      "feature_probe_returncodes": [
+        1,
+        1
+      ]
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 1,
+      "seconds": 14.01741822808981,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "successful_C_compilations_excluding_probes": 184,
+      "feature_probe_returncodes": [
+        0,
+        0
+      ]
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 2,
+      "seconds": 14.006398205645382,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "successful_C_compilations_excluding_probes": 184,
+      "feature_probe_returncodes": [
+        0,
+        0
+      ]
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 2,
+      "seconds": 10.908351027406752,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "successful_C_compilations_excluding_probes": 184,
+      "feature_probe_returncodes": [
+        1,
+        1
+      ]
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 1,
+      "seconds": 38.66010099556297,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "successful_C_compilations_excluding_probes": 568,
+      "feature_probe_returncodes": []
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 1,
+      "seconds": 40.863485862500966,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "successful_C_compilations_excluding_probes": 568,
+      "feature_probe_returncodes": []
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 2,
+      "seconds": 40.80011975951493,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "successful_C_compilations_excluding_probes": 568,
+      "feature_probe_returncodes": []
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 2,
+      "seconds": 39.14042227528989,
+      "returncode": 0,
+      "tracked_source_changes": "",
+      "command": [
+        "make",
+        "-j4",
+        "CC=<benchmark-cc-wrapper>",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "successful_C_compilations_excluding_probes": 568,
+      "feature_probe_returncodes": []
+    }
+  ],
+  "summary": {
+    "redis": {
+      "dynamite_median_seconds": 10.941253115423024,
+      "clang_median_seconds": 14.011908216867596,
+      "elapsed_reduction_percent": 21.91461044362326,
+      "exact_compile_arguments_match": false,
+      "compile_arguments_match_after_last_std_and_warning_normalization": true
+    },
+    "git": {
+      "dynamite_median_seconds": 38.90026163542643,
+      "clang_median_seconds": 40.83180281100795,
+      "elapsed_reduction_percent": 4.730482228574995,
+      "exact_compile_arguments_match": true,
+      "compile_arguments_match_after_last_std_and_warning_normalization": true
+    }
+  },
+  "runtime_smokes": [
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 2,
+      "passed": true
+    }
+  ],
+  "redis_probe_note": "Two foo.c C11 atomic feature probes fail with Dynamite and succeed with Clang. Redis consequently adds -std=c99 for Dynamite versus -Wno-c11-extensions -std=gnu11 for Clang. Common later -std=gnu99 overrides both; -D__STDC_NO_ATOMICS__=1 disables C11 atomics in application builds. Excluding probes, both compile 184 C inputs.",
+  "expression_type_optimization": {
+    "base_commit": "2b6dee591d32773747c80a0396ce3bbd6e465ad1",
+    "head_commit": "0455cd1547f89e1c3bc4f13f7441395f31374c3f",
+    "pull_request": "https://github.com/cruskell/dynamite-compiler/pull/201",
+    "conditions": {
+      "Rust": "1.86.0",
+      "platform": "Linux x86_64 GNU",
+      "compiler_profile": "release, opt-level 3, debuginfo 1",
+      "frontend_harness_flags": [
+        "--edition=2024",
+        "-C opt-level=3",
+        "-C debuginfo=1",
+        "-C codegen-units=16"
+      ],
+      "preprocessing": "native",
+      "backend": "external llc/LLD 15",
+      "Clang_in_Dynamite": "disabled for both whole-build variants",
+      "CFLAGS": "-O0 -g0 -std=gnu99",
+      "make_jobs": 4,
+      "whole_build_runs_per_variant": 2,
+      "whole_build_order": "baseline/candidate, then candidate/baseline",
+      "Clang_reference": "not rerun"
+    },
+    "binary_sha256": {
+      "baseline": "bad64dc7b675ed69dd95cd1f4ad2ea5f7c62474e41a09e5af10184972c7cb7b8",
+      "candidate": "315d3196a575f8f09e92b7b252cfa93222f715fc533819e18164c5baccbb3056"
+    },
+    "complexity_scope": "Constructor-built scalar arithmetic chains avoid repeated subtree type walks. This is not a linear-time claim for all parsing, type queries, or backend output construction.",
+    "whole_builds": {
+      "redis": {
+        "effective_compile_commands_match": true,
+        "elapsed_change_percent": -1.0846967819223563,
+        "baseline": {
+          "seconds": [
+            11.126253232359886,
+            10.922087056562304
+          ],
+          "median_seconds": 11.024170144461095,
+          "successful_C_compilations": [
+            184,
+            184
+          ]
+        },
+        "dynamite": {
+          "seconds": [
+            10.882283792831004,
+            10.926898858509958
+          ],
+          "median_seconds": 10.90459132567048,
+          "successful_C_compilations": [
+            184,
+            184
+          ]
+        }
+      },
+      "git": {
+        "effective_compile_commands_match": true,
+        "elapsed_change_percent": 0.04791741155210083,
+        "baseline": {
+          "seconds": [
+            38.64505375362933,
+            38.57557153701782
+          ],
+          "median_seconds": 38.610312645323575,
+          "successful_C_compilations": [
+            568,
+            568
+          ]
+        },
+        "dynamite": {
+          "seconds": [
+            38.53014957718551,
+            38.72747783828527
+          ],
+          "median_seconds": 38.62881370773539,
+          "successful_C_compilations": [
+            568,
+            568
+          ]
+        }
+      }
+    },
+    "scalar_addition_parse_seconds": {
+      "64": {
+        "samples": {
+          "baseline": [
+            0.0012189993999999998,
+            0.0012240794,
+            0.0012164338,
+            0.0011618674
+          ],
+          "candidate": [
+            0.0002402218,
+            0.00024122899999999998,
+            0.0002439004,
+            0.0002448322
+          ]
+        },
+        "medians": {
+          "baseline": 0.0012177166,
+          "candidate": 0.00024256469999999999
+        }
+      },
+      "128": {
+        "samples": {
+          "baseline": [
+            0.004255228,
+            0.0041626382,
+            0.004163641399999999,
+            0.005039241000000001
+          ],
+          "candidate": [
+            0.0003821766,
+            0.00038083560000000004,
+            0.00039978339999999994,
+            0.0005154476
+          ]
+        },
+        "medians": {
+          "baseline": 0.0042094346999999996,
+          "candidate": 0.00039098
+        }
+      },
+      "256": {
+        "samples": {
+          "baseline": [
+            0.016171184999999998,
+            0.0168665788,
+            0.0163245464,
+            0.0164205688
+          ],
+          "candidate": [
+            0.0006975796,
+            0.0006917274,
+            0.000739583,
+            0.0006671025999999999
+          ]
+        },
+        "medians": {
+          "baseline": 0.0163725576,
+          "candidate": 0.0006946535
+        }
+      },
+      "512": {
+        "samples": {
+          "baseline": [
+            0.068771036,
+            0.0687378644,
+            0.0690625896,
+            0.0678549236
+          ],
+          "candidate": [
+            0.001330012,
+            0.0015135656,
+            0.0013167542,
+            0.0013414026
+          ]
+        },
+        "medians": {
+          "baseline": 0.0687544502,
+          "candidate": 0.0013357072999999999
+        }
+      }
+    },
+    "scaling_method": "Already-preprocessed scalar addition chains; four alternating samples per variant, each averaging five frontend iterations. Parsing timer includes validation/lowering. Harnesses use matching Rust flags in conditions."
+  }
+}

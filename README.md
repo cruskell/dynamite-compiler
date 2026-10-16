@@ -115,8 +115,9 @@ for every Clang/GNU preprocessing extension; cross targets, sysroots, macro
 dumps, and date/time predefined macros are outside its current scope.
 `DYNAMITE_PREPROCESSOR=clang` selects Clang for all preprocessing, including
 standalone dependency scans. Ordinary C compilation continues to use Clang
-preprocessing by default: the native path builds Redis and Git, but full native
-preprocessing currently regresses Git's total build time.
+preprocessing by default. The opt-in native preprocessing and LLVM tools backend
+build Redis and Git; see the [latest build measurements](#measured-linux-build-times)
+for their combined performance.
 
 This change removes Clang from the selected preprocessing stages. LLVM
 IR-to-object lowering, assembly, and linking still use external tools; libc/libm/pthread dependencies of compiled programs are unchanged.
@@ -173,6 +174,76 @@ teardown, IR writes, Clang lowering and linking. See
 comparisons and interpretation of nested stage and Clang trace totals.
 
 ## Measured Linux build times
+
+### Native preprocessing and LLVM tools backend (2026-10-17)
+
+At commit `de9de24` (including [#201](https://github.com/cruskell/dynamite-compiler/pull/201)),
+Dynamite and Clang 15.0.7 each built clean upstream Redis 8.10.2 and Git v2.56.0
+twice, in alternating order. These are **whole-build wall times**, including
+dependencies and linking, on Linux x86_64 (Intel i5-5575R, Rust 1.86 release).
+Both used GNU99, `-O0 -g0`, four make workers and the same benchmark wrapper;
+Clang time traces were disabled. Filesystem caches were not cleared and no
+compiler cache was used.
+
+| Clean build | Dynamite median | Clang median | Dynamite elapsed reduction |
+| --- | ---: | ---: | ---: |
+| Redis, 184 C compilations | 10.94 s | 14.01 s | 21.9% |
+| Git, 568 C compilations | 38.90 s | 40.83 s | 4.7% |
+
+Dynamite used `DYNAMITE_PREPROCESSOR=native` and `DYNAMITE_BACKEND=llvm`, with
+external LLVM 15 `llc`/`opt`/LLD tools and Clang disabled in its driver. This is
+an opt-in configuration; the default driver still uses Clang. Clang's reference
+build used its complete C toolchain. Compiler capability macros can select
+different source paths, so this compares application builds rather than
+identical preprocessed inputs. It does not measure generated-program performance.
+
+Sources were unchanged. Redis used libc, with TLS/Vector Sets/C11 atomics
+disabled and Lua also at `-O0`; external/test modules were excluded. Git disabled
+Rust/PCH and optional scripting/localization frontends. Redis's two C11 feature
+probes succeeded only with Clang, adding different earlier standard/warning
+flags; the common final `-std=gnu99` overrides those standard flags. Excluding
+these probes, both compilers built the same 184 Redis C inputs. Git's 568 C
+compile commands matched exactly. All eight builds passed runtime smoke checks:
+Redis commands, Lua and RDB persistence checks; Git commits, branches, diffs,
+`gc` and `fsck`.
+
+These two-run samples are a snapshot, not a guaranteed speedup. Raw elapsed
+samples, source commits, compiler hashes, build commands and validation are in
+[the measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-17-native-llvm.json).
+Reproduce with [the benchmark runner](tools/benchmarks/README.md), setting the
+native preprocessor and LLVM tool paths and passing `--no-trace --runs 2 --jobs 4`.
+
+### Scalar expression type reuse (#201)
+
+A separate alternating before/after run compared `2b6dee5` with the measured
+[#201](https://github.com/cruskell/dynamite-compiler/pull/201) head `0455cd1`, using
+the same native preprocessing/LLVM tools configuration. Redis's median changed
+from 11.02 s to 10.90 s (-1.1%); Git's changed from 38.61 s to 38.63 s (+0.05%,
+essentially unchanged). Clang was not rerun in that cohort; the fresh Clang
+comparison above is a separate measurement.
+
+Retaining scalar arithmetic result types avoids repeated subtree type queries.
+For already-preprocessed scalar addition chains, parsing (including validation
+and lowering) changed as follows. Each median uses four alternating samples per
+variant, with five frontend iterations per sample and matching optimized harnesses.
+
+| Addition-chain terms | Before parsing | After parsing |
+| --- | ---: | ---: |
+| 64 | 1.218 ms | 0.243 ms |
+| 128 | 4.209 ms | 0.391 ms |
+| 256 | 16.373 ms | 0.695 ms |
+| 512 | 68.754 ms | 1.336 ms |
+
+This removes quadratic repeated type resolution on these scalar arithmetic
+chains; other AST traversals, type queries and backend output construction can
+still be quadratic. The synthetic result does not imply the same whole-build
+gain. Both cohorts' raw samples are in the snapshot linked above.
+
+### Historical Clang preprocessing/backend measurements (2026-10-16)
+
+The following results used earlier compiler revisions and a Clang-backed
+pipeline. They are retained as historical measurements and should not be mixed
+with the native preprocessing/LLVM tools results above.
 
 Before declaration pruning, on 2026-10-16, clean upstream Redis 8.10.2 and Git v2.56.0 builds were measured
 with the release compiler, Clang 15.0.7, GNU99, -O0/-g0 and four make workers on
