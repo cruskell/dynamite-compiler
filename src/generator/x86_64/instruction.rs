@@ -32,6 +32,7 @@ pub enum InstOperator {
 
     PUSH,
     POP,
+    REPSTOSB,
     BSF,
     BSR,
     CMOVE,
@@ -107,6 +108,7 @@ impl InstOperator {
             SETP => "setp",
             PUSH => "push",
             POP => "pop",
+            REPSTOSB => "rep stosb",
             BSF => "bsf",
             BSR => "bsr",
             CMOVE => "cmove",

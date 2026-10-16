@@ -1243,6 +1243,10 @@ conversion does not apply to variadic arguments.
 Brace initialization clears record padding and unused bit-field storage before
 initializing members. This provides deterministic zero-filled storage for `{0}`
 and empty initializers, including nested records, arrays, and compound literals.
+Fixed-size aggregates without volatile subobjects use one zero-fill operation
+instead of expanding implicit initialization into a store for every element.
+LLVM output uses `llvm.memset`; native output uses inline zeroing instructions.
+Aggregates containing volatile subobjects retain member-wise initialization.
 Explicit member writes retain their normal types and volatile access widths.
 C does not generally require padding bytes to have a specified value after
 subsequent member assignments or record copies.

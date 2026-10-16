@@ -1295,6 +1295,33 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
 
+            NodeType::ZeroFill { bytes } => {
+                let mut lines = vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X11),
+                    Assembly::inst2(MOV, X9, 0),
+                ];
+                if bytes >= 8 {
+                    lines.extend([
+                        Assembly::inst2(MOV, X10, bytes / 8),
+                        // Numeric labels stay local to this closed instruction sequence.
+                        "901:".into(),
+                        Assembly::inst2(STR, X9, Ptr(X11, 8)),
+                        Assembly::inst3(ADD, X11, X11, 8),
+                        Assembly::inst3(SUB, X10, X10, 1),
+                        Assembly::inst2(CMP, X10, 0),
+                        Assembly::inst1(JNE, "901b"),
+                    ]);
+                }
+                for _ in 0..bytes % 8 {
+                    lines.extend([
+                        Assembly::inst2(STR, X9, Ptr(X11, 1)),
+                        Assembly::inst3(ADD, X11, X11, 1),
+                    ]);
+                }
+                lines.push(Self::push(0));
+                return lines.into();
+            }
             NodeType::BitScan { bits, leading } => {
                 let register = if bits == 32 { W8 } else { X8 };
                 let mut lines = vec![

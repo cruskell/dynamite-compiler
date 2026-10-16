@@ -7050,6 +7050,74 @@ fn memory_clobber_inline_assembly_emits_llvm_barriers() {
     assert!(!generated.contains("call {  } asm"), "{generated}");
 }
 
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn aggregate_zero_fill_preserves_storage_and_explicit_initializers(
+    (output_option, optimization): (&str, &str),
+) {
+    let code = r#"
+int check(unsigned long*, unsigned long);
+int calls;
+int next(void){return ++calls;}
+struct __attribute__((packed)) Packed {char tag; double value; char tail[3];};
+union Choice {unsigned long words[3];char bytes[25];};
+int main(void){
+    unsigned long values[4099]={[4097]=next(),[2]=next()};
+    if(calls!=2 || values[4097]!=1 || values[2]!=2)return 1;
+    values[4097]=0;values[2]=0;
+    if(check(values,4099))return 2;
+    for(int pass=0;pass<2;pass++){
+        struct Packed p={0};
+        union Choice u={0};
+        unsigned char *a=(unsigned char*)&p,*b=(unsigned char*)&u;
+        for(unsigned long i=0;i<sizeof(p);i++){if(a[i])return 3;a[i]=255;}
+        for(unsigned long i=0;i<sizeof(u);i++){if(b[i])return 4;b[i]=255;}
+    }
+    double numbers[2][3]={{0}};
+    volatile int *pointers[3]={0};
+    return numbers[1][2]!=0.0 || pointers[2]!=0;
+}
+"#;
+    let output = compile_and_run_with_c_flags(
+        code,
+        output_option,
+        Some(
+            "int check(unsigned long *p,unsigned long n){for(unsigned long i=0;i<n;i++)if(p[i])return 1;return 0;}",
+        ),
+        &[optimization],
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test]
+fn aggregate_zero_fill_keeps_llvm_output_compact_and_volatile_stores_typed() {
+    let generated = dynamite_compiler::generate(
+        "void consume(unsigned long*);void fill(void){unsigned long a[16384]={0};consume(a);}",
+        "llvm",
+        false,
+    );
+    assert_eq!(
+        generated.matches("call void @llvm.memset").count(),
+        1,
+        "{generated}"
+    );
+    assert!(generated.contains("i64 131072, i1 false"), "{generated}");
+    assert!(
+        generated.len() < 5000,
+        "large initializer expanded to {} bytes",
+        generated.len()
+    );
+    let generated = dynamite_compiler::generate(
+        "struct V{volatile int a[2];};int main(){volatile int a[3]={0};struct V v={0};return a[2]+v.a[1];}",
+        "llvm",
+        false,
+    );
+    assert!(!generated.contains("call void @llvm.memset"), "{generated}");
+    assert!(
+        generated.matches("store volatile i32").count() >= 5,
+        "{generated}"
+    );
+}
+
 #[test_matrix([
     "struct Shape { char tag; long value; };",
     "struct Shape { void *p[7]; unsigned flag:1; };",
