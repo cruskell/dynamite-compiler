@@ -1,5 +1,6 @@
 use super::{Arch, Os};
 use crate::ctype::Type;
+use std::borrow::Cow;
 
 #[derive(Clone, Debug)]
 pub struct Part {
@@ -42,7 +43,7 @@ fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {
             .all(|index| floating_members(child, offset + index * child.size_of(), members)),
         Type::Struct(st) if !st.has_bit_fields() && st.definition().borrow().is_union => {
             let mut largest: Vec<Part> = vec![];
-            for member in st.members() {
+            for member in &st.definition().borrow().members {
                 let mut candidate = vec![];
                 if !floating_members(&member.ty, offset, &mut candidate) || candidate.is_empty() {
                     return false;
@@ -58,7 +59,9 @@ fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {
             true
         }
         Type::Struct(st) if !st.has_bit_fields() && !st.definition().borrow().is_union => st
-            .members()
+            .definition()
+            .borrow()
+            .members
             .iter()
             .all(|member| floating_members(&member.ty, offset + member.offset, members)),
         _ => false,
@@ -77,11 +80,11 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
                 }
             }
         }
-        Type::Struct(st) if st.members().is_empty() && st.has_bit_fields() => {
+        Type::Struct(st) if st.definition().borrow().members.is_empty() && st.has_bit_fields() => {
             slots.fill(Some(true))
         }
         Type::Struct(st) => {
-            for member in st.members() {
+            for member in &st.definition().borrow().members {
                 if let Some(field) = member.bit_field {
                     let start = (offset + member.offset) * 8 + usize::from(field.shift);
                     for slot in slots
@@ -114,7 +117,7 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
 }
 fn has_unaligned_member(ty: &Type, offset: usize) -> bool {
     match ty.unqualified() {
-        Type::Struct(record) => record.members().iter().any(|member| {
+        Type::Struct(record) => record.definition().borrow().members.iter().any(|member| {
             let offset = offset + member.offset;
             member.bit_field.is_none()
                 && (offset % member.ty.align_of() != 0 || has_unaligned_member(&member.ty, offset))
@@ -225,7 +228,7 @@ pub fn stack_argument_alignment(ty: &Type, arch: &Arch, os: Os, variadic: bool) 
 }
 
 pub fn signature(
-    types: &[Type],
+    types: &[impl std::borrow::Borrow<Type>],
     result: &Type,
     arch: Arch,
     os: Os,
@@ -242,12 +245,15 @@ pub fn signature(
     let mut arguments = vec![];
     let general_limit = if matches!(arch, Arch::X86_64) { 6 } else { 8 };
     for (index, source) in types.iter().enumerate() {
+        let source: &Type = std::borrow::Borrow::borrow(source);
         let effective = match source {
-            Type::Arr(child, _) => Type::Ptr(child.clone()),
-            Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(source.clone())),
-            _ => source.clone(),
+            Type::Arr(child, _) => Cow::Owned(Type::Ptr(child.clone())),
+            Type::Func(..) | Type::VariadicFunc(..) => {
+                Cow::Owned(Type::Ptr(Box::new(source.clone())))
+            }
+            _ => Cow::Borrowed(source),
         };
-        let ty = &effective;
+        let ty = effective.as_ref();
         let aggregate = matches!(ty.unqualified(), Type::Struct(_));
         if aggregate && ty.size_of() == 0 {
             // Empty GNU records have no argument payload or register/stack allocation.

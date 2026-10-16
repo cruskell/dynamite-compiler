@@ -1,4 +1,4 @@
-use std::{collections::HashMap, vec};
+use std::{borrow::Cow, collections::HashMap, vec};
 
 use crate::{
     ast::{Identifier, ProgramAst, reserved_functions},
@@ -273,8 +273,8 @@ impl<'a> IrGenerator<'a> {
         if matches!(node.nt, NodeType::Deref) {
             1
         } else {
-            node.object_type()
-                .unwrap_or_else(|| node.resolve_type().unwrap())
+            node.object_type_view()
+                .unwrap_or_else(|| node.resolve_type_view().unwrap())
                 .align_of()
         }
     }
@@ -609,7 +609,7 @@ impl<'a> IrGenerator<'a> {
         }
     }
     fn aggregate_signature(
-        types: &[Type],
+        types: &[impl std::borrow::Borrow<Type>],
         result: &Type,
         fixed: usize,
         variadic: bool,
@@ -626,7 +626,8 @@ impl<'a> IrGenerator<'a> {
         if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
             for (ty, argument) in types.iter().zip(&mut signature.arguments) {
                 if let Some(offset) = argument.memory {
-                    let parts = abi::aggregate_parts(ty, &Self::target_arch());
+                    let parts =
+                        abi::aggregate_parts(std::borrow::Borrow::borrow(ty), &Self::target_arch());
                     if !parts.is_empty() {
                         // AArch64 lowers direct aggregates using the same coercion
                         // whether they occupy registers or stack slots. LLVM byval
@@ -872,9 +873,9 @@ impl<'a> IrGenerator<'a> {
             .args
             .iter()
             .rev()
-            .map(|arg| arg.resolve_type().unwrap())
+            .map(|arg| arg.resolve_type_view().unwrap())
             .collect::<Vec<_>>();
-        let result = node.resolve_type().unwrap();
+        let result = node.resolve_type_view().unwrap();
         let signature =
             Self::aggregate_signature(&types, &result, node.parameter_types.len(), node.variadic);
         let mut lines = vec![];
@@ -887,7 +888,7 @@ impl<'a> IrGenerator<'a> {
         let mut arguments = vec![];
         for (index, arg) in node.args.iter().rev().enumerate() {
             let argument = &signature.arguments[index];
-            let ty = &types[index];
+            let ty = types[index].as_ref();
             let aggregate = matches!(ty, Type::Struct(_));
             let value = if aggregate {
                 lines.extend(self.gen_addr(arg, options));
@@ -986,12 +987,12 @@ impl<'a> IrGenerator<'a> {
                 ),
             );
         }
-        let return_type = if matches!(result, Type::Struct(_)) {
+        let return_type = if matches!(*result, Type::Struct(_)) {
             Self::aggregate_result_type(&result)
         } else {
             Self::gen_type(&result)
         };
-        let return_abi = if matches!(result, Type::Struct(_)) {
+        let return_abi = if matches!(*result, Type::Struct(_)) {
             return_type.clone()
         } else {
             Self::abi_result_type(&result)
@@ -1033,7 +1034,7 @@ impl<'a> IrGenerator<'a> {
             ));
             format!("%{register}")
         };
-        if matches!(result, Type::Struct(_)) {
+        if matches!(*result, Type::Struct(_)) {
             let slot = result_slot.unwrap();
             if !signature.indirect_result {
                 for (index, part) in signature.result.iter().enumerate() {
@@ -1167,7 +1168,7 @@ impl<'a> IrGenerator<'a> {
                     .enumerate()
                     .map(|(i, arg)| format!(
                         "{} noundef %{}",
-                        Self::abi_parameter_type(&arg.resolve_type().unwrap()),
+                        Self::abi_parameter_type(&arg.resolve_type_view().unwrap()),
                         i
                     ))
                     .chain(variadic.then_some("...".to_string()))
@@ -1184,15 +1185,15 @@ impl<'a> IrGenerator<'a> {
                     format!(
                         "  %{} = alloca {}, align {}",
                         register,
-                        Self::gen_type(&node.resolve_type().unwrap()),
-                        node.resolve_type().unwrap().size_of(),
+                        Self::gen_type(&node.resolve_type_view().unwrap()),
+                        node.resolve_type_view().unwrap().size_of(),
                     ) + "\n"
                         + &format!(
                             "  store {} %{}, ptr %{}, align {}",
-                            Self::gen_type(&node.resolve_type().unwrap()),
+                            Self::gen_type(&node.resolve_type_view().unwrap()),
                             i,
                             register,
-                            node.resolve_type().unwrap().size_of(),
+                            node.resolve_type_view().unwrap().size_of(),
                         )
                 })
                 .collect::<Vec<String>>(),
@@ -1232,23 +1233,27 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn allocate_locals(node: &Node, options: &mut Options, lines: &mut Vec<String>) {
+        let result = if matches!(node.nt, NodeType::LocalVar | NodeType::CallFunc) {
+            node.resolve_type_view()
+        } else {
+            None
+        };
         if matches!(node.nt, NodeType::LocalVar)
-            || (node.nt == NodeType::CallFunc
-                && matches!(node.resolve_type(), Some(Type::Struct(_))))
+            || (node.nt == NodeType::CallFunc && matches!(result.as_deref(), Some(Type::Struct(_))))
         {
             let offset = node.offset.unwrap();
             if !options.register_map.contains_key(&offset) {
                 let register = options.register_from_offset(offset);
-                let ty = node.resolve_type().unwrap();
+                let ty = result.as_deref().unwrap();
                 lines.push(format!(
                     "  %{} = alloca {}, align {}",
                     register,
                     if matches!(ty, Type::Struct(_)) {
                         format!("[{} x i8]", ty.size_of().div_ceil(8) * 8)
                     } else {
-                        Self::gen_type_with_opaque_ptr(&ty)
+                        Self::gen_type_with_opaque_ptr(ty)
                     },
-                    Self::align(&ty).max(node.alignment)
+                    Self::align(ty).max(node.alignment)
                 ));
             }
         }
@@ -1257,11 +1262,11 @@ impl<'a> IrGenerator<'a> {
                 .args
                 .iter()
                 .rev()
-                .map(|arg| arg.resolve_type().unwrap())
+                .map(|arg| arg.resolve_type_view().unwrap())
                 .collect::<Vec<_>>();
             let signature = Self::aggregate_signature(
                 &types,
-                &node.resolve_type().unwrap(),
+                result.as_deref().unwrap(),
                 node.parameter_types.len(),
                 node.variadic,
             );
@@ -1283,8 +1288,8 @@ impl<'a> IrGenerator<'a> {
             node.nt,
             NodeType::LogicalAnd | NodeType::LogicalOr | NodeType::Conditional
         ) {
-            let ty = node.resolve_type().unwrap();
-            if ty != Type::Void {
+            let ty = node.resolve_type_view().unwrap();
+            if *ty != Type::Void {
                 let register = options.new_temporary();
                 options
                     .expression_slots
@@ -1432,7 +1437,7 @@ impl<'a> IrGenerator<'a> {
     fn gen_predicate(&self, node: &Node, options: &mut Options, lines: &mut Vec<String>) -> String {
         lines.extend(self.gen_node(node, options));
         let value = options.register_queue.pop().unwrap();
-        let ty = node.resolve_type().unwrap();
+        let ty = node.resolve_type_view().unwrap();
         let pointer = ty.is_pointer_value();
         let register = options.new_temporary();
         lines.push(format!(
@@ -1451,7 +1456,7 @@ impl<'a> IrGenerator<'a> {
             value,
             if pointer {
                 "null"
-            } else if node.resolve_type().unwrap().float_bits().is_some() {
+            } else if ty.float_bits().is_some() {
                 "0.0"
             } else {
                 "0"
@@ -1524,12 +1529,12 @@ impl<'a> IrGenerator<'a> {
         options: &mut Options,
         lines: &mut Vec<String>,
     ) -> String {
-        let object = node.args[0].dest_type().unwrap();
+        let object = node.args[0].dest_type_view().unwrap();
         let storage = Type::integer((object.size_of() * 8) as u8, false);
         let scalar = Self::gen_type(&storage);
         let value = Self::convert_integer(
             values[1].clone(),
-            &node.args[1].resolve_type().unwrap(),
+            &node.args[1].resolve_type_view().unwrap(),
             &storage,
             options,
             lines,
@@ -1578,12 +1583,12 @@ impl<'a> IrGenerator<'a> {
         options: &mut Options,
         lines: &mut Vec<String>,
     ) -> String {
-        let object = node.args[0].dest_type().unwrap();
+        let object = node.args[0].dest_type_view().unwrap();
         let storage = Type::integer((object.size_of() * 8) as u8, false);
         let scalar = Self::gen_type(&storage);
         let desired = Self::convert_integer(
             values[2].clone(),
-            &node.args[2].resolve_type().unwrap(),
+            &node.args[2].resolve_type_view().unwrap(),
             &storage,
             options,
             lines,
@@ -1651,7 +1656,7 @@ impl<'a> IrGenerator<'a> {
             options.register_queue.push(result);
             return lines;
         }
-        let ty = node.args[0].dest_type().unwrap();
+        let ty = node.args[0].dest_type_view().unwrap();
         if let AtomicOperation::Update(op, return_new) = operation {
             let value = Self::atomic_update(node, op, return_new, &values, options, &mut lines);
             options.register_queue.push(value);
@@ -1716,7 +1721,7 @@ impl<'a> IrGenerator<'a> {
                     index,
                     format!(
                         "{} {value}",
-                        Self::gen_type(&output.resolve_type().unwrap())
+                        Self::gen_type(&output.resolve_type_view().unwrap())
                     ),
                 ));
             }
@@ -1727,7 +1732,7 @@ impl<'a> IrGenerator<'a> {
             let value = options.register_queue.pop().unwrap();
             arguments.push(format!(
                 "{} {value}",
-                Self::gen_type(&input.resolve_type().unwrap())
+                Self::gen_type(&input.resolve_type_view().unwrap())
             ));
         }
         let template = render_inline_assembly(&node.dest.replace('$', "$$"), |index, modifier| {
@@ -1740,7 +1745,7 @@ impl<'a> IrGenerator<'a> {
             crate::generator::asm_register_width(
                 arch,
                 modifier,
-                operand.resolve_type()?.size_of(),
+                operand.resolve_type_view()?.size_of(),
             )?;
             Some(if let Some(modifier) = modifier {
                 format!("${{{index}:{modifier}}}")
@@ -1780,7 +1785,7 @@ impl<'a> IrGenerator<'a> {
         let types = node
             .children
             .iter()
-            .map(|output| Self::gen_type(&output.resolve_type().unwrap()))
+            .map(|output| Self::gen_type(&output.resolve_type_view().unwrap()))
             .collect::<Vec<_>>();
         let result_type = if types.is_empty() {
             "void".to_string()
@@ -1909,7 +1914,7 @@ impl<'a> IrGenerator<'a> {
             NodeType::FloatAbs => {
                 let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
                 let value = options.register_queue.pop().unwrap();
-                let ty = node.resolve_type().unwrap();
+                let ty = node.resolve_type_view().unwrap();
                 let bits = ty.float_bits().unwrap();
                 let float = Self::gen_type(&ty);
                 let raw = options.new_temporary();
@@ -1933,7 +1938,7 @@ impl<'a> IrGenerator<'a> {
                 } else {
                     let value = Self::convert_integer(
                         value,
-                        &operand.resolve_type().unwrap(),
+                        &operand.resolve_type_view().unwrap(),
                         target,
                         options,
                         &mut lines,
@@ -1961,16 +1966,15 @@ impl<'a> IrGenerator<'a> {
                     .collect();
             }
             NodeType::CallFunc => {
-                if matches!(node.resolve_type(), Some(Type::Struct(_)))
-                    || node
-                        .args
-                        .iter()
-                        .any(|arg| matches!(arg.resolve_type(), Some(Type::Struct(_))))
+                if matches!(node.resolve_type_view().as_deref(), Some(Type::Struct(_)))
+                    || node.args.iter().any(|arg| {
+                        matches!(arg.resolve_type_view().as_deref(), Some(Type::Struct(_)))
+                    })
                 {
                     return self.aggregate_call(node, options);
                 }
-                let parameters = node.parameter_types.clone();
-                let result = node.cty.clone().unwrap();
+                let parameters = &node.parameter_types;
+                let result = node.cty.as_ref().unwrap();
                 let variadic = node.variadic;
                 let mut lines = vec![];
                 let callee = if let Some(callee) = &node.lhs {
@@ -1983,20 +1987,15 @@ impl<'a> IrGenerator<'a> {
                 for (i, arg) in node.args.iter().enumerate() {
                     lines.extend(self.gen_node(arg, options));
                     let value = options.register_queue.pop().unwrap();
-                    let source = arg.resolve_type().unwrap();
-                    let source = match source {
-                        Type::Arr(child, _) | Type::Vla(child, _) => Type::Ptr(child),
-                        Type::Func(..) | Type::VariadicFunc(..) => Type::Ptr(Box::new(source)),
-                        _ => source,
-                    };
+                    let source = Type::decay_view(arg.resolve_type_view().unwrap());
                     let ty = parameters
                         .get(node.args.len() - i - 1)
-                        .cloned()
+                        .map(Cow::Borrowed)
                         .unwrap_or_else(|| {
                             if source.integer_info().is_some() {
-                                source.promoted()
+                                Cow::Owned(source.promoted())
                             } else {
-                                source.clone()
+                                Cow::Borrowed(source.as_ref())
                             }
                         });
                     let value = Self::convert_integer(value, &source, &ty, options, &mut lines);
@@ -2015,7 +2014,7 @@ impl<'a> IrGenerator<'a> {
                 } else {
                     String::new()
                 };
-                if result == Type::Void {
+                if *result == Type::Void {
                     lines.push(format!(
                         "  call void{} {}({})",
                         signature,
@@ -2028,7 +2027,7 @@ impl<'a> IrGenerator<'a> {
                 lines.push(format!(
                     "  %{} = call {}{} {}({})",
                     options.new_register(),
-                    Self::abi_result_type(&result),
+                    Self::abi_result_type(result),
                     signature,
                     callee,
                     arguments.join(", ")
@@ -2065,7 +2064,7 @@ impl<'a> IrGenerator<'a> {
                 }
                 let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
                 let value = options.register_queue.pop().unwrap();
-                let source_ty = node.resolve_type().unwrap();
+                let source_ty = node.resolve_type_view().unwrap();
                 let target_ty = options.return_ty.clone();
                 let value =
                     Self::convert_integer(value, &source_ty, &target_ty, options, &mut lines);
@@ -2078,7 +2077,7 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
             NodeType::Num => {
-                let ty = node.resolve_type().unwrap();
+                let ty = node.resolve_type_view().unwrap();
                 options.register_queue.push(if ty.float_bits().is_some() {
                     Self::float_literal(&ty, node.value.unwrap())
                 } else {
@@ -2091,8 +2090,8 @@ impl<'a> IrGenerator<'a> {
                 let value = options.register_queue.pop().unwrap();
                 lines.extend(self.gen_addr(node.lhs.as_ref().unwrap(), options));
                 let address = options.register_queue.pop().unwrap();
-                let ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
-                let source_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+                let ty = node.lhs.as_ref().unwrap().resolve_type_view().unwrap();
+                let source_ty = node.rhs.as_ref().unwrap().resolve_type_view().unwrap();
                 let value = Self::convert_integer(value, &source_ty, &ty, options, &mut lines);
                 lines.push(format!(
                     "  store {}{} {}, ptr {}, align {}",
@@ -2114,9 +2113,9 @@ impl<'a> IrGenerator<'a> {
             }
             NodeType::Deref | NodeType::LocalVar | NodeType::GlobalVar => {
                 let mut lines = self.gen_addr(node, options);
-                let ty = node.resolve_type().unwrap();
+                let ty = node.resolve_type_view().unwrap();
                 if !matches!(
-                    ty,
+                    *ty,
                     Type::Arr(..) | Type::Vla(..) | Type::Func(..) | Type::VariadicFunc(..)
                 ) {
                     let address = options.register_queue.pop().unwrap();
@@ -2136,8 +2135,8 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
             NodeType::Sub
-                if node.lhs.as_ref().unwrap().dest_type().is_some()
-                    && node.rhs.as_ref().unwrap().dest_type().is_some() =>
+                if node.lhs.as_ref().unwrap().dest_type_view().is_some()
+                    && node.rhs.as_ref().unwrap().dest_type_view().is_some() =>
             {
                 let mut lines = self.gen_node(node.rhs.as_ref().unwrap(), options);
                 let rhs = options.register_queue.pop().unwrap();
@@ -2154,7 +2153,12 @@ impl<'a> IrGenerator<'a> {
                     "  %{} = sdiv i64 %{}, {}",
                     count,
                     difference,
-                    node.lhs.as_ref().unwrap().dest_type().unwrap().size_of()
+                    node.lhs
+                        .as_ref()
+                        .unwrap()
+                        .dest_type_view()
+                        .unwrap()
+                        .size_of()
                 ));
                 lines.push(format!(
                     "  %{} = trunc i64 %{} to i32",
@@ -2163,7 +2167,9 @@ impl<'a> IrGenerator<'a> {
                 ));
                 return lines;
             }
-            NodeType::Add | NodeType::Sub if node.lhs.as_ref().unwrap().dest_type().is_some() => {
+            NodeType::Add | NodeType::Sub
+                if node.lhs.as_ref().unwrap().dest_type_view().is_some() =>
+            {
                 let base = node.lhs.as_ref().unwrap();
                 let index = node.rhs.as_ref().unwrap();
                 let mut lines = self.gen_node(index, options);
@@ -2171,7 +2177,7 @@ impl<'a> IrGenerator<'a> {
                 // GEP sign-extends its indices, so preserve C signedness explicitly.
                 value = Self::convert_integer(
                     value,
-                    &index.resolve_type().unwrap(),
+                    &index.resolve_type_view().unwrap(),
                     &Type::integer(64, true),
                     options,
                     &mut lines,
@@ -2187,7 +2193,7 @@ impl<'a> IrGenerator<'a> {
                 lines.push(format!(
                     "  %{} = getelementptr inbounds {}, ptr {}, {} {}",
                     options.new_register(),
-                    Self::gen_type_with_opaque_ptr(&base.dest_type().unwrap()),
+                    Self::gen_type_with_opaque_ptr(&base.dest_type_view().unwrap()),
                     address,
                     index_ty,
                     value
@@ -2200,15 +2206,15 @@ impl<'a> IrGenerator<'a> {
                 let value = options.register_queue.pop().unwrap();
                 let value = Self::convert_integer(
                     value,
-                    &operand.resolve_type().unwrap(),
-                    &node.resolve_type().unwrap(),
+                    &operand.resolve_type_view().unwrap(),
+                    &node.resolve_type_view().unwrap(),
                     options,
                     &mut lines,
                 );
                 lines.push(format!(
                     "  %{} = xor {} {}, -1",
                     options.new_register(),
-                    Self::gen_type(&node.resolve_type().unwrap()),
+                    Self::gen_type(&node.resolve_type_view().unwrap()),
                     value
                 ));
                 return lines;
@@ -2220,12 +2226,12 @@ impl<'a> IrGenerator<'a> {
                     .cond
                     .as_ref()
                     .unwrap()
-                    .resolve_type()
+                    .resolve_type_view()
                     .unwrap()
                     .promoted();
                 let value = Self::convert_integer(
                     value,
-                    &node.cond.as_ref().unwrap().resolve_type().unwrap(),
+                    &node.cond.as_ref().unwrap().resolve_type_view().unwrap(),
                     &selector_ty,
                     options,
                     &mut lines,
@@ -2403,7 +2409,7 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
             NodeType::Conditional => {
-                if node.resolve_type() == Some(Type::Void) {
+                if node.resolve_type_view().as_deref() == Some(&Type::Void) {
                     let mut lines = vec![];
                     let predicate =
                         self.gen_predicate(node.cond.as_ref().unwrap(), options, &mut lines);
@@ -2429,7 +2435,7 @@ impl<'a> IrGenerator<'a> {
                 }
 
                 let mut lines = vec![];
-                let ty = node.resolve_type().unwrap();
+                let ty = node.resolve_type_view().unwrap();
                 let slot = options.expression_slots[&node.token.as_ref().unwrap().pos];
                 let predicate =
                     self.gen_predicate(node.cond.as_ref().unwrap(), options, &mut lines);
@@ -2449,7 +2455,7 @@ impl<'a> IrGenerator<'a> {
                     let value = options.register_queue.pop().unwrap();
                     let value = Self::convert_integer(
                         value,
-                        &branch.resolve_type().unwrap(),
+                        &branch.resolve_type_view().unwrap(),
                         &ty,
                         options,
                         &mut lines,
@@ -2477,7 +2483,7 @@ impl<'a> IrGenerator<'a> {
                 let operand = node.lhs.as_ref().unwrap();
                 let mut lines = self.gen_addr(operand, options);
                 let address = options.register_queue.pop().unwrap();
-                let ty = operand.resolve_type().unwrap();
+                let ty = operand.resolve_type_view().unwrap();
                 let old = options.new_temporary();
                 lines.push(format!(
                     "  %{} = load {}{}, ptr {}, align {}",
@@ -2492,7 +2498,7 @@ impl<'a> IrGenerator<'a> {
                     Self::access_alignment(operand)
                 ));
                 let new = options.new_temporary();
-                if let Type::Ptr(child) = &ty {
+                if let Type::Ptr(child) = ty.as_ref() {
                     lines.push(format!(
                         "  %{} = getelementptr inbounds {}, ptr %{}, i32 {}",
                         new,
@@ -2528,7 +2534,7 @@ impl<'a> IrGenerator<'a> {
                         }
                     ));
                 }
-                let new = if ty == Type::Bool {
+                let new = if *ty == Type::Bool {
                     let predicate = options.new_temporary();
                     lines.push(format!("  %{predicate} = icmp ne i8 %{new}, 0"));
                     let result = options.new_temporary();
@@ -2622,20 +2628,20 @@ impl<'a> IrGenerator<'a> {
         if left_first {
             std::mem::swap(&mut lhs_register, &mut rhs_register);
         }
-        let left_ty = node.lhs.as_ref().unwrap().resolve_type().unwrap();
-        let right_ty = node.rhs.as_ref().unwrap().resolve_type().unwrap();
+        let left_ty = node.lhs.as_ref().unwrap().resolve_type_view().unwrap();
+        let right_ty = node.rhs.as_ref().unwrap().resolve_type_view().unwrap();
         let operand_ty = if left_ty.is_arithmetic() && right_ty.is_arithmetic() {
             if matches!(node.nt, NodeType::BitLeft | NodeType::BitRight) {
-                left_ty.promoted()
+                Cow::Owned(left_ty.promoted())
             } else {
-                Type::arithmetic_type(&left_ty, &right_ty)
+                Cow::Owned(Type::arithmetic_type(&left_ty, &right_ty))
             }
         } else if left_ty.is_pointer_value() {
-            left_ty.decayed()
+            Type::decay_view(Cow::Borrowed(left_ty.as_ref()))
         } else if right_ty.is_pointer_value() && matches!(node.nt, NodeType::Eq | NodeType::Ne) {
-            right_ty.decayed()
+            Type::decay_view(Cow::Borrowed(right_ty.as_ref()))
         } else {
-            left_ty.clone()
+            Cow::Borrowed(left_ty.as_ref())
         };
         let operation = if operand_ty.float_bits().is_some() {
             match node.nt {
