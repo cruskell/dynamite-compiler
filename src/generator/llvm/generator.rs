@@ -64,6 +64,13 @@ impl<'a> IrGenerator<'a> {
         }
     }
     pub fn generate(&self, ast: ProgramAst) -> String {
+        let references = if ast.functions.values().any(|function| function.hidden)
+            || ast.global_variables.values().any(|object| object.hidden)
+        {
+            crate::generator::referenced_symbols(&ast)
+        } else {
+            std::collections::HashSet::new()
+        };
         let generator = Self {
             error_logger: self.error_logger,
             symbol_names: ast.symbol_names.clone(),
@@ -83,10 +90,18 @@ impl<'a> IrGenerator<'a> {
             generator.gen_string_literals(ast.string_literals),
             ast.global_variables
                 .iter()
+                .filter(|(name, object)| {
+                    !object.hidden || !object.declaration_only || references.contains(name.as_str())
+                })
                 .map(|(s, gv)| generator.gen_global_variable(s, gv))
                 .collect::<Vec<String>>(),
             ast.functions
                 .iter()
+                .filter(|(name, function)| {
+                    !function.hidden
+                        || (function.body.is_some() && !function.inline_only())
+                        || references.contains(name.as_str())
+                })
                 .map(|(name, f)| generator.gen_func(name, f) + "\n")
                 .collect::<Vec<String>>(),
             reserved_functions()
@@ -173,12 +188,17 @@ impl<'a> IrGenerator<'a> {
                 Self::gen_type(&gv.ty)
             };
             return format!(
-                "{} = {} {}global {}, align {}",
+                "{} = {} {}{}global {}, align {}",
                 self.symbol_name(name),
                 if gv.weak_import {
                     "extern_weak"
                 } else {
                     "external"
+                },
+                if gv.hidden && !gv.internal {
+                    "hidden "
+                } else {
+                    ""
                 },
                 if gv.thread_local { "thread_local " } else { "" },
                 ty,
@@ -186,12 +206,17 @@ impl<'a> IrGenerator<'a> {
             );
         }
         format!(
-            "{} = {}{}global {}, align {}",
+            "{} = {}{}{}global {}, align {}",
             self.symbol_name(name),
             if gv.internal {
                 "internal "
             } else if gv.common && !gv.thread_local && gv.data.is_none() {
                 "common "
+            } else {
+                ""
+            },
+            if gv.hidden && !gv.internal {
+                "hidden "
             } else {
                 ""
             },
@@ -796,8 +821,13 @@ impl<'a> IrGenerator<'a> {
         }
         if func.body.is_none() || func.inline_only() {
             return format!(
-                "declare {}{return_abi} {}({}){}",
+                "declare {}{}{return_abi} {}({}){}",
                 if func.weak_import { "extern_weak " } else { "" },
+                if func.hidden && !func.internal {
+                    "hidden "
+                } else {
+                    ""
+                },
                 self.symbol_name(name),
                 parameters.join(", "),
                 if func.noinline { " noinline" } else { "" }
@@ -819,8 +849,13 @@ impl<'a> IrGenerator<'a> {
             argument_slots: HashMap::new(),
         };
         let mut lines = vec![format!(
-            "define {}{return_abi} {}({}){} uwtable \"frame-pointer\"=\"all\" {{",
+            "define {}{}{return_abi} {}({}){} uwtable \"frame-pointer\"=\"all\" {{",
             if func.internal { "internal " } else { "" },
+            if func.hidden && !func.internal {
+                "hidden "
+            } else {
+                ""
+            },
             self.symbol_name(name),
             parameters.join(", "),
             if func.noinline { " noinline" } else { "" }
@@ -1167,8 +1202,13 @@ impl<'a> IrGenerator<'a> {
                 arguments.push("...".to_string());
             }
             return format!(
-                "declare {}{} {}({}){}",
+                "declare {}{}{} {}({}){}",
                 if func.weak_import { "extern_weak " } else { "" },
+                if func.hidden && !func.internal {
+                    "hidden "
+                } else {
+                    ""
+                },
                 Self::abi_result_type(result),
                 self.symbol_name(name),
                 arguments.join(", "),
@@ -1190,8 +1230,13 @@ impl<'a> IrGenerator<'a> {
         };
         [
             vec![format!(
-                "define {}{} {}({}){} uwtable \"frame-pointer\"=\"all\" {{",
+                "define {}{}{} {}({}){} uwtable \"frame-pointer\"=\"all\" {{",
                 if func.internal { "internal " } else { "" },
+                if func.hidden && !func.internal {
+                    "hidden "
+                } else {
+                    ""
+                },
                 Self::abi_result_type(return_ty),
                 self.symbol_name(name),
                 func.args

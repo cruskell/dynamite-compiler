@@ -32,6 +32,63 @@ pub(crate) fn asm_register_width(
 
 use crate::{ast::ProgramAst, error::ErrorLogger};
 
+/// Native hidden declarations need directives only when the symbol is referenced.
+pub(crate) fn referenced_symbols<'a>(
+    ast: &'a ProgramAst<'_>,
+) -> std::collections::HashSet<&'a str> {
+    use crate::{global::GlobalVariableData, node::Node};
+    use std::collections::HashSet;
+    fn node_names<'a>(node: &'a Node, names: &mut HashSet<&'a str>) {
+        if !node.global_name.is_empty() {
+            names.insert(&node.global_name);
+        }
+        for child in [
+            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            node_names(child, names);
+        }
+        for child in node.children.iter().chain(&node.args) {
+            node_names(child, names);
+        }
+    }
+    fn data_names<'a>(data: &'a GlobalVariableData, names: &mut HashSet<&'a str>) {
+        match data {
+            GlobalVariableData::Address { symbol, .. } => {
+                names.insert(symbol);
+            }
+            GlobalVariableData::Elem(value) if value.starts_with('@') => {
+                names.insert(&value[1..]);
+            }
+            GlobalVariableData::Arr(values) => {
+                for value in values {
+                    data_names(value, names);
+                }
+            }
+            GlobalVariableData::Union { value, .. } => data_names(value, names),
+            _ => {}
+        }
+    }
+    let mut names = HashSet::new();
+    for function in ast
+        .functions
+        .values()
+        .filter(|function| !function.inline_only())
+    {
+        if let Some(body) = &function.body {
+            node_names(body, &mut names);
+        }
+    }
+    for object in ast.global_variables.values() {
+        if let Some(data) = &object.data {
+            data_names(data, &mut names);
+        }
+    }
+    names
+}
+
 pub trait Assembly {
     fn to_string(&self, target_os: Os) -> String;
 }

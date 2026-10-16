@@ -20,7 +20,7 @@ pub struct PreprocessorOptions {
 fn compiler_macros(command: &mut Command) {
     // Keep host ABI/GNU compatibility macros, but do not impersonate Clang.
     command.args([
-        "-std=c99",
+        "-std=gnu99",
         "-Wno-builtin-macro-redefined",
         "-U__clang__",
         "-U__clang_major__",
@@ -712,6 +712,21 @@ int selected_scalar_path;
             };
             let source = preprocess_with_options(code, None, &options).unwrap();
             assert!(source.code.contains("int value = 7;"));
+        }
+    }
+
+    #[test]
+    fn default_gnu_mode_can_be_overridden_by_explicit_standard() {
+        for (arguments, strict) in [(vec![], false), (vec!["-std=c99"], true)] {
+            let output = clang_command("clang")
+                .args(arguments)
+                .args(["-dM", "-x", "c", "/dev/null"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let macros = String::from_utf8(output.stdout).unwrap();
+            assert!(macros.contains("#define __STDC_VERSION__ 199901L"));
+            assert_eq!(macros.contains("#define __STRICT_ANSI__"), strict);
         }
     }
 

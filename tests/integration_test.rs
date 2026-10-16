@@ -2950,6 +2950,85 @@ int check(void);int main(void){return check();}
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn hidden_visibility_preserves_linkage_and_unused_declarations(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+extern int unused_object __attribute__((visibility("hidden")));
+int unused_function(void) __attribute__((visibility("hidden")));
+__attribute__((visibility("hidden"))) extern int imported;
+int foreign(int) __attribute__((visibility("hidden")));
+__attribute__((visibility("hidden"))) int first=3,second=5;
+int local(int) __attribute__((visibility("hidden")));
+int local(int x){return x+first+second+imported;}
+extern int first;int local(int);
+struct Pair{int x;int y;};
+struct Pair pair(struct Pair x) __attribute__((visibility("hidden")));
+struct Pair pair(struct Pair x){x.x+=1;return x;}
+static int internal __attribute__((visibility("hidden")))=7;
+int renamed(void) __asm__("hidden_alias") __attribute__((visibility("hidden")));
+int renamed(void){return internal;}
+int (*saved)(int)=foreign;
+int check(void);int main(){struct Pair p={7,9};p=pair(p);return local(2)!=21 || saved(3)!=10 || renamed()!=7 || p.x!=8 || p.y!=9 || check();}
+"#;
+    let companion = "int imported=11;int foreign(int x){return x+7;}extern int first,second;int local(int);int check(void){return first!=3 || second!=5 || local(1)!=20;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+    let output = dynamite_compiler::generate(code, output_option, false);
+    if output_option == "llvm" {
+        assert!(
+            output.contains("define hidden i32 @local(")
+                && output.contains("@first = hidden global")
+        );
+    } else {
+        let directive = if cfg!(target_os = "macos") {
+            ".private_extern"
+        } else {
+            ".hidden"
+        };
+        assert!(output.contains(directive));
+        assert!(
+            !output
+                .lines()
+                .any(|line| line.contains(directive) && line.contains("unused_"))
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn hidden_symbols_are_absent_from_dynamic_exports(output_option: &str, optimization: &str) {
+    let code = "int secret __attribute__((visibility(\"hidden\")))=7;int private_api(void) __attribute__((visibility(\"hidden\")));int private_api(void){return secret;}int public_api(void){return private_api();}int probe(void);int main(){return public_api()!=7 || probe();}";
+    let companion = "#define _GNU_SOURCE\n#include <dlfcn.h>\nint probe(void){return dlsym(RTLD_DEFAULT,\"secret\")!=0 || dlsym(RTLD_DEFAULT,\"private_api\")!=0 || dlsym(RTLD_DEFAULT,\"public_api\")==0;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(
+            code,
+            output_option,
+            Some(companion),
+            &[optimization, "-rdynamic", "-ldl"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "typedef int Alias __attribute__((visibility(\"hidden\")));",
+    "int f(int x __attribute__((visibility(\"hidden\"))));",
+    "struct S{int x __attribute__((visibility(\"hidden\")));};",
+    "int main(){int x __attribute__((visibility(\"hidden\")));return 0;}",
+])]
+fn hidden_visibility_on_non_symbols_is_diagnosed(code: &str) {
+    assert_frontend_error(code);
+}
+
 #[test]
 fn default_visibility_annotations_preserve_internal_llvm_symbols() {
     let ir = dynamite_compiler::generate(
@@ -2968,7 +3047,6 @@ fn default_visibility_annotations_preserve_internal_llvm_symbols() {
 }
 
 #[test_matrix([
-    "int x __attribute__((visibility(\"hidden\")));",
     "int x __attribute__((visibility(\"protected\")));",
     "int x __attribute__((visibility(\"internal\")));",
     "int x __attribute__((visibility()));",

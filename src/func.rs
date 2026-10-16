@@ -10,6 +10,7 @@ pub struct Func {
     pub gnu_inline: bool,
     pub noinline: bool,
     pub weak_import: bool,
+    pub hidden: bool,
     pub external_definition: bool,
     pub mutable_static: Option<Token>,
     pub return_pointer: Option<usize>,

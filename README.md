@@ -1044,14 +1044,18 @@ and a signed high word, correcting sign extension with the low-word borrow.
 This uses the same representation as checked addition across all three backends
 and does not require 128-bit integer value operations.
 
-## Default visibility annotations
+## Symbol visibility annotations
 
-GNU `visibility("default")` and `__visibility__("default")` declaration attributes
-are accepted as an explicit request for the existing default symbol visibility.
-They preserve external linkage and do not export static functions or objects.
-Concatenated narrow string literals and combined attribute lists are supported.
-Hidden, protected and internal visibility requests remain diagnosed rather than
-being ignored. Native assembly and LLVM output retain their existing linkage.
+GNU `visibility("default")` and `__visibility__("default")` preserve the existing
+visibility. File-scope functions and objects also accept `visibility("hidden")`.
+Hidden references and definitions emit ELF `.hidden` or Mach-O `.private_extern`
+in native output, and LLVM `hidden` visibility. Hidden symbols retain external
+linkage within a program but are excluded from dynamic exports. Internal symbols
+remain internal. Redeclarations retain hidden visibility; prefix attributes apply
+to every declarator, while postfix attributes apply only to that declarator.
+Unused hidden external declarations do not force undefined symbols into objects.
+Protected/internal visibility modes and hidden annotations on non-symbol
+constructs remain diagnosed.
 
 ## Vector typedef storage
 
@@ -1327,3 +1331,9 @@ rejected. The libc `alloca` macro can use this builtin without frontend fallback
 C runtime functions on all backends. Their pointer results, argument conversions,
 and single evaluation of arguments follow ordinary typed calls. These builtins
 are advertised by `__has_builtin`, including for Linux CPU-set macros.
+
+The default preprocessing dialect is GNU99, exposing the host's usual libc
+extensions such as `mkstemp` when no stricter standard is requested. Explicit
+`-std=c99` and other supported `-std` options override this default. This does
+not change Dynamite's advertised C99 version or enable unsupported language
+capabilities.
