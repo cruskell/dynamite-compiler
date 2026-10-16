@@ -56,7 +56,7 @@ implemented directly in Rust. The former `clang-in-process` Cargo feature has
 been removed; `--all-features` builds also require no LLVM SDK.
 
 The driver invokes the external Clang executable for LLVM IR lowering and
-linking, and for preprocessing when the native preprocessor is not selected.
+linking. Preprocessing always uses Dynamite's native Rust implementation.
 `DYNAMITE_CLANG` selects that executable (default: `clang` from `PATH`). Removing
 the SDK integration does not remove this external toolchain requirement.
 
@@ -65,7 +65,7 @@ backend invokes LLVM tools directly instead of Clang for code generation and
 linking:
 
 ```sh
-DYNAMITE_PREPROCESSOR=native DYNAMITE_BACKEND=llvm \
+DYNAMITE_BACKEND=llvm \
 DYNAMITE_LLC=llc-15 DYNAMITE_OPT=opt-15 DYNAMITE_LLD=ld.lld-15 \
 make -j4 CC=/absolute/path/to/target/release/dynamite-cc
 ```
@@ -80,14 +80,33 @@ numeric version in `/usr/lib/gcc/x86_64-linux-gnu` is selected. No GCC executabl
 or LLVM SDK is used. OS headers, startup objects, and runtime libraries are still
 required.
 
+On native macOS ARM64/x86_64, the same backend uses `opt`/`llc` for Mach-O
+objects and Apple's `/usr/bin/ld` for linking. No Clang executable is invoked.
+Install matching LLVM tools and select their paths, for example:
+
+```sh
+DYNAMITE_BACKEND=llvm \
+DYNAMITE_LLC="$(brew --prefix llvm)/bin/llc" \
+DYNAMITE_OPT="$(brew --prefix llvm)/bin/opt" \
+make -j4 CC=/absolute/path/to/target/release/dynamite-cc
+```
+
+`DYNAMITE_LD` overrides the macOS linker. SDK discovery uses `SDKROOT` or
+`xcrun`; `-isysroot` overrides the SDK for an invocation.
+`MACOSX_DEPLOYMENT_TARGET` controls both header availability and the generated
+target/linker deployment version. Mach-O linking supports executables, dylibs
+(`-shared`/`-dynamiclib`), bundles (`-bundle`), objects/archives, framework search,
+install names, rpaths, and explicit undefined-symbol policies. Unsupported options
+fail without falling back to Clang. The C source frontend remains Dynamite.
+
 This backend supports `-c`, `-S`, `-O0` through `-O3`, `-Og`, `-Os`, `-Oz`,
 PIC/PIE, `-shared`, `-no-pie`, `-pthread`, `-L`/`-l`, `-Wl,`, and `-Xlinker`.
 It rejects unsupported backend options instead of falling back to Clang.
 Cross targets, other library layouts, static linking, assembly/bitcode inputs,
 `-emit-llvm`, LTO, sanitizers, custom CPU flags, and Clang time traces are not
 supported. Debug flags are accepted, but Dynamite does not emit source debug
-information. The default backend remains Clang. Select native preprocessing as
-shown above to avoid Clang in the entire C-to-executable path.
+information. The default IR lowering and linking backend remains Clang.
+Preprocessing always uses Dynamite's native implementation.
 
 On Linux x86_64, standalone `-M`/`-MM` dependency scans use Dynamite's Rust
 preprocessor by default for supported host options. It scans directives and
@@ -102,10 +121,10 @@ The same implementation can preprocess C compilation and `-E` without invoking
 Clang:
 
 ```sh
-DYNAMITE_PREPROCESSOR=native make -j4 CC=/absolute/path/to/target/release/dynamite-cc
+make -j4 CC=/absolute/path/to/target/release/dynamite-cc
 ```
 
-This opt-in supports native Linux x86_64 and macOS ARM64/x86_64, GNU/C89 through C17,
+This implementation supports native Linux and macOS ARM64/x86_64, GNU/C89 through C17,
 object/function/variadic macros, stringification, token pasting, conditional
 expressions, quoted/system includes, `include_next`, `pragma once`, and
 `-I`/`-isystem`/`-iquote`/`-idirafter`/`-D`/`-U`/`-include`/`-imacros`.
@@ -113,14 +132,8 @@ Its compiler headers are embedded in Dynamite; OS libc headers remain external. 
 Unsupported native options return an error. It is not a complete replacement
 for every Clang/GNU preprocessing extension; cross targets, sysroots, macro
 dumps, and date/time predefined macros are outside its current scope.
-`DYNAMITE_PREPROCESSOR=clang` selects Clang for all preprocessing, including
-standalone dependency scans. Ordinary C compilation continues to use Clang
-preprocessing by default. The opt-in native preprocessing and LLVM tools backend
-build Redis and Git; see the [latest build measurements](#measured-linux-build-times)
-for their combined performance.
-
-This change removes Clang from the selected preprocessing stages. LLVM
-IR-to-object lowering, assembly, and linking still use external tools; libc/libm/pthread dependencies of compiled programs are unchanged.
+LLVM IR-to-object lowering, assembly, and linking still use external tools;
+libc/libm/pthread dependencies of compiled programs are unchanged.
 
 Single-input `-c`/`-S` CLI processes retain AST and token storage until exit to
 avoid individual deallocations. Multi-input and library compilation release it.
@@ -596,12 +609,12 @@ use `noinline` where individual function frames must remain observable.
 
 ## Preprocessing
 
-Sources with directives or predefined macro names are preprocessed using `clang`
-from `PATH`. This supports includes, object-like and function-like macros,
+Sources with directives or predefined macro names are preprocessed using the
+native Rust implementation. This supports includes, object-like and function-like macros,
 conditional compilation, token pasting, stringification, and predefined macros.
 Quoted includes in CLI input are resolved relative to the input file; library
 callers may use `generate_with_path` to supply that location. Ordinary source
-without directives or predefined macros does not invoke Clang. Preprocessing
+without directives or predefined macros bypasses preprocessing. Preprocessing
 uses C99 mode with Blocks disabled in both bundled-header and system-header modes.
 The compiler defines `__DYNAMITE__` and removes Clang/LLVM frontend identity macros.
 Host target, ABI and GNU compatibility macros remain available for system headers.

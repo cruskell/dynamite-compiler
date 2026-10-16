@@ -129,7 +129,10 @@ impl Arguments {
                     result.preprocessing.push(arg.clone());
                     let value = argument_value(args, &mut index)?;
                     result.preprocessing.push(value.clone());
-                    if matches!(arg.as_str(), "-isysroot" | "--sysroot") {
+                    if matches!(
+                        arg.as_str(),
+                        "-isysroot" | "--sysroot" | "-F" | "-iframework"
+                    ) {
                         result.backend.extend([arg.clone(), value]);
                     }
                 }
@@ -158,7 +161,16 @@ impl Arguments {
                 | "-fdriver-only" | "-###" => {
                     return Err(format!("unsupported frontend option: {arg}"));
                 }
-                "-L" | "-l" | "-framework" | "-Xlinker" | "-Xassembler" => {
+                "-L"
+                | "-l"
+                | "-framework"
+                | "-Xlinker"
+                | "-Xassembler"
+                | "-undefined"
+                | "-install_name"
+                | "-rpath"
+                | "-compatibility_version"
+                | "-current_version" => {
                     result.backend.push(arg.clone());
                     result.backend.push(argument_value(args, &mut index)?);
                 }
@@ -196,6 +208,9 @@ impl Arguments {
                     .any(|prefix| arg.starts_with(prefix))
                     {
                         result.preprocessing.push(arg.clone());
+                        if arg.starts_with("-F") || arg.starts_with("-iframework") {
+                            result.backend.push(arg.clone());
+                        }
                     } else if arg.starts_with("--sysroot=") || arg.starts_with("-isysroot") {
                         result.preprocessing.push(arg.clone());
                         result.backend.push(arg.clone());
@@ -434,7 +449,7 @@ fn compile(
     } else {
         dynamite_compiler::generate_file
     };
-    let ir = generate(Path::new(&input.name), "llvm", false, clang, &preprocessing)?;
+    let ir = generate(Path::new(&input.name), "llvm", false, &preprocessing)?;
     drop(timer);
     let ir_path = temporary.join(format!("{index}.ll"));
     {
@@ -495,7 +510,7 @@ fn compile(
 fn run(arguments: &[String]) -> Result<i32, String> {
     if arguments.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
-            "Usage: dynamite-cc [--jobs N] [Clang options] FILE...\nCompile C through Dynamite. DYNAMITE_BACKEND=llvm selects external llc/opt/LLD on Linux x86_64 GNU; the default backend is Clang. Supports -c, -S, -o, -I/-D/-U, and dependency files. Default: one worker."
+            "Usage: dynamite-cc [--jobs N] [Clang options] FILE...\nCompile C through Dynamite. DYNAMITE_BACKEND=llvm selects external llc/opt and a native linker on Linux x86_64 GNU or macOS; the default backend is Clang. Supports -c, -S, -o, -I/-D/-U, and dependency files. Default: one worker."
         );
         return Ok(0);
     }
@@ -503,68 +518,73 @@ fn run(arguments: &[String]) -> Result<i32, String> {
     let llvm = llvm_tools::selected()?;
     let clang = std::env::var("DYNAMITE_CLANG").unwrap_or_else(|_| "clang".into());
     if args.preprocess_only {
-        let preprocessor = std::env::var("DYNAMITE_PREPROCESSOR").unwrap_or_default();
         let native_backend_option = |arg: &String| {
             arg.starts_with("-O")
                 || arg.starts_with("-W")
                 || arg.starts_with("-g")
                 || matches!(arg.as_str(), "-pthread" | "-pedantic")
         };
-        let native_options = args.backend.iter().all(native_backend_option)
-            && !args
-                .preprocessing
-                .iter()
-                .any(|arg| arg.starts_with("--sysroot") || arg.starts_with("-isysroot"));
-        let native_dependencies = cfg!(all(target_os = "linux", target_arch = "x86_64"))
-            && preprocessor != "clang"
-            && native_options
-            && !args.inputs.is_empty()
-            && args.inputs.iter().all(|input| input.name != "-")
-            && args
-                .forwarded
-                .iter()
-                .any(|arg| matches!(arg.as_str(), "-M" | "-MM"));
-        if preprocessor == "native" || native_dependencies {
-            if args.inputs.is_empty() {
-                return Err("native preprocessing requires a source file".into());
-            }
-            let _timer = Timer::new(if native_dependencies {
-                "dependency_scan"
+        let mut backend_index = 0;
+        let mut unsupported = None;
+        while backend_index < args.backend.len() {
+            let option = &args.backend[backend_index];
+            if cfg!(target_os = "macos")
+                && matches!(option.as_str(), "-F" | "-iframework" | "-isysroot")
+            {
+                backend_index += 2;
+            } else if native_backend_option(option)
+                || cfg!(target_os = "macos")
+                    && (option.starts_with("-F")
+                        || option.starts_with("-iframework")
+                        || option.starts_with("-isysroot"))
+            {
+                backend_index += 1;
             } else {
-                "preprocess_only"
-            });
-            if let Some(option) = args.backend.iter().find(|arg| !native_backend_option(arg)) {
-                return Err(format!("unsupported native preprocessing option: {option}"));
+                unsupported = Some(option);
+                break;
             }
-            let mut preprocessing = args.preprocessing.clone();
-            for flag in ["-M", "-MM", "-P", "-MP"] {
-                if args.forwarded.iter().any(|arg| arg == flag) {
-                    preprocessing.push(flag.into());
-                }
-            }
-            if let Some(file) = &args.dependency_file {
-                preprocessing.extend(["-MF".into(), file.clone()]);
-            }
-            preprocessing.extend(args.dependency_targets.clone());
-            let paths = args
-                .inputs
-                .iter()
-                .map(|input| PathBuf::from(&input.name))
-                .collect::<Vec<_>>();
-            let output =
-                dynamite_compiler::preprocessor::preprocess_files_native(&paths, &preprocessing)?;
-            if let Some(path) = &args.output {
-                fs::write(path, output).map_err(|e| e.to_string())?;
-            } else {
-                use std::io::Write;
-                std::io::stdout()
-                    .write_all(output.as_bytes())
-                    .map_err(|e| e.to_string())?;
-            }
-            return Ok(0);
         }
-        let mut command = dynamite_compiler::preprocessor::clang_command(&clang);
-        return status(command.args(&args.forwarded));
+        let native_dependencies = args
+            .forwarded
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "-M" | "-MM"));
+        if args.inputs.is_empty() {
+            return Err("native preprocessing requires a source file".into());
+        }
+        let _timer = Timer::new(if native_dependencies {
+            "dependency_scan"
+        } else {
+            "preprocess_only"
+        });
+        if let Some(option) = unsupported {
+            return Err(format!("unsupported native preprocessing option: {option}"));
+        }
+        let mut preprocessing = args.preprocessing.clone();
+        for flag in ["-M", "-MM", "-P", "-MP"] {
+            if args.forwarded.iter().any(|arg| arg == flag) {
+                preprocessing.push(flag.into());
+            }
+        }
+        if let Some(file) = &args.dependency_file {
+            preprocessing.extend(["-MF".into(), file.clone()]);
+        }
+        preprocessing.extend(args.dependency_targets.clone());
+        let paths = args
+            .inputs
+            .iter()
+            .map(|input| PathBuf::from(&input.name))
+            .collect::<Vec<_>>();
+        let output =
+            dynamite_compiler::preprocessor::preprocess_files_native(&paths, &preprocessing)?;
+        if let Some(path) = &args.output {
+            fs::write(path, output).map_err(|e| e.to_string())?;
+        } else {
+            use std::io::Write;
+            std::io::stdout()
+                .write_all(output.as_bytes())
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(0);
     }
     let sources = args
         .inputs
@@ -581,7 +601,7 @@ fn run(arguments: &[String]) -> Result<i32, String> {
                 return Ok(0);
             }
             if arguments == ["-dumpmachine"] {
-                println!("x86_64-pc-linux-gnu");
+                println!("{}", llvm_tools::target_triple()?);
                 return Ok(0);
             }
             let _timer = Timer::new("link_or_other");

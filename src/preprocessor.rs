@@ -1,11 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    fs,
-    io::Write,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{borrow::Cow, collections::HashMap, fs, path::Path};
 
 use crate::error::{ErrorLogger, ErrorPrinter};
 
@@ -178,19 +171,6 @@ fn compiler_macro_arguments() -> Vec<String> {
         }
     }
     arguments
-}
-
-fn compiler_macros(command: &mut Command) {
-    command.args(compiler_macro_arguments());
-}
-
-/// Create a preprocessing command with Dynamite's capability macros.
-/// Add input, include, macro, and dependency arguments before running it.
-pub fn clang_command(clang: &str) -> Command {
-    let mut command = Command::new(clang);
-    command.args(["-E", "-fno-blocks"]);
-    compiler_macros(&mut command);
-    command
 }
 
 struct IncludeDirectory(std::path::PathBuf);
@@ -389,11 +369,7 @@ pub fn preprocess_with_options(
     preprocess_input(code, path, options, None)
 }
 
-pub(crate) fn preprocess_file(
-    path: &Path,
-    clang: &str,
-    arguments: &[String],
-) -> Result<Preprocessed, String> {
+pub(crate) fn preprocess_file(path: &Path, arguments: &[String]) -> Result<Preprocessed, String> {
     let timer = crate::timing::Timer::new("preprocess.read");
     let code = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -405,7 +381,7 @@ pub(crate) fn preprocess_file(
             system_headers: true,
             ..Default::default()
         },
-        Some((clang, arguments)),
+        Some(arguments),
     )
 }
 
@@ -437,7 +413,7 @@ fn preprocess_input(
     code: &str,
     path: Option<&Path>,
     options: &PreprocessorOptions,
-    file_input: Option<(&str, &[String])>,
+    file_input: Option<&[String]>,
 ) -> Result<Preprocessed, String> {
     let absolute_path = path
         .map(|path| {
@@ -478,85 +454,14 @@ fn preprocess_input(
             origins,
         });
     }
-    let expanded = if std::env::var("DYNAMITE_PREPROCESSOR").as_deref() == Ok("native") {
+    let expanded = {
         let _timer = crate::timing::Timer::new("preprocess.native");
         native::preprocess(
             code,
             absolute_path.as_deref().unwrap_or(Path::new("<stdin>")),
             options,
-            file_input.map(|(_, args)| args).unwrap_or(&[]),
+            file_input.unwrap_or(&[]),
         )?
-    } else {
-        let includes = if options.system_headers {
-            None
-        } else {
-            Some(IncludeDirectory::new()?)
-        };
-        let mut command = clang_command(file_input.map_or("clang", |(clang, _)| clang));
-        command.args(["-x", "c"]);
-        if let Some(includes) = &includes {
-            command.arg("-nostdinc").arg("-I").arg(&includes.0);
-        }
-        if let Some(parent) = absolute_path
-            .as_deref()
-            .and_then(Path::parent)
-            .filter(|path| !path.as_os_str().is_empty())
-        {
-            if file_input.is_none() {
-                command.current_dir(parent).arg("-iquote").arg(parent);
-            }
-        }
-        for directory in &options.include_directories {
-            let directory = if directory.is_absolute() {
-                directory.clone()
-            } else {
-                std::env::current_dir()
-                    .map_err(|error| error.to_string())?
-                    .join(directory)
-            };
-            command.arg("-I").arg(directory);
-        }
-        for definition in &options.definitions {
-            command.arg("-D").arg(definition);
-        }
-        for name in &options.undefinitions {
-            command.arg("-U").arg(name);
-        }
-        let timer = crate::timing::Timer::new("preprocess.clang");
-        let output = if let Some((_, arguments)) = file_input {
-            command.args(arguments).arg(absolute_path.as_ref().unwrap());
-            command.output()
-        } else {
-            command.arg("-");
-            let mut child = command
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|error| format!("preprocessing requires clang in PATH: {error}"))?;
-            let input = format!(
-                "#line 1 \"{}\"\n{}",
-                name.replace('\\', "\\\\").replace('"', "\\\""),
-                code
-            );
-            let mut stdin = child.stdin.take().unwrap();
-            std::thread::scope(|scope| {
-                let writer = scope.spawn(move || stdin.write_all(input.as_bytes()));
-                let output = child.wait_with_output();
-                let written = writer.join().unwrap();
-                output.and_then(|output| written.map(|_| output))
-            })
-        }
-        .map_err(|error| format!("failed to preprocess source: {error}"))?;
-        drop(timer);
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-        }
-        if file_input.is_some() {
-            let _ = std::io::stderr().write_all(&output.stderr);
-        }
-        String::from_utf8(output.stdout)
-            .map_err(|error| format!("preprocessor returned invalid UTF-8: {error}"))?
     };
     let _timer = crate::timing::Timer::new("preprocess.map");
     let mut result = Preprocessed {
@@ -706,7 +611,7 @@ mod tests {
         .unwrap();
         let main = directory.0.join("main.c");
         fs::write(&main, "#include \"values.h\"\n\n\nint after_main;\n").unwrap();
-        let expanded = preprocess_file(&main, "clang", &[]).unwrap();
+        let expanded = preprocess_file(&main, &[]).unwrap();
         for (name, row, file) in [
             ("int repeated;", 1, "values.h"),
             ("int child;", 3, "child.h"),
@@ -729,7 +634,7 @@ mod tests {
         let directory = IncludeDirectory::new().unwrap();
         let main = directory.0.join("quoted\"back\\café.c");
         fs::write(&main, "#define VALUE 7\n\nint value=VALUE;\n\nint last;\n").unwrap();
-        let expanded = preprocess_file(&main, "clang", &[]).unwrap();
+        let expanded = preprocess_file(&main, &[]).unwrap();
         let position = expanded.code.find("int last;").unwrap();
         assert_eq!(expanded.line_from_position(position), (5, 0, "int last;"));
         assert_eq!(expanded.location(position).0.name, main.to_string_lossy());
@@ -764,7 +669,7 @@ mod tests {
         let code = "#include \"values.h\"\nint main(){return from_header;}\n";
         fs::write(&main, code).unwrap();
         let snapshot = preprocess(code, Some(&main)).unwrap();
-        let expanded = preprocess_file(&main, "clang", &[]).unwrap();
+        let expanded = preprocess_file(&main, &[]).unwrap();
         let source = expanded
             .sources
             .iter()
@@ -874,15 +779,13 @@ int selected_scalar_path;
     #[test]
     fn default_gnu_mode_can_be_overridden_by_explicit_standard() {
         for (arguments, strict) in [(vec![], false), (vec!["-std=c99"], true)] {
-            let output = clang_command("clang")
-                .args(arguments)
-                .args(["-dM", "-x", "c", "/dev/null"])
-                .output()
-                .unwrap();
-            assert!(output.status.success());
-            let macros = String::from_utf8(output.stdout).unwrap();
-            assert!(macros.contains("#define __STDC_VERSION__ 199901L"));
-            assert_eq!(macros.contains("#define __STRICT_ANSI__"), strict);
+            let macros = native::preprocess(
+                "#if __STDC_VERSION__ != 199901L\n#error Incorrect standard\n#endif\n#ifdef __STRICT_ANSI__\nstrict\n#endif\n",
+                Path::new("<stdin>"),
+                &PreprocessorOptions::default(),
+                &arguments.into_iter().map(String::from).collect::<Vec<_>>(),
+            ).unwrap();
+            assert_eq!(macros.contains("strict"), strict);
         }
     }
 
