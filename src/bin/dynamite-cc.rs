@@ -1,5 +1,6 @@
 //! Native C build driver. Clang handles preprocessing, LLVM lowering, and linking.
 
+use dynamite_compiler::timing::Timer;
 use std::{
     collections::HashSet,
     fs,
@@ -398,6 +399,7 @@ fn compile(
             preprocessing.push("-MP".into());
         }
     }
+    let timer = Timer::new("frontend_total");
     let ir = dynamite_compiler::generate_file(
         Path::new(&input.name),
         "llvm",
@@ -405,8 +407,11 @@ fn compile(
         clang,
         &preprocessing,
     )?;
+    drop(timer);
     let ir_path = temporary.join(format!("{index}.ll"));
+    let timer = Timer::new("write_ir");
     fs::write(&ir_path, ir).map_err(|e| format!("failed to write LLVM IR: {e}"))?;
+    drop(timer);
     let mut command = Command::new(clang);
     let mut backend_index = 0;
     while backend_index < args.backend.len() {
@@ -438,6 +443,7 @@ fn compile(
         .arg("-o")
         .arg(&output)
         .arg("-Wno-override-module");
+    let _timer = Timer::new("lower");
     if status(&mut command)? != 0 {
         return Err(format!("LLVM lowering failed for {}", input.name));
     }
@@ -468,6 +474,7 @@ fn run(arguments: &[String]) -> Result<i32, String> {
         if arguments.iter().any(|arg| arg == "--version") {
             println!("dynamite-cc {} (clang backend)", env!("CARGO_PKG_VERSION"));
         }
+        let _timer = Timer::new("link_or_other");
         return status(Command::new(&clang).args(&args.forwarded));
     }
     let temporary = TemporaryDirectory::new()?;
@@ -533,6 +540,7 @@ fn run(arguments: &[String]) -> Result<i32, String> {
     if let Some(output) = &args.output {
         command.arg("-o").arg(output);
     }
+    let _timer = Timer::new("link");
     status(&mut command)
 }
 

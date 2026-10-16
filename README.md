@@ -82,6 +82,12 @@ response files, and C compilation from stdin are rejected. Compile mixed C and
 assembly inputs separately before linking. `-g` cannot add C source debug
 metadata that the LLVM frontend does not emit.
 
+Set `DYNAMITE_TIMINGS=1` to emit stage elapsed times to stderr. Measurements
+separate preprocessing, tokenization, parsing/lowering, output generation,
+teardown, IR writes, Clang lowering and linking. See
+[the build benchmark tools](tools/benchmarks/README.md) for repeatable Redis/Git
+comparisons and interpretation of nested stage and Clang trace totals.
+
 ## Proposed direction
 
 Dynamite aims to shorten the time from editing C code to seeing results and

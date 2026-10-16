@@ -8,6 +8,7 @@ pub mod generator;
 pub mod global;
 pub mod node;
 pub mod preprocessor;
+pub mod timing;
 pub mod token;
 pub mod tokenizer;
 pub mod trie;
@@ -62,7 +63,10 @@ pub fn generate_file(
     clang: &str,
     preprocessing_arguments: &[String],
 ) -> Result<String, String> {
-    let source = preprocessor::preprocess_file(path, clang, preprocessing_arguments)?;
+    let source = {
+        let _timer = timing::Timer::new("preprocess");
+        preprocessor::preprocess_file(path, clang, preprocessing_arguments)?
+    };
     Ok(generate_preprocessed(&source, output_option, is_debug))
 }
 
@@ -72,16 +76,30 @@ fn generate_preprocessed(
     is_debug: bool,
 ) -> String {
     let error_printer = source;
+    let timer = timing::Timer::new("tokenize");
     let tokens = tokenizer::Tokenizer::tokenize(&source.code, is_debug).unwrap_or_else(|e| {
         error::ErrorLogger::print_syntax_error_position(error_printer, e);
         std::process::exit(1)
     });
+    drop(timer);
+    let timer = timing::Timer::new("parse");
     let mut builder = ast::AstBuilderImpl::new(error_printer, &tokens);
     let ast = builder.build(is_debug);
-    match output_option {
-        "asm" => gen_asm(ast, error_printer),
-        _ => gen_llvm_ir(ast, error_printer),
-    }
+    drop(timer);
+    let output = {
+        let _timer = timing::Timer::new("generate");
+        match output_option {
+            "asm" => gen_asm(ast, error_printer),
+            _ => gen_llvm_ir(ast, error_printer),
+        }
+    };
+    let timer = timing::Timer::new("drop_ast");
+    drop(builder);
+    drop(timer);
+    let timer = timing::Timer::new("drop_tokens");
+    drop(tokens);
+    drop(timer);
+    output
 }
 
 fn gen_asm(ast: ProgramAst, error_printer: &dyn error::ErrorLogger) -> String {

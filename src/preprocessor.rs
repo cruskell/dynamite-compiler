@@ -355,8 +355,10 @@ pub(crate) fn preprocess_file(
     clang: &str,
     arguments: &[String],
 ) -> Result<Preprocessed, String> {
+    let timer = crate::timing::Timer::new("preprocess.read");
     let code = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    drop(timer);
     preprocess_input(
         &code,
         Some(path),
@@ -447,6 +449,7 @@ fn preprocess_input(
     for name in &options.undefinitions {
         command.arg("-U").arg(name);
     }
+    let timer = crate::timing::Timer::new("preprocess.clang");
     let output = if let Some((_, arguments)) = file_input {
         command
             .args(arguments)
@@ -474,6 +477,8 @@ fn preprocess_input(
         })
     }
     .map_err(|error| format!("failed to preprocess source: {error}"))?;
+    drop(timer);
+    let _timer = crate::timing::Timer::new("preprocess.map");
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }

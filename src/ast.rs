@@ -223,11 +223,14 @@ pub trait AstBuilder {
 
 impl AstBuilder for AstBuilderImpl<'_> {
     fn build(&mut self, is_debug: bool) -> ProgramAst {
+        let timer = crate::timing::Timer::new("parse.declarations");
         while !self.at_eof() {
             if self.attempt_reserved(";").is_none() {
                 self.global_definition();
             }
         }
+        drop(timer);
+        let timer = crate::timing::Timer::new("parse.validate");
         for function in self.functions.values() {
             if let Some(token) = &function.token {
                 self.validate_type_layout(&function.cty, token);
@@ -246,6 +249,8 @@ impl AstBuilder for AstBuilderImpl<'_> {
                 }
             }
         }
+        drop(timer);
+        let timer = crate::timing::Timer::new("parse.lower");
         for function in self.functions.values_mut() {
             function.cty.lower_for_codegen();
             for arg in &mut function.args {
@@ -273,6 +278,8 @@ impl AstBuilder for AstBuilderImpl<'_> {
             }
             definition.borrow_mut().members = members;
         }
+        drop(timer);
+        let _timer = crate::timing::Timer::new("parse.inline");
         self.lower_gnu_inline_calls();
         if is_debug {
             self.print_functions();
