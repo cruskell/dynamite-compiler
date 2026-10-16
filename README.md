@@ -27,6 +27,48 @@ IR-to-object lowering, and linking. C compilation did not fall back to Clang's
 C frontend. The listed platform and build options define the scope of these
 checks.
 
+## C build driver
+
+Build the production tools with `cargo build --release --bins`. The
+`target/release/dynamite-cc` executable can replace the temporary Python `CC`
+adapter in C builds:
+
+```sh
+make -j4 CC=/absolute/path/to/target/release/dynamite-cc
+```
+
+The driver calls Dynamite's frontend directly, then uses Clang to lower LLVM IR
+and link. It removes the Python adapter and extra Dynamite process from each
+translation unit. File preprocessing also generates `-MD`/`-MMD` dependency
+files in the same Clang invocation, without a second dependency scan. Clang
+never compiles C as a fallback when Dynamite rejects a source file.
+
+Independent C files can be compiled concurrently in a single invocation:
+
+```sh
+target/release/dynamite-cc --jobs 4 first.c second.c main.c -O2 -o program
+```
+
+Each worker owns its complete frontend state; ASTs and mutable type definitions
+are not shared between threads. The default is one worker, so a normal
+`make -jN` build does not acquire additional internal parallelism. When passing
+multiple files, choose `--jobs` together with the outer build's concurrency.
+A multi-file link with `-MD`/`-MMD` writes separate `OUTPUT-0.d`, `OUTPUT-1.d`,
+and subsequent files, each targeting the final executable. Compile-only jobs
+use the usual object basename for their dependency files.
+
+The driver supports C files, `-c`, `-S`, `-o`, preprocessing and dependency modes,
+include paths and forced includes, common Clang optimization/linker flags, and
+linking existing objects, archives, and assembly. `DYNAMITE_CLANG` selects the
+Clang executable for both preprocessing and backend work. The existing
+`dynamite_compiler -o asm|llvm FILE` interface and library APIs remain available.
+
+This is a driver for Dynamite's supported language, not full Clang source
+compatibility. Cross-target/ABI changes, C++/Objective-C, precompiled headers,
+response files, and C compilation from stdin are rejected. Compile mixed C and
+assembly inputs separately before linking. `-g` cannot add C source debug
+metadata that the LLVM frontend does not emit.
+
 ## Proposed direction
 
 Dynamite aims to shorten the time from editing C code to seeing results and

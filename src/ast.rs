@@ -2950,7 +2950,7 @@ impl<'a> AstBuilderImpl<'a> {
                 );
             }
             (Type::Struct(ty), GlobalVariableData::Union { index, value }) => {
-                self.validate_global_initializer(&ty.members()[*index].ty, value, token);
+                self.validate_global_initializer(&ty.member(*index).ty, value, token);
             }
             (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
                 let members = ty.members();
@@ -5242,7 +5242,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let Type::Struct(st) = ty.unqualified() else {
                     unreachable!()
                 };
-                let member = st.members()[index].clone();
+                let member = st.member(index);
                 if member.bit_field.is_some() {
                     self.error_logger.print_error_position(
                         member_name.pos,
@@ -6749,7 +6749,7 @@ impl<'a> AstBuilderImpl<'a> {
                     let Some(Type::Struct(st)) = node.resolve_type() else {
                         unreachable!()
                     };
-                    node = Self::member_node(node, &st.members()[index], &token);
+                    node = Self::member_node(node, &st.member(index), &token);
                 }
             } else if let Some(b_token) = self.attempt_reserved("[") {
                 if matches!(

@@ -47,7 +47,29 @@ pub fn generate_with_options(
             error::ErrorLogger::print_error_position(&error::ErrorPrinter::new(code), 0, &message);
             unreachable!()
         });
-    let error_printer = &source;
+    generate_preprocessed(&source, output_option, is_debug)
+}
+
+/// Generate a file using host system headers and explicit Clang preprocessing arguments.
+/// Dependency arguments are handled in the same preprocessing pass. As with
+/// `generate`, source-language diagnostics use the existing panic-based interface.
+pub fn generate_file(
+    path: &std::path::Path,
+    output_option: &str,
+    is_debug: bool,
+    clang: &str,
+    preprocessing_arguments: &[String],
+) -> Result<String, String> {
+    let source = preprocessor::preprocess_file(path, clang, preprocessing_arguments)?;
+    Ok(generate_preprocessed(&source, output_option, is_debug))
+}
+
+fn generate_preprocessed(
+    source: &preprocessor::Preprocessed,
+    output_option: &str,
+    is_debug: bool,
+) -> String {
+    let error_printer = source;
     let tokens = tokenizer::Tokenizer::tokenize(&source.code, is_debug).unwrap_or_else(|e| {
         error::ErrorLogger::print_syntax_error_position(error_printer, e);
         std::process::exit(1)
