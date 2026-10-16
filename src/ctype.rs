@@ -516,9 +516,25 @@ impl Type {
         }
     }
     pub fn function_signature(&self) -> Option<(Vec<Type>, Type, bool)> {
+        self.function_signature_ref()
+            .map(|(args, result, variadic)| (args.to_vec(), result.clone(), variadic))
+    }
+
+    /// Inspect a signature without cloning its parameter and result types.
+    pub(crate) fn function_signature_ref(&self) -> Option<(&[Type], &Type, bool)> {
         match self.unqualified() {
-            Self::Func(args, result) => Some((args.clone(), *result.clone(), false)),
-            Self::VariadicFunc(args, result) => Some((args.clone(), *result.clone(), true)),
+            Self::Func(args, result) => Some((args, result, false)),
+            Self::VariadicFunc(args, result) => Some((args, result, true)),
+            _ => None,
+        }
+    }
+
+    /// Reuse an owned signature's storage when constructing a call.
+    pub(crate) fn into_function_signature(self) -> Option<(Vec<Type>, Type, bool)> {
+        match self {
+            Self::Qualified(child, _) | Self::Aligned(child, _) => child.into_function_signature(),
+            Self::Func(args, result) => Some((args, *result, false)),
+            Self::VariadicFunc(args, result) => Some((args, *result, true)),
             _ => None,
         }
     }
@@ -567,7 +583,9 @@ impl Type {
             || match self.unqualified() {
                 Self::Arr(child, _) | Self::Vla(child, _) => child.contains_volatile_subobject(),
                 Self::Struct(record) => record
-                    .members()
+                    .definition()
+                    .borrow()
+                    .members
                     .iter()
                     .any(|member| member.ty.contains_volatile_subobject()),
                 // A volatile pointee does not make the pointer object volatile.
@@ -580,7 +598,9 @@ impl Type {
             Self::Vector(..) => true,
             Self::Arr(child, _) | Self::Vla(child, _) => child.contains_vector(),
             Self::Struct(record) => record
-                .members()
+                .definition()
+                .borrow()
+                .members
                 .iter()
                 .any(|member| member.ty.contains_vector()),
             _ => false,
@@ -592,7 +612,9 @@ impl Type {
             Self::Float16 => true,
             Self::Arr(child, _) | Self::Vla(child, _) => child.contains_float16(),
             Self::Struct(ty) => ty
-                .members()
+                .definition()
+                .borrow()
+                .members
                 .iter()
                 .any(|member| member.ty.contains_float16()),
             _ => false,
@@ -606,7 +628,9 @@ impl Type {
                 child.contains_reduced_alignment()
             }
             Self::Struct(record) => record
-                .members()
+                .definition()
+                .borrow()
+                .members
                 .iter()
                 .any(|member| member.ty.contains_reduced_alignment()),
             _ => false,
