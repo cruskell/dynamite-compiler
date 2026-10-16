@@ -119,6 +119,7 @@ struct DeclarationAttributes {
     transparent_union: bool,
     vector_size: Option<usize>,
     word_mode: bool,
+    hidden: bool,
 }
 
 pub struct AstBuilderImpl<'a> {
@@ -701,12 +702,26 @@ impl<'a> AstBuilderImpl<'a> {
                         unreachable!()
                     });
                     if visibility.string_encoding.unit_size() != 1
-                        || visibility.string_bytes != b"default"
+                        || !matches!(visibility.string_bytes.as_slice(), b"default" | b"hidden")
                     {
                         self.error_logger.print_error_position(
                             name.pos,
-                            "only default symbol visibility is supported",
+                            "only default and hidden symbol visibility are supported",
                         );
+                    }
+                    if visibility.string_bytes == b"hidden" {
+                        if self.parameter_depth != 0
+                            || self
+                                .declaration_attributes_state
+                                .as_ref()
+                                .is_none_or(|attributes| attributes.typedef_declarator)
+                        {
+                            self.error_logger.print_error_position(
+                                name.pos,
+                                "hidden visibility requires a file-scope symbol declaration",
+                            );
+                        }
+                        self.declaration_attributes_state.as_mut().unwrap().hidden = true;
                     }
                     self.expect_reserved(")");
                     if self.tokens[self.cur].s_value != ")" {
@@ -2758,6 +2773,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let noinline = attributes.noinline || previous.noinline;
                 let replaceable_inline_body = previous.gnu_inline && previous.inline_only();
                 let weak_import = attributes.weak_import || previous.weak_import;
+                let hidden = attributes.hidden || previous.hidden;
                 if weak_import && (internal || definition || previous.body.is_some()) {
                     self.error_logger.print_error_position(token.pos, "weak_import requires an external function declaration without a definition");
                 }
@@ -2773,6 +2789,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let function = self.functions.get_mut(&token.s_value).unwrap();
                 function.external_definition = external_definition;
                 function.noinline = noinline;
+                function.hidden = hidden;
                 let (_, result, _) = ty.function_signature_ref().unwrap();
                 if definition && result.unqualified() != &Type::Void {
                     self.expect_object_type(result, &token);
@@ -2849,6 +2866,7 @@ impl<'a> AstBuilderImpl<'a> {
                         gnu_inline,
                         noinline,
                         weak_import,
+                        hidden,
                         external_definition,
                         mutable_static: self.mutable_static.take(),
                         body,
@@ -2881,6 +2899,7 @@ impl<'a> AstBuilderImpl<'a> {
                     alignment,
                     thread_local,
                     weak_import: attributes.weak_import,
+                    hidden: attributes.hidden,
                     common: attributes.common,
                     declaration_only: external,
                     internal,
@@ -2947,6 +2966,7 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 existing.alignment = existing.alignment.max(alignment);
                 existing.weak_import = weak_import;
+                existing.hidden |= attributes.hidden;
                 existing.common = common;
                 if existing.thread_local != thread_local {
                     self.error_logger
@@ -4680,6 +4700,7 @@ impl<'a> AstBuilderImpl<'a> {
                     thread_local,
                     internal: !external,
                     weak_import: false,
+                    hidden: false,
                     common: false,
                     declaration_only: external,
                     data: None,
@@ -5696,6 +5717,7 @@ impl<'a> AstBuilderImpl<'a> {
                                 data: Some(data),
                                 internal: true,
                                 weak_import: false,
+                                hidden: false,
                                 common: false,
                                 declaration_only: false,
                             },
@@ -6025,6 +6047,7 @@ impl<'a> AstBuilderImpl<'a> {
                 thread_local: false,
                 internal: true,
                 weak_import: false,
+                hidden: false,
                 common: false,
                 declaration_only: false,
                 data: Some(GlobalVariableData::Arr(
@@ -7243,6 +7266,7 @@ mod tests {
                     thread_local: false,
                     internal: false,
                     weak_import: false,
+                    hidden: false,
                     common: false,
                     declaration_only: false,
                     ty: Type::I32,

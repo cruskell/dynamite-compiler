@@ -74,8 +74,48 @@ impl<'a> AsmGenerator<'a> {
                 )
                 .collect(),
         };
+        let references = if ast.functions.values().any(|function| function.hidden)
+            || ast.global_variables.values().any(|object| object.hidden)
+        {
+            crate::generator::referenced_symbols(&ast)
+        } else {
+            std::collections::HashSet::new()
+        };
+        let hidden = ast
+            .functions
+            .iter()
+            .filter(|(name, function)| {
+                function.hidden
+                    && !function.internal
+                    && ((function.body.is_some() && !function.inline_only())
+                        || references.contains(name.as_str()))
+            })
+            .map(|(name, _)| name)
+            .chain(
+                ast.global_variables
+                    .iter()
+                    .filter(|(name, object)| {
+                        object.hidden
+                            && !object.internal
+                            && (!object.declaration_only || references.contains(name.as_str()))
+                    })
+                    .map(|(name, _)| name),
+            )
+            .map(|name| {
+                format!(
+                    "{} {}",
+                    match self.target_os {
+                        Os::Linux => ".hidden",
+                        Os::MacOS => ".private_extern",
+                    },
+                    generator.with_prefix(name)
+                )
+                .into()
+            })
+            .collect::<Vec<Assembly>>();
         Box::<Assembly>::new(
             vec![
+                hidden.into(),
                 if let Os::MacOS = self.target_os {
                     ".section __TEXT,__text,regular,pure_instructions"
                 } else {
