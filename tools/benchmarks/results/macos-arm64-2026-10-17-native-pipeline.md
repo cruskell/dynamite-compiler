@@ -1,5 +1,8 @@
 # Native preprocessing and macOS LLVM tools
 
+**Historical load-contended run:** see the [resumed measurements](macos-arm64-2026-10-17-native-pipeline-resumed.md)
+for the follow-up against main including #199.
+
 These measurements compare the previous Dynamite pipeline against native
 preprocessing and the Clang-free LLVM tools pipeline. The baseline is Dynamite
 main `15d0267`, not Clang compiling C directly. The candidate compiler code is

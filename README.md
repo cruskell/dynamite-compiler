@@ -132,10 +132,12 @@ Its compiler headers are embedded in Dynamite; OS libc headers remain external. 
 Unsupported native options return an error. It is not a complete replacement
 for every Clang/GNU preprocessing extension; cross targets, sysroots, macro
 dumps, and date/time predefined macros are outside its current scope.
-The mixed native-preprocessing/Clang-lowering path showed a slower Git build
-median in the [macOS measurements](tools/benchmarks/results/macos-arm64-2026-10-17-native-pipeline.md).
-The LLVM tools pipeline had a similar Git median, but substantial host-load
-variation means performance non-regression is not yet established.
+[Six-round macOS measurements](tools/benchmarks/results/macos-arm64-2026-10-17-native-pipeline-resumed.md)
+found native preprocessing faster in every Git/Redis round. Median paired build
+time fell by 5.0% for Git and 18.5% for Redis with the existing Clang lowering
+backend. The Clang-free LLVM tools pipeline was close to the Git baseline
+(+0.4%) and reduced Redis time by 21.3%. Normal desktop variation prevents a
+precise equivalence claim for the small Git difference.
 LLVM IR-to-object lowering, assembly, and linking still use external tools;
 libc/libm/pthread dependencies of compiled programs are unchanged.
 
