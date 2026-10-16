@@ -327,7 +327,11 @@ impl Node {
                     );
                 }
             }
-            ty.unqualified().clone()
+            let mut ty = ty;
+            while let Type::Qualified(child, _) | Type::Aligned(child, _) = ty {
+                ty = *child;
+            }
+            ty
         })
     }
     pub(crate) fn resolve_qualified_type(&self) -> Option<Type> {
