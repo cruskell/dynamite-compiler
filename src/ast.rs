@@ -6570,6 +6570,30 @@ impl<'a> AstBuilderImpl<'a> {
             if t.s_value == "__builtin_expect" {
                 return self.branch_expectation_builtin(t);
             }
+            if t.s_value == "__builtin_alloca" {
+                if self.current_function.is_none() {
+                    self.error_logger
+                        .print_error_position(t.pos, "alloca requires function scope");
+                }
+                self.expect_reserved("(");
+                let mut size = self.assign();
+                if size
+                    .resolve_type_view()
+                    .is_none_or(|ty| ty.integer_info().is_none())
+                {
+                    self.error_logger
+                        .print_error_position(t.pos, "alloca size must be an integer");
+                }
+                Self::cast_integer(&mut size, &Type::integer(64, false));
+                self.expect_reserved(")");
+                return Node {
+                    nt: NodeType::StackAlloc,
+                    token: Some(t),
+                    lhs: Some(Box::new(size)),
+                    cty: Some(Type::Ptr(Box::new(Type::Void))),
+                    ..Node::default()
+                };
+            }
             if matches!(
                 t.s_value.as_str(),
                 "__builtin___memcpy_chk" | "__builtin___memmove_chk" | "__builtin___memset_chk"

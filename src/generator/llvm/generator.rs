@@ -2090,6 +2090,13 @@ impl<'a> IrGenerator<'a> {
                 });
                 return vec![];
             }
+            NodeType::StackAlloc => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let size = options.register_queue.pop().unwrap();
+                let register = options.new_register();
+                lines.push(format!("  %{register} = alloca i8, i64 {size}, align 16"));
+                return lines;
+            }
             NodeType::Assign => {
                 let mut lines = self.gen_node(node.rhs.as_ref().unwrap(), options);
                 let value = options.register_queue.pop().unwrap();

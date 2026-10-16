@@ -1101,6 +1101,52 @@ int main(void) {
     assert_eq!(compile_and_get_stdout(code, output_option), "6 4 1 1 8 24");
 }
 
+#[test_matrix(["-O0", "-O2"])]
+fn builtin_alloca_preserves_function_lifetime_and_expression_values(optimization: &str) {
+    let code = r"
+int check(int a,int *p,int b){return a!=3 || *p!=7 || b!=9;}
+int run(int n){int *saved[4];int i=0;while(i<4){saved[i]=__builtin_alloca(n*sizeof(int));saved[i][0]=i+7;i++;}
+int total=0;for(i=0;i<4;i++){total+=saved[i][0];if((unsigned long)saved[i]%16)return 1;}
+int *p=__builtin_alloca(sizeof(int));*p=7;
+return total!=34 || check(3,p,9) || (5+(unsigned long)__builtin_alloca(8)-5)%16;}
+int main(){return run(3)+run(5);}
+";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, "llvm", None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix([
+    "void *p=__builtin_alloca(4);",
+    "int main(){__builtin_alloca(1.5);return 0;}",
+    "int main(){int x;__builtin_alloca(&x);return 0;}",
+    "int main(){__builtin_alloca(4,8);return 0;}",
+])]
+fn invalid_alloca_calls_are_diagnosed(code: &str) {
+    assert_frontend_error(code);
+}
+
+#[test]
+fn native_alloca_has_a_source_diagnostic() {
+    let result = std::panic::catch_unwind(|| {
+        dynamite_compiler::generate(
+            "int main(){void *p=__builtin_alloca(8);return p==0;}",
+            "asm",
+            false,
+        )
+    });
+    let error = result.unwrap_err();
+    let message = error
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| error.downcast_ref::<&str>().copied())
+        .unwrap();
+    assert!(message.contains("alloca requires the LLVM backend") && message.contains('^'));
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn array_parameter_declarators(output_option: &str) {
     let code = "int sum(int n,int a[*]);int sum(int n,int a[const static n]){return a[0]+a[n-1]+sizeof(a);}int matrix(int n,int a[*][*]);int matrix(int n,int a[volatile static 2][n]){return a[1][n-1];}int main(){int a[3]={2,3,5};int b[2][3]={{0},{0,0,7}};return sum(3,a)+matrix(3,b)-22;}";
