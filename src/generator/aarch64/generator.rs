@@ -1295,6 +1295,18 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
 
+            NodeType::BitScan { bits, leading } => {
+                let register = if bits == 32 { W8 } else { X8 };
+                let mut lines = vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                ];
+                if !leading {
+                    lines.push(Assembly::inst2(RBIT, register, register));
+                }
+                lines.extend([Assembly::inst2(CLZ, register, register), Self::push(X8)]);
+                return lines.into();
+            }
             NodeType::FloatAbs => {
                 let shift = 65 - node.resolve_type().unwrap().float_bits().unwrap() as usize;
                 return vec![

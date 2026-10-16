@@ -73,6 +73,10 @@ impl<'a> IrGenerator<'a> {
                 "declare void @llvm.va_start(ptr)".into(),
                 "declare void @llvm.va_end(ptr)".into(),
                 "declare void @llvm.prefetch.p0(ptr, i32, i32, i32)".into(),
+                "declare i32 @llvm.ctlz.i32(i32, i1)".into(),
+                "declare i64 @llvm.ctlz.i64(i64, i1)".into(),
+                "declare i32 @llvm.cttz.i32(i32, i1)".into(),
+                "declare i64 @llvm.cttz.i64(i64, i1)".into(),
             ],
             generator.gen_string_literals(ast.string_literals),
             ast.global_variables
@@ -1866,6 +1870,22 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
 
+            NodeType::BitScan { bits, leading } => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let operand = options.register_queue.pop().unwrap();
+                let count = options.new_temporary();
+                let intrinsic = if leading { "ctlz" } else { "cttz" };
+                lines.push(format!(
+                    "  %{count} = call i{bits} @llvm.{intrinsic}.i{bits}(i{bits} {operand}, i1 false)"
+                ));
+                if bits == 64 {
+                    let result = options.new_register();
+                    lines.push(format!("  %{result} = trunc i64 %{count} to i32"));
+                } else {
+                    options.register_queue.push(format!("%{count}"));
+                }
+                return lines;
+            }
             NodeType::FloatAbs => {
                 let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
                 let value = options.register_queue.pop().unwrap();

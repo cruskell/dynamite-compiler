@@ -6081,92 +6081,9 @@ impl<'a> AstBuilderImpl<'a> {
             self.error_logger
                 .print_error_position(token.pos, "bit-scan operand is not a constant expression");
         }
-        let value = self.register_local_variable(
-            Token {
-                s_value: format!(".bit_scan.value.{}.{}", token.pos, self.offset_size),
-                ..token.clone()
-            },
-            ty.clone(),
-        );
-        let count = self.register_local_variable(
-            Token {
-                s_value: format!(".bit_scan.count.{}.{}", token.pos, self.offset_size),
-                ..token.clone()
-            },
-            Type::I32,
-        );
-        let empty = self.register_local_variable(
-            Token {
-                s_value: format!(".bit_scan.empty.{}.{}", token.pos, self.offset_size),
-                ..token.clone()
-            },
-            Type::I32,
-        );
-        let binary = |nt, lhs, rhs| Node::new_with_op(Some(token.clone()), nt, lhs, rhs);
-        let number = |value| Node {
-            cty: Some(ty.clone()),
-            ..Node::new_with_num(Some(token.clone()), value)
-        };
-        let zero = || Node::new_with_num(Some(token.clone()), 0);
-        let mut children = vec![
-            binary(NodeType::Assign, value.clone(), argument),
-            binary(NodeType::Assign, count.clone(), zero()),
-        ];
-        let mut step = bits / 2;
-        while step != 0 {
-            let tested = if leading {
-                binary(
-                    NodeType::BitRight,
-                    value.clone(),
-                    number(usize::from(bits - step)),
-                )
-            } else {
-                binary(
-                    NodeType::BitAnd,
-                    value.clone(),
-                    number((1usize << step) - 1),
-                )
-            };
-            children.push(binary(
-                NodeType::Assign,
-                empty.clone(),
-                binary(NodeType::Eq, tested, zero()),
-            ));
-            let amount = binary(
-                NodeType::Mul,
-                empty.clone(),
-                Node::new_with_num(Some(token.clone()), usize::from(step)),
-            );
-            children.push(binary(
-                NodeType::Assign,
-                count.clone(),
-                binary(NodeType::Add, count.clone(), amount.clone()),
-            ));
-            children.push(binary(
-                NodeType::Assign,
-                value.clone(),
-                binary(
-                    if leading {
-                        NodeType::BitLeft
-                    } else {
-                        NodeType::BitRight
-                    },
-                    value.clone(),
-                    amount,
-                ),
-            ));
-            step /= 2;
-        }
-        children.push(binary(
-            NodeType::Add,
-            count,
-            binary(NodeType::Eq, value, zero()),
-        ));
         Node {
-            nt: NodeType::Sequence,
-            token: Some(token),
-            children,
-            ..Node::default()
+            cty: Some(Type::I32),
+            ..Node::new_with_op_and_lhs(Some(token), NodeType::BitScan { bits, leading }, argument)
         }
     }
 
