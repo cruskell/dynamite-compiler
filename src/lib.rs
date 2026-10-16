@@ -158,3 +158,5 @@ fn gen_asm(ast: ProgramAst, error_printer: &dyn error::ErrorLogger) -> String {
 fn gen_llvm_ir(ast: ProgramAst, error_printer: &dyn error::ErrorLogger) -> String {
     generator::llvm::generator::IrGenerator::new(error_printer).generate(ast)
 }
+
+pub mod toolchain;

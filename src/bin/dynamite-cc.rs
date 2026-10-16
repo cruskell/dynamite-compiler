@@ -124,8 +124,8 @@ impl Arguments {
                         result.dependency_targets.extend([arg[..3].into(), value]);
                     }
                 }
-                "-I" | "-D" | "-U" | "-isystem" | "-iquote" | "-include" | "-imacros"
-                | "-idirafter" | "-isysroot" | "--sysroot" => {
+                "-I" | "-D" | "-U" | "-F" | "-iframework" | "-isystem" | "-iquote" | "-include"
+                | "-imacros" | "-idirafter" | "-isysroot" | "--sysroot" => {
                     result.preprocessing.push(arg.clone());
                     let value = argument_value(args, &mut index)?;
                     result.preprocessing.push(value.clone());
@@ -182,6 +182,8 @@ impl Arguments {
                     }
                     if [
                         "-I",
+                        "-F",
+                        "-iframework",
                         "-D",
                         "-U",
                         "-isystem",

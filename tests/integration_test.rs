@@ -7956,7 +7956,7 @@ fn native_dependency_scan_does_not_require_clang() {
 }
 
 #[test]
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(any(all(target_os = "linux", target_arch = "x86_64"), target_os = "macos"))]
 fn native_dependency_batch_resets_macros_and_once_state() {
     let files = DriverFixture::new();
     files.write("one.h", "#define VALUE 1\n");
@@ -7997,7 +7997,7 @@ fn native_dependency_batch_resets_macros_and_once_state() {
 }
 
 #[test_matrix(["asm","llvm"])]
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(any(all(target_os = "linux", target_arch = "x86_64"), target_os = "macos"))]
 fn native_preprocessing_generates_executable_code_without_clang(format: &str) {
     let files = DriverFixture::new();
     files.write(
@@ -8332,4 +8332,40 @@ fn llvm_tools_backend_rejects_unsupported_options_without_clang_fallback() {
         assert!(stderr.contains("LLVM"), "{stderr}");
         assert!(!files.0.join("main.o").exists());
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_macos_preprocessing_uses_sdk_and_host_data_model() {
+    let files = DriverFixture::new();
+    files.write(
+        "source.c",
+        r#"
+#include <stddef.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <CoreFoundation/CFString.h>
+#if !defined(__APPLE__) || !defined(__MACH__) || defined(__linux__)
+#error incorrect OS profile
+#endif
+#if defined(__arm64__) && (defined(__x86_64__) || __SIZEOF_LONG_DOUBLE__ != 8)
+#error incorrect ARM64 profile
+#endif
+_Static_assert(sizeof(long double)==__SIZEOF_LONG_DOUBLE__, "long double ABI");
+_Static_assert(sizeof(uint64_t)==8, "stdint ABI");
+int main(void){return 0;}
+"#,
+    );
+    let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+        .current_dir(&files.0)
+        .env("DYNAMITE_PREPROCESSOR", "native")
+        .env("DYNAMITE_CLANG", "/missing-clang")
+        .args(["-E", "source.c", "-o", "output.i"])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    let contents = fs::read_to_string(files.0.join("output.i")).unwrap();
+    assert!(!contents.contains("_PTHREAD_SWIFT_IMPORTER_NULLABILITY_COMPAT"));
+    files.success(&["-x", "c", "output.i", "-o", "program"]);
+    assert_eq!(files.executable_status("program"), Some(0));
 }

@@ -409,7 +409,7 @@ pub(crate) fn preprocess_file(
     )
 }
 
-/// Preprocess a native Linux x86_64 C input without Clang or LLVM.
+/// Preprocess a supported native C input without Clang or LLVM.
 /// Unsupported preprocessing options return an error rather than invoking a fallback.
 pub fn preprocess_file_native(path: &Path, arguments: &[String]) -> Result<String, String> {
     let code = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;

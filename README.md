@@ -105,11 +105,11 @@ Clang:
 DYNAMITE_PREPROCESSOR=native make -j4 CC=/absolute/path/to/target/release/dynamite-cc
 ```
 
-This opt-in currently supports native Linux x86_64, GNU/C89 through C17,
+This opt-in supports native Linux x86_64 and macOS ARM64/x86_64, GNU/C89 through C17,
 object/function/variadic macros, stringification, token pasting, conditional
 expressions, quoted/system includes, `include_next`, `pragma once`, and
 `-I`/`-isystem`/`-iquote`/`-idirafter`/`-D`/`-U`/`-include`/`-imacros`.
-Its compiler headers are embedded in Dynamite; OS libc headers remain external.
+Its compiler headers are embedded in Dynamite; OS libc headers remain external. On macOS, `SDKROOT` or `xcrun --sdk macosx --show-sdk-path` locates the SDK without invoking Clang. `-isysroot`, `-F`, and `-iframework` select SDK/framework paths. `MACOSX_DEPLOYMENT_TARGET` selects availability macros (defaults: ARM64 11.0, x86_64 10.13). Architecture and long-double macros follow the native ABI.
 Unsupported native options return an error. It is not a complete replacement
 for every Clang/GNU preprocessing extension; cross targets, sysroots, macro
 dumps, and date/time predefined macros are outside its current scope.
