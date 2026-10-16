@@ -2,6 +2,7 @@
 """Compare clean upstream builds using the same wrapper, flags and make parallelism."""
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,8 @@ def main():
     parser.add_argument("--clang", default="clang")
     parser.add_argument("--project", choices=["both", "redis", "git"], default="both")
     parser.add_argument("--dynamite", type=Path, default=REPO / "target/release/dynamite-cc")
+    parser.add_argument("--baseline-dynamite", type=Path,
+                        help="Also compare a saved release compiler from before a change")
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
@@ -34,6 +37,12 @@ def main():
     clang = shutil.which(args.clang)
     if not clang:
         parser.error("Clang executable was not found")
+    compilers = {"dynamite": args.dynamite.resolve(), "clang": Path(clang)}
+    if args.baseline_dynamite:
+        compilers = {"baseline": args.baseline_dynamite.resolve(), **compilers}
+    for name, executable in compilers.items():
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            parser.error(f"{name} compiler is not executable: {executable}")
     root = args.output.resolve()
     sources = {"redis": args.redis_source.resolve(), "git": args.git_source.resolve()}
     if args.project != "both":
@@ -50,6 +59,9 @@ def main():
         "clang": output([clang, "--version"]),
         "dynamite_commit": output(["git", "rev-parse", "HEAD"]),
         "dynamite_diff": output(["git", "diff"]),
+        "compiler_binaries": {name: {"path": str(path),
+                                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                              for name, path in compilers.items()},
         "jobs": args.jobs, "runs": args.runs,
         "sources": {name: {"path": str(path), "commit": output(["git", "rev-parse", "HEAD"], path),
                            "status": output(["git", "status", "--porcelain"], path)}
@@ -61,13 +73,13 @@ def main():
     redis_flags = flags + " -D__STDC_NO_ATOMICS__=1"
     for project, source in sources.items():
         for run in range(1, args.runs + 1):
-            order = ("dynamite", "clang") if run % 2 else ("clang", "dynamite")
+            order = list(compilers) if run % 2 else list(reversed(compilers))
             for compiler in order:
                 name = f"{project}-{compiler}-{run}"
                 work = root / name
                 shutil.copytree(source, work, symlinks=True)
                 records = root / (name + "-records")
-                executable = args.dynamite.resolve() if compiler == "dynamite" else clang
+                executable = compilers[compiler]
                 env = dict(os.environ, BENCH_COMPILER=str(executable), BENCH_LOG=str(records),
                            BENCH_TRACE="1", DYNAMITE_CLANG=clang)
                 command = ["make", f"-j{args.jobs}", "CC=" + str(REPO / "tools/benchmarks/cc.py")]

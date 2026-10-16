@@ -76,3 +76,25 @@ make; these are retained in the failed-invocation list, separate from C builds.
 Copies preserve symbolic links, and source directories must have no tracked,
 untracked or ignored build changes. `--project git` or `--project redis` selects
 a single project when needed.
+
+For an optimization comparison, save the previous release `dynamite-cc` binary,
+then pass `--baseline-dynamite /path/to/saved/dynamite-cc` to `run.py`. Each
+project runs baseline/Dynamite/Clang, then reverses that order on even runs.
+The summary includes all three compilers, and metadata records their binary
+hashes. Keep builds serial and avoid unrelated CPU-intensive work during timing.
+
+On Linux/glibc, allocation requests can be counted separately from timing:
+
+```sh
+clang -shared -fPIC -std=c11 -O2 tools/benchmarks/allocations.c -o temp/allocations.so
+LD_PRELOAD="$PWD/temp/allocations.so" target/release/examples/profile_frontend \
+  temp/benchmark-run/matched/git-revision.i 1 temp/profile.ll
+```
+
+The stderr record contains `allocation-count`, malloc/calloc/realloc calls,
+cumulative requested bytes, and non-null free calls, separated by tabs. These
+are whole-process counts, including input/output and startup; they are not
+live/peak memory, and realloc requests count the entire new size. Aligned
+allocation APIs are not intercepted. Counter runs add atomic-operation overhead
+and must not supply performance timings. The interposer uses glibc internals
+and is an optional Linux profiling tool, not part of the compiler runtime.

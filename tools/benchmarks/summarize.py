@@ -46,7 +46,7 @@ def summarize(root):
         })
     groups = []
     for project in ("redis", "git"):
-        for compiler in ("dynamite", "clang"):
+        for compiler in dict.fromkeys(build["compiler"] for build in builds):
             runs = [b for b in builds if b["project"] == project and b["compiler"] == compiler]
             if not runs:
                 continue

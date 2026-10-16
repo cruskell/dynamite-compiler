@@ -1,0 +1,1926 @@
+{
+  "rounds": 15,
+  "order": "alternating before/after, serial",
+  "binaries": {
+    "before": {
+      "path": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/build-benchmark/profile-before-allocations",
+      "sha256": "8109a794603a733046b1fe7175fc1f70d4b634afd67cd1471a26fced2746aab4"
+    },
+    "after": {
+      "path": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/target/release/examples/profile_frontend",
+      "sha256": "a61c2f107713238066aac60888df3d36409de6e943fa83a59e01d1e1f63371a4"
+    }
+  },
+  "samples": [
+    {
+      "input": "redis-adlist",
+      "input_sha256": "2f43aa433b2992ea436eb18fb0fd9636863ad69d8509d530c6209bcc97b7a9bb",
+      "input_bytes": 46370,
+      "canonical_ir_sha256": {
+        "before": "6b09099260933502440b21478c2ab3080e2d3e864c4bd691763da894f827135c",
+        "after": "6b09099260933502440b21478c2ab3080e2d3e864c4bd691763da894f827135c"
+      },
+      "canonical_ir_equal": true,
+      "ir_bytes": {
+        "before": 40381,
+        "after": 40381
+      },
+      "stages_all": {
+        "before": {
+          "tokenize": [
+            0.001913874,
+            0.001973179,
+            0.001988586,
+            0.001907096,
+            0.001940231,
+            0.001936127,
+            0.00195083,
+            0.001904066,
+            0.001996126,
+            0.001989733,
+            0.001994302,
+            0.001873461,
+            0.002004287,
+            0.001956438,
+            0.00192773
+          ],
+          "parse": [
+            0.004636677,
+            0.004938924,
+            0.004808191,
+            0.005010451,
+            0.005543719,
+            0.004571229,
+            0.004686962,
+            0.004602485,
+            0.004697996,
+            0.004673776,
+            0.004728532,
+            0.004588855,
+            0.004644085,
+            0.004700629,
+            0.004698415
+          ],
+          "generate": [
+            0.000935954,
+            0.001182962,
+            0.001046621,
+            0.001027555,
+            0.001035831,
+            0.000962043,
+            0.000946675,
+            0.000948581,
+            0.000954733,
+            0.000974322,
+            0.000971022,
+            0.000935731,
+            0.000955559,
+            0.000990343,
+            0.000974542
+          ],
+          "drop_ast": [
+            0.000363636,
+            0.000558796,
+            0.000381893,
+            0.0003845,
+            0.000435419,
+            0.000323527,
+            0.000307491,
+            0.000309784,
+            0.000340703,
+            0.000330797,
+            0.00033531,
+            0.000312017,
+            0.000325243,
+            0.000351994,
+            0.000318396
+          ],
+          "drop_tokens": [
+            0.000178201,
+            0.000238723,
+            0.000160311,
+            0.000164931,
+            0.000168087,
+            0.000155364,
+            0.000151177,
+            0.000154626,
+            0.000178166,
+            0.000207924,
+            0.00015476,
+            0.00019115,
+            0.00017577,
+            0.000234535,
+            0.000192736
+          ],
+          "frontend_total": [
+            0.008076072,
+            0.008968787,
+            0.008437162,
+            0.008778282,
+            0.009517414,
+            0.007994358,
+            0.008105008,
+            0.007965874,
+            0.008235138,
+            0.008222845,
+            0.008230787,
+            0.007946903,
+            0.008150834,
+            0.008280752,
+            0.00815869
+          ]
+        },
+        "after": {
+          "tokenize": [
+            0.001590268,
+            0.001557431,
+            0.001475395,
+            0.001470452,
+            0.001436148,
+            0.001434896,
+            0.001399256,
+            0.001480719,
+            0.001442409,
+            0.001534747,
+            0.001434312,
+            0.001538093,
+            0.001494287,
+            0.001473686,
+            0.001448088
+          ],
+          "parse": [
+            0.004828816,
+            0.004684686,
+            0.004776701,
+            0.004870574,
+            0.00481529,
+            0.005932811,
+            0.00445799,
+            0.004442639,
+            0.004537418,
+            0.004656215,
+            0.004406564,
+            0.004392828,
+            0.004435436,
+            0.0044817,
+            0.004403956
+          ],
+          "generate": [
+            0.001030279,
+            0.001000585,
+            0.001105678,
+            0.001013072,
+            0.001150227,
+            0.000919734,
+            0.000948572,
+            0.000937011,
+            0.000978775,
+            0.000939021,
+            0.000933933,
+            0.000959778,
+            0.000939132,
+            0.000951898,
+            0.000965105
+          ],
+          "drop_ast": [
+            0.000334328,
+            0.000280394,
+            0.000377121,
+            0.000321804,
+            0.000371476,
+            0.000259572,
+            0.000257304,
+            0.000276197,
+            0.000285637,
+            0.000392284,
+            0.000268456,
+            0.000274946,
+            0.000257487,
+            0.000262639,
+            0.000285171
+          ],
+          "drop_tokens": [
+            0.000186529,
+            0.000158024,
+            0.000160244,
+            0.000205598,
+            0.00016409,
+            0.000149707,
+            0.000154186,
+            0.000173052,
+            0.000171675,
+            0.000158127,
+            0.000149067,
+            0.0001919,
+            0.00016619,
+            0.000176033,
+            0.000167607
+          ],
+          "frontend_total": [
+            0.008021443,
+            0.00772976,
+            0.00824229,
+            0.00793257,
+            0.008239198,
+            0.008745059,
+            0.007262079,
+            0.007356521,
+            0.007463528,
+            0.007759371,
+            0.007238031,
+            0.007407993,
+            0.007359985,
+            0.007393682,
+            0.007326829
+          ]
+        }
+      },
+      "stages_median": {
+        "before": {
+          "tokenize": 0.00195083,
+          "parse.declarations": 0.004074575,
+          "parse.validate": 0.000280878,
+          "parse.lower": 0.000276626,
+          "parse.inline": 1.811e-06,
+          "parse": 0.004697996,
+          "generate": 0.000971022,
+          "drop_ast": 0.00033531,
+          "drop_tokens": 0.00017577,
+          "frontend_total": 0.008222845
+        },
+        "after": {
+          "tokenize": 0.001473686,
+          "parse.declarations": 0.003906238,
+          "parse.validate": 0.000294338,
+          "parse.lower": 0.000279917,
+          "parse.inline": 2.097e-06,
+          "parse": 0.004537418,
+          "generate": 0.000959778,
+          "drop_ast": 0.000280394,
+          "drop_tokens": 0.00016619,
+          "frontend_total": 0.007463528
+        }
+      },
+      "allocation_runs": {
+        "before": [
+          {
+            "malloc_calloc_realloc_calls": 47896,
+            "requested_bytes": 8075338,
+            "non_null_free_calls": 45994
+          },
+          {
+            "malloc_calloc_realloc_calls": 47896,
+            "requested_bytes": 8075338,
+            "non_null_free_calls": 45994
+          },
+          {
+            "malloc_calloc_realloc_calls": 47896,
+            "requested_bytes": 8075338,
+            "non_null_free_calls": 45994
+          }
+        ],
+        "after": [
+          {
+            "malloc_calloc_realloc_calls": 42755,
+            "requested_bytes": 7129453,
+            "non_null_free_calls": 40853
+          },
+          {
+            "malloc_calloc_realloc_calls": 42755,
+            "requested_bytes": 7129453,
+            "non_null_free_calls": 40853
+          },
+          {
+            "malloc_calloc_realloc_calls": 42755,
+            "requested_bytes": 7129453,
+            "non_null_free_calls": 40853
+          }
+        ]
+      }
+    },
+    {
+      "input": "redis-server",
+      "input_sha256": "908c6aee6336ef9520bd74784696dd10bcf6a258d01a4f9451bd104c5f9ed5e2",
+      "input_bytes": 738169,
+      "canonical_ir_sha256": {
+        "before": "20f25aae708a5ce75bbdd72f687c74a0ba08c7383b55101876213b1f0c5a6a93",
+        "after": "20f25aae708a5ce75bbdd72f687c74a0ba08c7383b55101876213b1f0c5a6a93"
+      },
+      "canonical_ir_equal": true,
+      "ir_bytes": {
+        "before": 1322124,
+        "after": 1322124
+      },
+      "stages_all": {
+        "before": {
+          "tokenize": [
+            0.041295984,
+            0.041970817,
+            0.043197323,
+            0.041209058,
+            0.044902471,
+            0.041375434,
+            0.042136566,
+            0.043221378,
+            0.04153975,
+            0.040852982,
+            0.041204948,
+            0.041232162,
+            0.041877093,
+            0.042487372,
+            0.041616047
+          ],
+          "parse": [
+            0.105160975,
+            0.102371046,
+            0.103845718,
+            0.103156651,
+            0.102999564,
+            0.105995179,
+            0.103546289,
+            0.103381247,
+            0.102961743,
+            0.102331859,
+            0.103549048,
+            0.102351584,
+            0.105758223,
+            0.103627142,
+            0.104165129
+          ],
+          "generate": [
+            0.033254377,
+            0.033085144,
+            0.033773242,
+            0.033316753,
+            0.034562887,
+            0.033716632,
+            0.03339395,
+            0.033481029,
+            0.033296946,
+            0.033198128,
+            0.033732904,
+            0.033492543,
+            0.033770322,
+            0.033781122,
+            0.033156347
+          ],
+          "drop_ast": [
+            0.010847211,
+            0.010710353,
+            0.010998087,
+            0.010655564,
+            0.010734124,
+            0.010755729,
+            0.010592998,
+            0.01094773,
+            0.010750018,
+            0.010297801,
+            0.010673381,
+            0.011228154,
+            0.010851353,
+            0.011026091,
+            0.010712231
+          ],
+          "drop_tokens": [
+            0.003414641,
+            0.003450111,
+            0.003609676,
+            0.003498577,
+            0.003424943,
+            0.003452752,
+            0.003500407,
+            0.002465168,
+            0.002366547,
+            0.003367546,
+            0.002460443,
+            0.002596324,
+            0.003433204,
+            0.00348385,
+            0.002467237
+          ],
+          "frontend_total": [
+            0.194034089,
+            0.191651181,
+            0.195542362,
+            0.191898557,
+            0.196690911,
+            0.195359289,
+            0.193233527,
+            0.193581023,
+            0.190981891,
+            0.190110678,
+            0.191684799,
+            0.190968422,
+            0.195760588,
+            0.194470468,
+            0.19218387
+          ]
+        },
+        "after": {
+          "tokenize": [
+            0.034326354,
+            0.034668272,
+            0.034955959,
+            0.035080021,
+            0.036790413,
+            0.037078649,
+            0.037996919,
+            0.037033989,
+            0.034336141,
+            0.035077626,
+            0.034370193,
+            0.034261952,
+            0.034353243,
+            0.034282319,
+            0.034086174
+          ],
+          "parse": [
+            0.100132379,
+            0.098130022,
+            0.102011499,
+            0.100330024,
+            0.099998333,
+            0.099190198,
+            0.099563828,
+            0.099676833,
+            0.101203786,
+            0.099804712,
+            0.098495531,
+            0.098935459,
+            0.099615499,
+            0.099108031,
+            0.097945168
+          ],
+          "generate": [
+            0.033467794,
+            0.033558452,
+            0.03313672,
+            0.034163789,
+            0.033504911,
+            0.033003079,
+            0.033726821,
+            0.033524247,
+            0.034450198,
+            0.033662259,
+            0.032931812,
+            0.033412565,
+            0.03329176,
+            0.033122589,
+            0.03292694
+          ],
+          "drop_ast": [
+            0.010719555,
+            0.011183214,
+            0.010620652,
+            0.011965238,
+            0.0117156,
+            0.010887587,
+            0.011483058,
+            0.01112691,
+            0.011004389,
+            0.011068906,
+            0.011061571,
+            0.010995472,
+            0.010499412,
+            0.011148397,
+            0.01067089
+          ],
+          "drop_tokens": [
+            0.003439725,
+            0.003516861,
+            0.003381477,
+            0.003517918,
+            0.002442773,
+            0.002415304,
+            0.003424581,
+            0.002399466,
+            0.003768976,
+            0.003497975,
+            0.003371555,
+            0.003398426,
+            0.00357552,
+            0.003360648,
+            0.003385869
+          ],
+          "frontend_total": [
+            0.182151783,
+            0.181121897,
+            0.184173814,
+            0.18512353,
+            0.184527446,
+            0.182644,
+            0.186258311,
+            0.183825791,
+            0.185125124,
+            0.183178888,
+            0.18029469,
+            0.181066054,
+            0.181400701,
+            0.181098887,
+            0.179078912
+          ]
+        }
+      },
+      "stages_median": {
+        "before": {
+          "tokenize": 0.041616047,
+          "parse.declarations": 0.084641572,
+          "parse.validate": 0.009793187,
+          "parse.lower": 0.008517125,
+          "parse.inline": 3.2419e-05,
+          "parse": 0.103546289,
+          "generate": 0.033481029,
+          "drop_ast": 0.010750018,
+          "drop_tokens": 0.003424943,
+          "frontend_total": 0.193233527
+        },
+        "after": {
+          "tokenize": 0.034668272,
+          "parse.declarations": 0.081239709,
+          "parse.validate": 0.009678392,
+          "parse.lower": 0.008293776,
+          "parse.inline": 3.2717e-05,
+          "parse": 0.099615499,
+          "generate": 0.033467794,
+          "drop_ast": 0.011061571,
+          "drop_tokens": 0.003398426,
+          "frontend_total": 0.182644
+        }
+      },
+      "allocation_runs": {
+        "before": [
+          {
+            "malloc_calloc_realloc_calls": 1629931,
+            "requested_bytes": 162832275,
+            "non_null_free_calls": 1361761
+          },
+          {
+            "malloc_calloc_realloc_calls": 1629931,
+            "requested_bytes": 162832275,
+            "non_null_free_calls": 1361761
+          },
+          {
+            "malloc_calloc_realloc_calls": 1629931,
+            "requested_bytes": 162832275,
+            "non_null_free_calls": 1361761
+          }
+        ],
+        "after": [
+          {
+            "malloc_calloc_realloc_calls": 1553331,
+            "requested_bytes": 148795090,
+            "non_null_free_calls": 1285161
+          },
+          {
+            "malloc_calloc_realloc_calls": 1553331,
+            "requested_bytes": 148795090,
+            "non_null_free_calls": 1285161
+          },
+          {
+            "malloc_calloc_realloc_calls": 1553331,
+            "requested_bytes": 148795090,
+            "non_null_free_calls": 1285161
+          }
+        ]
+      }
+    },
+    {
+      "input": "git-abspath",
+      "input_sha256": "1079d3658eb36eb665d846024b17c8109554ead11aa535b72f8a4192eb67aca1",
+      "input_bytes": 788201,
+      "canonical_ir_sha256": {
+        "before": "50a3c7f050b6b714b5e26a4cea965849cce34d22736ed024916520fe1cd04e6b",
+        "after": "50a3c7f050b6b714b5e26a4cea965849cce34d22736ed024916520fe1cd04e6b"
+      },
+      "canonical_ir_equal": true,
+      "ir_bytes": {
+        "before": 48120,
+        "after": 48120
+      },
+      "stages_all": {
+        "before": {
+          "tokenize": [
+            0.026968056,
+            0.026030877,
+            0.026453242,
+            0.025828272,
+            0.026928546,
+            0.027681079,
+            0.025942345,
+            0.028407312,
+            0.029981513,
+            0.025904195,
+            0.025768476,
+            0.025962622,
+            0.027065519,
+            0.026397705,
+            0.026282112
+          ],
+          "parse": [
+            0.062450819,
+            0.061517358,
+            0.062655246,
+            0.061521088,
+            0.06264617,
+            0.063497658,
+            0.063110988,
+            0.063426172,
+            0.062761697,
+            0.063184839,
+            0.061890211,
+            0.06193804,
+            0.064388366,
+            0.06299842,
+            0.062665455
+          ],
+          "generate": [
+            0.002208275,
+            0.002068402,
+            0.002062023,
+            0.002110532,
+            0.002083082,
+            0.002140505,
+            0.002200031,
+            0.002040062,
+            0.002066292,
+            0.00202934,
+            0.002043721,
+            0.002146981,
+            0.002219621,
+            0.002074891,
+            0.00206093
+          ],
+          "drop_ast": [
+            0.009499715,
+            0.008128084,
+            0.007914896,
+            0.00809037,
+            0.008210649,
+            0.008114875,
+            0.008542885,
+            0.007992373,
+            0.008092969,
+            0.008174868,
+            0.008046681,
+            0.008077891,
+            0.00935031,
+            0.008188596,
+            0.008064522
+          ],
+          "drop_tokens": [
+            0.002446568,
+            0.002329365,
+            0.002358645,
+            0.00233798,
+            0.002394996,
+            0.002447098,
+            0.002564782,
+            0.002350158,
+            0.002356945,
+            0.002356384,
+            0.002353913,
+            0.002367628,
+            0.002359742,
+            0.002382361,
+            0.002437984
+          ],
+          "frontend_total": [
+            0.103638302,
+            0.100130231,
+            0.101500113,
+            0.099945465,
+            0.102320651,
+            0.103938748,
+            0.102559496,
+            0.104273959,
+            0.105316988,
+            0.10170592,
+            0.100158725,
+            0.100548746,
+            0.105441622,
+            0.102098375,
+            0.101569977
+          ]
+        },
+        "after": {
+          "tokenize": [
+            0.020434959,
+            0.020802725,
+            0.019510741,
+            0.020110568,
+            0.02139062,
+            0.019936461,
+            0.020465464,
+            0.019924478,
+            0.020898626,
+            0.019895943,
+            0.02077346,
+            0.019615958,
+            0.01997988,
+            0.019992756,
+            0.019613079
+          ],
+          "parse": [
+            0.061505626,
+            0.062022458,
+            0.06139443,
+            0.061907597,
+            0.061621617,
+            0.060543909,
+            0.062588947,
+            0.062282168,
+            0.06250015,
+            0.062368241,
+            0.062031861,
+            0.060971267,
+            0.06268157,
+            0.061563027,
+            0.0616567
+          ],
+          "generate": [
+            0.002071305,
+            0.002072529,
+            0.002066871,
+            0.002108286,
+            0.002055866,
+            0.002104061,
+            0.002035731,
+            0.002088668,
+            0.002052376,
+            0.002070601,
+            0.002040525,
+            0.002017971,
+            0.002005751,
+            0.00204264,
+            0.00209602
+          ],
+          "drop_ast": [
+            0.00834026,
+            0.008388206,
+            0.008472596,
+            0.00826332,
+            0.006712779,
+            0.00662455,
+            0.007088064,
+            0.006930283,
+            0.008478595,
+            0.007577841,
+            0.008247359,
+            0.006651787,
+            0.008098514,
+            0.007046355,
+            0.006968605
+          ],
+          "drop_tokens": [
+            0.00234066,
+            0.002388996,
+            0.002340206,
+            0.002367419,
+            0.002358175,
+            0.002331045,
+            0.002397241,
+            0.002311859,
+            0.00237464,
+            0.002351415,
+            0.002339181,
+            0.002352356,
+            0.002315833,
+            0.002343571,
+            0.00234122
+          ],
+          "frontend_total": [
+            0.094746807,
+            0.09573399,
+            0.093856282,
+            0.094814502,
+            0.094196406,
+            0.091596659,
+            0.094635185,
+            0.093595698,
+            0.096361141,
+            0.094321653,
+            0.095509532,
+            0.091669126,
+            0.095139885,
+            0.093046269,
+            0.092733248
+          ]
+        }
+      },
+      "stages_median": {
+        "before": {
+          "tokenize": 0.026397705,
+          "parse.declarations": 0.055966481,
+          "parse.validate": 0.003578166,
+          "parse.lower": 0.003344559,
+          "parse.inline": 4.0597e-05,
+          "parse": 0.062665455,
+          "generate": 0.002074891,
+          "drop_ast": 0.008114875,
+          "drop_tokens": 0.002359742,
+          "frontend_total": 0.102098375
+        },
+        "after": {
+          "tokenize": 0.019992756,
+          "parse.declarations": 0.054520553,
+          "parse.validate": 0.003540623,
+          "parse.lower": 0.003459176,
+          "parse.inline": 4.025e-05,
+          "parse": 0.061907597,
+          "generate": 0.002066871,
+          "drop_ast": 0.007577841,
+          "drop_tokens": 0.002343571,
+          "frontend_total": 0.094321653
+        }
+      },
+      "allocation_runs": {
+        "before": [
+          {
+            "malloc_calloc_realloc_calls": 678255,
+            "requested_bytes": 115953493,
+            "non_null_free_calls": 671271
+          },
+          {
+            "malloc_calloc_realloc_calls": 678255,
+            "requested_bytes": 115953493,
+            "non_null_free_calls": 671271
+          },
+          {
+            "malloc_calloc_realloc_calls": 678255,
+            "requested_bytes": 115953493,
+            "non_null_free_calls": 671271
+          }
+        ],
+        "after": [
+          {
+            "malloc_calloc_realloc_calls": 601587,
+            "requested_bytes": 102316187,
+            "non_null_free_calls": 594603
+          },
+          {
+            "malloc_calloc_realloc_calls": 601587,
+            "requested_bytes": 102316187,
+            "non_null_free_calls": 594603
+          },
+          {
+            "malloc_calloc_realloc_calls": 601587,
+            "requested_bytes": 102316187,
+            "non_null_free_calls": 594603
+          }
+        ]
+      }
+    },
+    {
+      "input": "git-revision",
+      "input_sha256": "e971d8edcf66d4865d92df8e4201cb792f791cd0560a718f0b0381659d965acd",
+      "input_bytes": 1138115,
+      "canonical_ir_sha256": {
+        "before": "2871c1da6e91e226e0ec688648a96a6058fe924b3b4e59429037e0f75a8efba1",
+        "after": "2871c1da6e91e226e0ec688648a96a6058fe924b3b4e59429037e0f75a8efba1"
+      },
+      "canonical_ir_equal": true,
+      "ir_bytes": {
+        "before": 958482,
+        "after": 958482
+      },
+      "stages_all": {
+        "before": {
+          "tokenize": [
+            0.039776824,
+            0.042680124,
+            0.041164447,
+            0.040975159,
+            0.039641901,
+            0.039305547,
+            0.039406919,
+            0.041257272,
+            0.040199148,
+            0.039446543,
+            0.040471164,
+            0.04041621,
+            0.040947129,
+            0.04062784,
+            0.039620335
+          ],
+          "parse": [
+            0.140828063,
+            0.136837564,
+            0.13911616,
+            0.138180507,
+            0.136612819,
+            0.145400497,
+            0.136261227,
+            0.137226174,
+            0.137081035,
+            0.137497105,
+            0.136227122,
+            0.138117214,
+            0.138300043,
+            0.137727542,
+            0.135645528
+          ],
+          "generate": [
+            0.027742134,
+            0.026353798,
+            0.026151933,
+            0.025963903,
+            0.025922686,
+            0.025835693,
+            0.026284446,
+            0.025644805,
+            0.027276458,
+            0.026743792,
+            0.025790845,
+            0.026696199,
+            0.025878896,
+            0.028222237,
+            0.026226659
+          ],
+          "drop_ast": [
+            0.01740348,
+            0.017255441,
+            0.017576161,
+            0.01912313,
+            0.018858614,
+            0.018660698,
+            0.017918205,
+            0.019271435,
+            0.017226806,
+            0.017095951,
+            0.017225765,
+            0.01840682,
+            0.018813449,
+            0.01839459,
+            0.017232232
+          ],
+          "drop_tokens": [
+            0.003689412,
+            0.003641496,
+            0.003552398,
+            0.003598405,
+            0.00376308,
+            0.003591154,
+            0.003554658,
+            0.003574988,
+            0.003768362,
+            0.003899423,
+            0.003730717,
+            0.00367313,
+            0.003549377,
+            0.004219989,
+            0.003617107
+          ],
+          "frontend_total": [
+            0.22950626,
+            0.226829829,
+            0.2276232,
+            0.227904766,
+            0.22486136,
+            0.232859023,
+            0.223491065,
+            0.227035035,
+            0.225764992,
+            0.224745828,
+            0.223509229,
+            0.227370755,
+            0.2275511,
+            0.229262603,
+            0.222403511
+          ]
+        },
+        "after": {
+          "tokenize": [
+            0.030228317,
+            0.030300198,
+            0.031550441,
+            0.030695275,
+            0.029883243,
+            0.031761366,
+            0.031622931,
+            0.030936187,
+            0.030156628,
+            0.030881864,
+            0.030622292,
+            0.030690894,
+            0.033073589,
+            0.029966299,
+            0.030133296
+          ],
+          "parse": [
+            0.134516822,
+            0.136510536,
+            0.135341694,
+            0.135116674,
+            0.134630306,
+            0.134391529,
+            0.134918694,
+            0.135249888,
+            0.134754128,
+            0.133833214,
+            0.134449581,
+            0.139615931,
+            0.133715648,
+            0.133735627,
+            0.134628281
+          ],
+          "generate": [
+            0.026055927,
+            0.026056007,
+            0.026771396,
+            0.026380034,
+            0.025949238,
+            0.026266213,
+            0.025981116,
+            0.025994686,
+            0.02586665,
+            0.026298411,
+            0.026454572,
+            0.025790944,
+            0.025879442,
+            0.025766951,
+            0.025706406
+          ],
+          "drop_ast": [
+            0.017997503,
+            0.018513467,
+            0.017769367,
+            0.017036951,
+            0.019848676,
+            0.018491163,
+            0.016519931,
+            0.01933704,
+            0.018345885,
+            0.017812239,
+            0.01796349,
+            0.019808442,
+            0.018153784,
+            0.018078057,
+            0.01813308
+          ],
+          "drop_tokens": [
+            0.004112257,
+            0.003565666,
+            0.003885387,
+            0.003647171,
+            0.003563409,
+            0.00355865,
+            0.003575024,
+            0.003877029,
+            0.003854508,
+            0.004072032,
+            0.004113331,
+            0.003585536,
+            0.004024929,
+            0.004105088,
+            0.004069937
+          ],
+          "frontend_total": [
+            0.212974115,
+            0.21500925,
+            0.215673025,
+            0.212944141,
+            0.213939696,
+            0.21453375,
+            0.212677056,
+            0.215460209,
+            0.213043364,
+            0.212960624,
+            0.213666877,
+            0.219570099,
+            0.214909969,
+            0.211715838,
+            0.212735309
+          ]
+        }
+      },
+      "stages_median": {
+        "before": {
+          "tokenize": 0.04041621,
+          "parse.declarations": 0.113832102,
+          "parse.validate": 0.010730671,
+          "parse.lower": 0.01286854,
+          "parse.inline": 5.3897e-05,
+          "parse": 0.137497105,
+          "generate": 0.026226659,
+          "drop_ast": 0.017918205,
+          "drop_tokens": 0.003641496,
+          "frontend_total": 0.227035035
+        },
+        "after": {
+          "tokenize": 0.030690894,
+          "parse.declarations": 0.111214949,
+          "parse.validate": 0.010789435,
+          "parse.lower": 0.012639422,
+          "parse.inline": 5.4437e-05,
+          "parse": 0.134630306,
+          "generate": 0.025994686,
+          "drop_ast": 0.01813308,
+          "drop_tokens": 0.003877029,
+          "frontend_total": 0.213666877
+        }
+      },
+      "allocation_runs": {
+        "before": [
+          {
+            "malloc_calloc_realloc_calls": 1395429,
+            "requested_bytes": 220714765,
+            "non_null_free_calls": 1325467
+          },
+          {
+            "malloc_calloc_realloc_calls": 1395429,
+            "requested_bytes": 220714765,
+            "non_null_free_calls": 1325467
+          },
+          {
+            "malloc_calloc_realloc_calls": 1395429,
+            "requested_bytes": 220714765,
+            "non_null_free_calls": 1325467
+          }
+        ],
+        "after": [
+          {
+            "malloc_calloc_realloc_calls": 1278665,
+            "requested_bytes": 199756703,
+            "non_null_free_calls": 1208703
+          },
+          {
+            "malloc_calloc_realloc_calls": 1278665,
+            "requested_bytes": 199756703,
+            "non_null_free_calls": 1208703
+          },
+          {
+            "malloc_calloc_realloc_calls": 1278665,
+            "requested_bytes": 199756703,
+            "non_null_free_calls": 1208703
+          }
+        ]
+      }
+    }
+  ],
+  "date": "2026-10-16",
+  "baseline_source_commit": "90669ed47eba2cc355c3d8faf6756a6eeef89bf2",
+  "source_sha256": {
+    "src/ast.rs": "73479308582d664a8f8cbecf64e59c39e4f1fcae18dcf9fd4d02003eb980790f",
+    "src/tokenizer.rs": "3b9115a27117f3f8730086c59e1d19c381cb2aef9f478cea413c348c49c99fbc"
+  },
+  "conditions": {
+    "host": "Linux x86_64, Intel Core i5-5575R @ 2.80GHz, 4 logical CPUs",
+    "rustc": "1.86.0 release",
+    "clang": "15.0.7",
+    "frontend_command_template": "DYNAMITE_TIMINGS=1 PROFILE_FRONTEND INPUT.i 1 OUTPUT.ll",
+    "frontend_timing": "15 serial alternating runs; timers exclude process startup, input read and IR output, and include AST/token teardown. No allocator instrumentation during timing.",
+    "allocation_command_template": "LD_PRELOAD=count-allocations.so PROFILE_FRONTEND INPUT.i 1 OUTPUT.ll (DYNAMITE_TIMINGS unset)",
+    "allocation_counter_source": "tools/benchmarks/allocations.c",
+    "allocation_counter_sha256": "31c80f88e6eb1da731a8cf10f28dfc8767c5dd7b27790c7c2b81fedae6f66fde",
+    "allocation_counter_build": "clang-15 -shared -fPIC -std=c11 -Wall -Wextra -Werror -O2 tools/benchmarks/allocations.c -o count-allocations.so",
+    "allocation_scope": "3 runs each, full process malloc/calloc/realloc request counts and cumulative requested bytes, plus non-null free calls; includes startup and file I/O; excludes aligned allocation APIs. Not live/peak memory.",
+    "canonical_ir": "Sort complete function blocks and nonempty module-level lines; preserve instruction order inside each function. All four old/new inputs have identical canonical IR.",
+    "token_buffer": "In-place string concatenation retains the original token Vec capacity, potentially leaving more spare capacity during parsing."
+  },
+  "clean_builds": {
+    "conditions": {
+      "jobs": 4,
+      "runs_each": 2,
+      "order": [
+        "baseline, dynamite, clang",
+        "clang, dynamite, baseline"
+      ],
+      "optimization": "-O0 -g0 -std=gnu99",
+      "filesystem_cache": "warm/not cleared, clean source copies before each timed build",
+      "runtime": "All 3 compilers pass Redis PING/SET/GET/exact INCRBYFLOAT/HINCRBYFLOAT/Lua/cjson/SAVE/RDB restart and Git init/config/add/commit/status/log/switch/diff/gc/fsck smoke tests. GIT_EXEC_PATH points to each build directory.",
+      "max_rss": "Maximum per-compilation process RSS, includes child processes; not peak whole-build RSS.",
+      "command_template": "python3 tools/benchmarks/run.py --redis-source REDIS --git-source GIT --output NEW_DIRECTORY --clang clang-15 --baseline-dynamite SAVED_BASELINE --runs 2 --jobs 4"
+    },
+    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+    "compiler_binaries": {
+      "baseline": {
+        "path": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/build-benchmark/dynamite-before-allocations",
+        "sha256": "9fa3766c15804c57064822a9a9281033e3d106f8f24c1139c49c338440ce58b4"
+      },
+      "dynamite": {
+        "path": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/target/release/dynamite-cc",
+        "sha256": "711bf4e296b1de742af0c8c0d2cd545a4192ad6c7c580a303a66741313d88aab"
+      },
+      "clang": {
+        "path": "/usr/bin/clang-15",
+        "sha256": "22f8651e4eba296325daed391a432b11c3db82d8166da127ccb43b4f6f229e18"
+      }
+    },
+    "source_commits": {
+      "redis": "498ecd0d6d007db11ddb3aea9428552598a78622",
+      "git": "a018953688f1b10bddf91bff8747068f5f4746a4"
+    },
+    "make_commands": {
+      "redis": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "git": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ]
+    },
+    "groups": [
+      {
+        "project": "redis",
+        "compiler": "baseline",
+        "runs": 2,
+        "wall_seconds": [
+          15.727680279873312,
+          15.609004464931786
+        ],
+        "median_wall_seconds": 15.668342372402549,
+        "mean_stages": {
+          "drop_ast": 0.48334038349999997,
+          "drop_tokens": 0.16019312949999998,
+          "frontend_total": 17.931979564500004,
+          "generate": 1.0903341369999997,
+          "lower": 8.860760432500001,
+          "parse": 5.506376186499999,
+          "parse.declarations": 4.800701863999998,
+          "parse.inline": 0.002373654499999999,
+          "parse.lower": 0.3267197625000001,
+          "parse.validate": 0.317932778,
+          "preprocess": 8.779207390999998,
+          "preprocess.clang": 8.480641365,
+          "preprocess.map": 0.23949336549999994,
+          "preprocess.read": 0.007927374999999999,
+          "tokenize": 1.8025854210000003,
+          "write_ir": 0.059218434
+        },
+        "mean_clang_trace_totals": {
+          "AlwaysInlinerPass": 0.016614499999999997,
+          "AnnotationRemarksPass": 0.0077404999999999965,
+          "Backend": 3.790816499999999,
+          "CodeGenPasses": 3.6403394999999996,
+          "CoroConditionalWrapper": 0.00028549999999999973,
+          "ExecuteCompiler": 4.9097525,
+          "ModuleToFunctionPassAdaptor": 0.010936000000000005,
+          "OptFunction": 3.3622809999999985,
+          "OptModule": 3.6262925,
+          "Optimizer": 0.030701999999999997,
+          "RunPass": 3.2703114999999987
+        }
+      },
+      {
+        "project": "redis",
+        "compiler": "dynamite",
+        "runs": 2,
+        "wall_seconds": [
+          15.449039856903255,
+          15.451020063832402
+        ],
+        "median_wall_seconds": 15.450029960367829,
+        "mean_stages": {
+          "drop_ast": 0.4766762605,
+          "drop_tokens": 0.15768131800000001,
+          "frontend_total": 17.1207159955,
+          "generate": 1.0567508630000002,
+          "lower": 8.850229195500003,
+          "parse": 5.074633693500001,
+          "parse.declarations": 4.3799363814999985,
+          "parse.inline": 0.0022615445,
+          "parse.lower": 0.32010708,
+          "parse.validate": 0.32259926250000004,
+          "preprocess": 8.843109206000001,
+          "preprocess.clang": 8.541093288999996,
+          "preprocess.map": 0.24100274400000007,
+          "preprocess.read": 0.007704350000000002,
+          "tokenize": 1.3924173184999997,
+          "write_ir": 0.06984981549999997
+        },
+        "mean_clang_trace_totals": {
+          "AlwaysInlinerPass": 0.0165065,
+          "AnnotationRemarksPass": 0.007155000000000003,
+          "Backend": 3.793971,
+          "CodeGenPasses": 3.646543999999999,
+          "CoroConditionalWrapper": 0.0002974999999999998,
+          "ExecuteCompiler": 4.909934499999999,
+          "ModuleToFunctionPassAdaptor": 0.0103975,
+          "OptFunction": 3.379915499999999,
+          "OptModule": 3.632150000000001,
+          "Optimizer": 0.029111,
+          "RunPass": 3.2876434999999997
+        }
+      },
+      {
+        "project": "redis",
+        "compiler": "clang",
+        "runs": 2,
+        "wall_seconds": [
+          13.923676680773497,
+          13.929970936849713
+        ],
+        "median_wall_seconds": 13.926823808811605,
+        "mean_stages": {},
+        "mean_clang_trace_totals": {
+          "AlwaysInlinerPass": 0.031321999999999996,
+          "AnnotationRemarksPass": 0.0059504999999999975,
+          "Backend": 3.0005575,
+          "CodeGen Function": 1.1903115000000004,
+          "CodeGenPasses": 2.8479814999999995,
+          "CoroConditionalWrapper": 0.0002824999999999998,
+          "ExecuteCompiler": 16.505288,
+          "Frontend": 13.248739,
+          "ModuleToFunctionPassAdaptor": 0.009075,
+          "OptFunction": 2.6198195,
+          "OptModule": 2.8343480000000016,
+          "Optimizer": 0.04230450000000001,
+          "PerformPendingInstantiations": 0.0006549999999999989,
+          "RunPass": 2.5252409999999994,
+          "Source": 9.4564135
+        }
+      },
+      {
+        "project": "git",
+        "compiler": "baseline",
+        "runs": 2,
+        "wall_seconds": [
+          48.311317349784076,
+          48.325526509433985
+        ],
+        "median_wall_seconds": 48.31842192960903,
+        "mean_stages": {
+          "drop_ast": 6.684966763499997,
+          "drop_tokens": 1.7869687014999998,
+          "frontend_total": 129.867913578,
+          "generate": 2.514064398499997,
+          "lower": 22.883423250499995,
+          "parse": 46.77583868900001,
+          "parse.declarations": 41.29173938449999,
+          "parse.inline": 0.028147887000000007,
+          "parse.lower": 2.6594137134999984,
+          "parse.validate": 2.6217691745000007,
+          "preprocess": 53.36340265199995,
+          "preprocess.clang": 51.40011921449998,
+          "preprocess.map": 1.7995367184999993,
+          "preprocess.read": 0.014096471500000003,
+          "tokenize": 18.379001102500006,
+          "write_ir": 0.5555062835000001
+        },
+        "mean_clang_trace_totals": {
+          "AlwaysInlinerPass": 0.03042100000000001,
+          "AnnotationRemarksPass": 0.016347500000000015,
+          "Backend": 7.9814835,
+          "CodeGenPasses": 7.554434500000005,
+          "CoroConditionalWrapper": 0.0009635000000000113,
+          "ExecuteCompiler": 10.155755000000003,
+          "ModuleToFunctionPassAdaptor": 0.024574500000000016,
+          "OptFunction": 7.038538999999991,
+          "OptModule": 7.528666999999995,
+          "Optimizer": 0.061703999999999995,
+          "RunPass": 6.841245500000005
+        }
+      },
+      {
+        "project": "git",
+        "compiler": "dynamite",
+        "runs": 2,
+        "wall_seconds": [
+          46.93483974877745,
+          46.87766766548157
+        ],
+        "median_wall_seconds": 46.90625370712951,
+        "mean_stages": {
+          "drop_ast": 6.701645123499999,
+          "drop_tokens": 1.8072685255,
+          "frontend_total": 124.351411864,
+          "generate": 2.548287985000001,
+          "lower": 22.92249059400001,
+          "parse": 45.43463680499997,
+          "parse.declarations": 39.869950676000016,
+          "parse.inline": 0.030063672999999992,
+          "parse.lower": 2.6942759955000017,
+          "parse.validate": 2.6789438059999986,
+          "preprocess": 53.59716167349998,
+          "preprocess.clang": 51.62551961149998,
+          "preprocess.map": 1.8082480960000005,
+          "preprocess.read": 0.01388208450000001,
+          "tokenize": 13.89036168450001,
+          "write_ir": 0.7991232905000001
+        },
+        "mean_clang_trace_totals": {
+          "AlwaysInlinerPass": 0.03222250000000001,
+          "AnnotationRemarksPass": 0.016001000000000015,
+          "Backend": 8.012945,
+          "CodeGenPasses": 7.5806705,
+          "CoroConditionalWrapper": 0.0009685000000000112,
+          "ExecuteCompiler": 10.2046055,
+          "ModuleToFunctionPassAdaptor": 0.023839000000000006,
+          "OptFunction": 7.072193500000001,
+          "OptModule": 7.554547000000005,
+          "Optimizer": 0.06280050000000004,
+          "RunPass": 6.8658325
+        }
+      },
+      {
+        "project": "git",
+        "compiler": "clang",
+        "runs": 2,
+        "wall_seconds": [
+          40.79349035490304,
+          40.90333834756166
+        ],
+        "median_wall_seconds": 40.84841435123235,
+        "mean_stages": {},
+        "mean_clang_trace_totals": {
+          "AlwaysInlinerPass": 0.03281950000000002,
+          "AnnotationRemarksPass": 0.012905500000000006,
+          "Backend": 6.0820255,
+          "CodeGen Function": 2.4835424999999995,
+          "CodeGenPasses": 5.674941999999998,
+          "CoroConditionalWrapper": 0.0009325000000000109,
+          "ExecuteCompiler": 113.24877150000003,
+          "Frontend": 106.340189,
+          "ModuleToFunctionPassAdaptor": 0.020325499999999996,
+          "OptFunction": 5.271165999999998,
+          "OptModule": 5.650452999999999,
+          "Optimizer": 0.058271000000000024,
+          "PerformPendingInstantiations": 0.0020170000000000066,
+          "RunPass": 5.073317499999999,
+          "Source": 99.36883699999996
+        }
+      }
+    ],
+    "builds": [
+      {
+        "project": "redis",
+        "compiler": "baseline",
+        "run": 1,
+        "seconds": 15.727680279873312,
+        "returncode": 0,
+        "compile_count": 184,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.008107532999999998,
+          "preprocess.clang": 8.576148962000001,
+          "preprocess.map": 0.24461415799999997,
+          "preprocess": 8.882391061999998,
+          "tokenize": 1.8225556449999998,
+          "parse.declarations": 4.878615488999997,
+          "parse.validate": 0.316113514,
+          "parse.lower": 0.32767927299999994,
+          "parse.inline": 0.002273377,
+          "parse": 5.578791117999999,
+          "generate": 1.0889173969999992,
+          "drop_ast": 0.47699692700000007,
+          "drop_tokens": 0.16291888999999987,
+          "frontend_total": 18.13084018800001,
+          "write_ir": 0.05754356500000001,
+          "lower": 8.844193937
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 4.879983,
+          "Backend": 3.760085999999999,
+          "CodeGenPasses": 3.605233999999998,
+          "OptModule": 3.5909479999999996,
+          "OptFunction": 3.3270159999999973,
+          "RunPass": 3.2353739999999984,
+          "Optimizer": 0.031417999999999995,
+          "ModuleToFunctionPassAdaptor": 0.010309000000000006,
+          "AlwaysInlinerPass": 0.016963,
+          "AnnotationRemarksPass": 0.007119999999999996,
+          "CoroConditionalWrapper": 0.0002839999999999997
+        },
+        "max_compile_rss_kib": 101484.0,
+        "compile_cpu_seconds": 25.757407999999995
+      },
+      {
+        "project": "redis",
+        "compiler": "dynamite",
+        "run": 1,
+        "seconds": 15.449039856903255,
+        "returncode": 0,
+        "compile_count": 184,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.007721002000000003,
+          "preprocess.clang": 8.525358201999996,
+          "preprocess.map": 0.24367884600000006,
+          "preprocess": 8.825677930000001,
+          "tokenize": 1.3991904209999992,
+          "parse.declarations": 4.349527147,
+          "parse.validate": 0.330458427,
+          "parse.lower": 0.32490576899999996,
+          "parse.inline": 0.0022732250000000002,
+          "parse": 5.062241192999999,
+          "generate": 1.06197568,
+          "drop_ast": 0.48249922999999995,
+          "drop_tokens": 0.16112608500000009,
+          "frontend_total": 17.110987438999995,
+          "write_ir": 0.06930501899999997,
+          "lower": 8.837376087000004
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 4.917518,
+          "Backend": 3.789837,
+          "CodeGenPasses": 3.6398829999999984,
+          "OptModule": 3.625346000000001,
+          "OptFunction": 3.375158,
+          "RunPass": 3.285007,
+          "Optimizer": 0.02945200000000002,
+          "AlwaysInlinerPass": 0.016755000000000003,
+          "ModuleToFunctionPassAdaptor": 0.010405000000000003,
+          "AnnotationRemarksPass": 0.007183000000000004,
+          "CoroConditionalWrapper": 0.0002959999999999998
+        },
+        "max_compile_rss_kib": 101356.0,
+        "compile_cpu_seconds": 25.036765
+      },
+      {
+        "project": "redis",
+        "compiler": "clang",
+        "run": 1,
+        "seconds": 13.923676680773497,
+        "returncode": 0,
+        "compile_count": 184,
+        "tracked_source_changes": "",
+        "stages": {},
+        "clang_trace_totals": {
+          "ExecuteCompiler": 16.474819999999998,
+          "Frontend": 13.250016999999996,
+          "Source": 9.467822,
+          "Backend": 2.966212,
+          "CodeGenPasses": 2.8138709999999985,
+          "OptModule": 2.802008,
+          "OptFunction": 2.5914170000000003,
+          "RunPass": 2.4981199999999992,
+          "CodeGen Function": 1.179719,
+          "Optimizer": 0.04164100000000001,
+          "AlwaysInlinerPass": 0.030815000000000006,
+          "ModuleToFunctionPassAdaptor": 0.008943000000000001,
+          "AnnotationRemarksPass": 0.0058289999999999965,
+          "PerformPendingInstantiations": 0.0006689999999999988,
+          "CoroConditionalWrapper": 0.0002759999999999998
+        },
+        "max_compile_rss_kib": 119256.0,
+        "compile_cpu_seconds": 19.611815999999997
+      },
+      {
+        "project": "redis",
+        "compiler": "clang",
+        "run": 2,
+        "seconds": 13.929970936849713,
+        "returncode": 0,
+        "compile_count": 184,
+        "tracked_source_changes": "",
+        "stages": {},
+        "clang_trace_totals": {
+          "ExecuteCompiler": 16.535756,
+          "Frontend": 13.247461000000003,
+          "Source": 9.445004999999998,
+          "Backend": 3.034903,
+          "CodeGenPasses": 2.8820920000000005,
+          "OptModule": 2.8666880000000035,
+          "OptFunction": 2.6482219999999996,
+          "RunPass": 2.552362,
+          "CodeGen Function": 1.2009040000000006,
+          "Optimizer": 0.042968000000000006,
+          "ModuleToFunctionPassAdaptor": 0.009206999999999998,
+          "AlwaysInlinerPass": 0.03182899999999998,
+          "AnnotationRemarksPass": 0.006071999999999998,
+          "PerformPendingInstantiations": 0.000640999999999999,
+          "CoroConditionalWrapper": 0.0002889999999999998
+        },
+        "max_compile_rss_kib": 119252.0,
+        "compile_cpu_seconds": 19.560683000000004
+      },
+      {
+        "project": "redis",
+        "compiler": "dynamite",
+        "run": 2,
+        "seconds": 15.451020063832402,
+        "returncode": 0,
+        "compile_count": 184,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.007687698000000001,
+          "preprocess.clang": 8.556828375999995,
+          "preprocess.map": 0.2383266420000001,
+          "preprocess": 8.860540482000001,
+          "tokenize": 1.3856442160000004,
+          "parse.declarations": 4.410345615999998,
+          "parse.validate": 0.314740098,
+          "parse.lower": 0.315308391,
+          "parse.inline": 0.002249864,
+          "parse": 5.087026194000002,
+          "generate": 1.0515260460000004,
+          "drop_ast": 0.47085329100000006,
+          "drop_tokens": 0.15423655099999994,
+          "frontend_total": 17.130444552000004,
+          "write_ir": 0.07039461199999995,
+          "lower": 8.863082304
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 4.902350999999999,
+          "Backend": 3.798105,
+          "CodeGenPasses": 3.653205,
+          "OptModule": 3.638954000000002,
+          "OptFunction": 3.3846729999999985,
+          "RunPass": 3.2902799999999996,
+          "Optimizer": 0.028769999999999983,
+          "AlwaysInlinerPass": 0.016257999999999998,
+          "ModuleToFunctionPassAdaptor": 0.010389999999999996,
+          "AnnotationRemarksPass": 0.007127000000000003,
+          "CoroConditionalWrapper": 0.0002989999999999998
+        },
+        "max_compile_rss_kib": 101460.0,
+        "compile_cpu_seconds": 24.950293000000016
+      },
+      {
+        "project": "redis",
+        "compiler": "baseline",
+        "run": 2,
+        "seconds": 15.609004464931786,
+        "returncode": 0,
+        "compile_count": 184,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.007747216999999998,
+          "preprocess.clang": 8.385133768,
+          "preprocess.map": 0.2343725729999999,
+          "preprocess": 8.676023719999998,
+          "tokenize": 1.7826151970000008,
+          "parse.declarations": 4.722788238999999,
+          "parse.validate": 0.31975204200000007,
+          "parse.lower": 0.32576025200000036,
+          "parse.inline": 0.002473931999999998,
+          "parse": 5.433961255,
+          "generate": 1.091750877,
+          "drop_ast": 0.4896838399999999,
+          "drop_tokens": 0.15746736900000008,
+          "frontend_total": 17.733118941,
+          "write_ir": 0.06089330299999999,
+          "lower": 8.877326928000002
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 4.939521999999998,
+          "Backend": 3.8215469999999994,
+          "CodeGenPasses": 3.6754450000000007,
+          "OptModule": 3.6616370000000003,
+          "OptFunction": 3.3975459999999993,
+          "RunPass": 3.305248999999999,
+          "Optimizer": 0.029986,
+          "AlwaysInlinerPass": 0.016265999999999996,
+          "ModuleToFunctionPassAdaptor": 0.011563000000000002,
+          "AnnotationRemarksPass": 0.008360999999999997,
+          "CoroConditionalWrapper": 0.0002869999999999998
+        },
+        "max_compile_rss_kib": 101504.0,
+        "compile_cpu_seconds": 25.590223999999992
+      },
+      {
+        "project": "git",
+        "compiler": "baseline",
+        "run": 1,
+        "seconds": 48.311317349784076,
+        "returncode": 0,
+        "compile_count": 568,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.013881089000000003,
+          "preprocess.clang": 51.29197778799997,
+          "preprocess.map": 1.798025263999999,
+          "preprocess": 53.25494634799997,
+          "tokenize": 18.308999691000007,
+          "parse.declarations": 41.329013552999974,
+          "parse.validate": 2.638514442000002,
+          "parse.lower": 2.6663541019999983,
+          "parse.inline": 0.02804481899999999,
+          "parse": 46.844151144,
+          "generate": 2.539861823999997,
+          "drop_ast": 6.693046959999998,
+          "drop_tokens": 1.7858988530000006,
+          "frontend_total": 129.79163357299998,
+          "write_ir": 0.5576927089999998,
+          "lower": 22.955911255999993
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 10.183554,
+          "Backend": 7.998868999999999,
+          "CodeGenPasses": 7.572518999999998,
+          "OptModule": 7.546886999999992,
+          "OptFunction": 7.054446999999991,
+          "RunPass": 6.858124000000005,
+          "Optimizer": 0.06216800000000001,
+          "AlwaysInlinerPass": 0.030655000000000012,
+          "ModuleToFunctionPassAdaptor": 0.024724000000000003,
+          "AnnotationRemarksPass": 0.016107000000000028,
+          "CoroConditionalWrapper": 0.0009730000000000118
+        },
+        "max_compile_rss_kib": 95688.0,
+        "compile_cpu_seconds": 147.65534400000004
+      },
+      {
+        "project": "git",
+        "compiler": "dynamite",
+        "run": 1,
+        "seconds": 46.93483974877745,
+        "returncode": 0,
+        "compile_count": 568,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.013999486,
+          "preprocess.clang": 51.61514449399997,
+          "preprocess.map": 1.8150024719999998,
+          "preprocess": 53.58789892199999,
+          "tokenize": 13.952577143000006,
+          "parse.declarations": 39.95320355300004,
+          "parse.validate": 2.659470905999999,
+          "parse.lower": 2.6872206880000014,
+          "parse.inline": 0.03138470499999997,
+          "parse": 45.486917483000006,
+          "generate": 2.5373422920000013,
+          "drop_ast": 6.691750383999996,
+          "drop_tokens": 1.8204550840000007,
+          "frontend_total": 124.44990230800005,
+          "write_ir": 0.8400311480000003,
+          "lower": 22.97405928200002
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 10.259310999999997,
+          "Backend": 8.065472,
+          "CodeGenPasses": 7.631037000000002,
+          "OptModule": 7.6049540000000055,
+          "OptFunction": 7.124144000000006,
+          "RunPass": 6.913735,
+          "Optimizer": 0.06149500000000002,
+          "AlwaysInlinerPass": 0.03075199999999999,
+          "ModuleToFunctionPassAdaptor": 0.023982,
+          "AnnotationRemarksPass": 0.016121000000000024,
+          "CoroConditionalWrapper": 0.0009620000000000115
+        },
+        "max_compile_rss_kib": 95768.0,
+        "compile_cpu_seconds": 142.471909
+      },
+      {
+        "project": "git",
+        "compiler": "clang",
+        "run": 1,
+        "seconds": 40.79349035490304,
+        "returncode": 0,
+        "compile_count": 568,
+        "tracked_source_changes": "",
+        "stages": {},
+        "clang_trace_totals": {
+          "ExecuteCompiler": 113.10803000000003,
+          "Frontend": 106.14677300000001,
+          "Source": 99.18862299999995,
+          "Backend": 6.1304589999999965,
+          "CodeGenPasses": 5.712522000000001,
+          "OptModule": 5.684621,
+          "OptFunction": 5.300926000000001,
+          "RunPass": 5.105379000000002,
+          "CodeGen Function": 2.4642609999999996,
+          "Optimizer": 0.061238000000000056,
+          "ModuleToFunctionPassAdaptor": 0.020137999999999996,
+          "AlwaysInlinerPass": 0.03604600000000002,
+          "AnnotationRemarksPass": 0.012815000000000002,
+          "PerformPendingInstantiations": 0.0020200000000000075,
+          "CoroConditionalWrapper": 0.000936000000000011
+        },
+        "max_compile_rss_kib": 120320.0,
+        "compile_cpu_seconds": 120.47672299999998
+      },
+      {
+        "project": "git",
+        "compiler": "clang",
+        "run": 2,
+        "seconds": 40.90333834756166,
+        "returncode": 0,
+        "compile_count": 568,
+        "tracked_source_changes": "",
+        "stages": {},
+        "clang_trace_totals": {
+          "ExecuteCompiler": 113.38951300000005,
+          "Frontend": 106.53360499999998,
+          "Source": 99.54905099999995,
+          "Backend": 6.033592000000003,
+          "CodeGenPasses": 5.637361999999994,
+          "OptModule": 5.616284999999999,
+          "OptFunction": 5.241405999999995,
+          "RunPass": 5.041255999999996,
+          "CodeGen Function": 2.502823999999999,
+          "Optimizer": 0.05530399999999999,
+          "ModuleToFunctionPassAdaptor": 0.020512999999999997,
+          "AlwaysInlinerPass": 0.029593000000000022,
+          "AnnotationRemarksPass": 0.01299600000000001,
+          "PerformPendingInstantiations": 0.0020140000000000062,
+          "CoroConditionalWrapper": 0.0009290000000000108
+        },
+        "max_compile_rss_kib": 120332.0,
+        "compile_cpu_seconds": 120.69125000000005
+      },
+      {
+        "project": "git",
+        "compiler": "dynamite",
+        "run": 2,
+        "seconds": 46.87766766548157,
+        "returncode": 0,
+        "compile_count": 568,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.013764683000000017,
+          "preprocess.clang": 51.635894728999986,
+          "preprocess.map": 1.8014937200000012,
+          "preprocess": 53.606424424999986,
+          "tokenize": 13.828146226000015,
+          "parse.declarations": 39.786697798999995,
+          "parse.validate": 2.698416705999999,
+          "parse.lower": 2.701331303000002,
+          "parse.inline": 0.028742641000000017,
+          "parse": 45.38235612699993,
+          "generate": 2.5592336780000005,
+          "drop_ast": 6.711539863000002,
+          "drop_tokens": 1.7940819669999997,
+          "frontend_total": 124.25292141999994,
+          "write_ir": 0.7582154329999998,
+          "lower": 22.870921906000003
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 10.1499,
+          "Backend": 7.9604180000000015,
+          "CodeGenPasses": 7.530303999999998,
+          "OptModule": 7.504140000000004,
+          "OptFunction": 7.020242999999997,
+          "RunPass": 6.81793,
+          "Optimizer": 0.06410600000000005,
+          "ModuleToFunctionPassAdaptor": 0.02369600000000001,
+          "AlwaysInlinerPass": 0.03369300000000002,
+          "AnnotationRemarksPass": 0.01588100000000001,
+          "CoroConditionalWrapper": 0.000975000000000011
+        },
+        "max_compile_rss_kib": 95804.0,
+        "compile_cpu_seconds": 142.01499800000002
+      },
+      {
+        "project": "git",
+        "compiler": "baseline",
+        "run": 2,
+        "seconds": 48.325526509433985,
+        "returncode": 0,
+        "compile_count": 568,
+        "tracked_source_changes": "",
+        "stages": {
+          "preprocess.read": 0.014311854,
+          "preprocess.clang": 51.508260641,
+          "preprocess.map": 1.8010481729999999,
+          "preprocess": 53.47185895599993,
+          "tokenize": 18.449002514,
+          "parse.declarations": 41.254465216,
+          "parse.validate": 2.6050239069999988,
+          "parse.lower": 2.652473324999998,
+          "parse.inline": 0.028250955000000022,
+          "parse": 46.707526234000014,
+          "generate": 2.488266972999997,
+          "drop_ast": 6.676886566999995,
+          "drop_tokens": 1.788038549999999,
+          "frontend_total": 129.94419358300004,
+          "write_ir": 0.5533198580000004,
+          "lower": 22.810935244999996
+        },
+        "clang_trace_totals": {
+          "ExecuteCompiler": 10.127956000000005,
+          "Backend": 7.964098000000002,
+          "CodeGenPasses": 7.53635000000001,
+          "OptModule": 7.510446999999998,
+          "OptFunction": 7.0226309999999925,
+          "RunPass": 6.824367000000005,
+          "Optimizer": 0.06123999999999998,
+          "ModuleToFunctionPassAdaptor": 0.02442500000000003,
+          "AnnotationRemarksPass": 0.016588,
+          "AlwaysInlinerPass": 0.030187000000000012,
+          "CoroConditionalWrapper": 0.0009540000000000108
+        },
+        "max_compile_rss_kib": 95704.0,
+        "compile_cpu_seconds": 147.57913100000002
+      }
+    ]
+  }
+}

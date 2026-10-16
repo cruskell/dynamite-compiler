@@ -170,11 +170,47 @@ checks pass for both compilers. These follow-up builds were not interleaved
 with the old compiler, so their difference from the earlier whole-build table
 is not a controlled before/after speedup measurement.
 
-A 7,547-sample user-CPU profile of the Git revision frontend also attributes at
-least 25.5% of self samples to allocator/free routines and 7.2% to memory copying;
-reducing token/type ownership churn and repeated header work are additional
-candidates. These profile findings are not measured gains from those further
-optimizations.
+A 7,547-sample user-CPU profile of the Git revision frontend attributed at least
+25.5% of self samples to allocator/free routines and 7.2% to memory copying.
+A subsequent allocation change borrows reserved tokens until AST ownership is
+needed, concatenates adjacent strings in the original token buffer, and inspects
+call parameter/value-conversion types without unnecessary deep copies.
+
+On the same four preprocessed inputs, 15 alternating serial runs give these
+median frontend times, including tokenization, parsing, IR generation and
+AST/token teardown, but excluding input/output and process startup:
+
+| Input | Frontend before → after | Reduction | Allocation requests before → after |
+| --- | ---: | ---: | ---: |
+| Redis adlist | 8.22 → 7.46 ms | 9.2% | 47,896 → 42,755 |
+| Redis server | 193.23 → 182.64 ms | 5.5% | 1,629,931 → 1,553,331 |
+| Git abspath | 102.10 → 94.32 ms | 7.6% | 678,255 → 601,587 |
+| Git revision | 227.04 → 213.67 ms | 5.9% | 1,395,429 → 1,278,665 |
+
+Allocation counts come from three separate Linux/glibc whole-process probe runs
+per compiler/input, including startup and file I/O. They count malloc/calloc/
+realloc requests, not live objects or peak memory; timing runs use no allocator
+instrumentation. Revision's cumulative requested bytes decrease 9.5%, from
+220.71 MB to 199.76 MB. In-place concatenation retains the original token buffer
+capacity, so it can leave more spare capacity allocated during parsing.
+All four outputs have identical LLVM IR after canonicalizing module-level order.
+Raw samples, hashes and measurement boundaries are in the
+[allocation snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16-allocations.json).
+
+For this change, complete clean builds compare saved baseline/Dynamite/Clang
+binaries in that order, then reverse the order on a second run. Flags, source
+revisions and four-worker parallelism match the earlier builds. Median wall times:
+
+| Project | Before | After | Reduction | Clang |
+| --- | ---: | ---: | ---: | ---: |
+| Redis | 15.67 s | 15.45 s | 1.4% | 13.93 s |
+| Git | 48.32 s | 46.91 s | 2.9% | 40.85 s |
+
+Both repetitions improve, but two runs are a small sample on this host and flag
+set. Every build succeeds with unchanged sources and 184 / 568 C compilations;
+Redis persistence/Lua/extended-float and Git repository/gc/fsck smoke checks
+pass for all three compilers. Maximum per-compilation process RSS is essentially
+unchanged (Redis about 99 MiB, Git 94 MiB), not a peak whole-build measurement.
 
 ## Proposed direction
 

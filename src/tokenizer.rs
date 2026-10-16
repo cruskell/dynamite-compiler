@@ -740,19 +740,23 @@ impl Tokenizer {
                 }
             }
         }
-        let mut joined: Vec<Token> = Vec::with_capacity(tokens.len());
-        for token in tokens {
-            if token.tt == TokenType::Str && joined.last().is_some_and(|t| t.tt == TokenType::Str) {
-                let previous = joined.last_mut().unwrap();
+        let mut concatenation_error = None;
+        // Compact adjacent strings in place instead of copying the whole token stream.
+        tokens.dedup_by(|token, previous| {
+            if concatenation_error.is_none()
+                && token.tt == TokenType::Str
+                && previous.tt == TokenType::Str
+            {
                 let encoding = match (previous.string_encoding, token.string_encoding) {
                     (left, right) if left == right => left,
                     (StringEncoding::Narrow, right) => right,
                     (left, StringEncoding::Narrow) => left,
                     _ => {
-                        return Err(error::SyntaxError::new(
+                        concatenation_error = Some(error::SyntaxError::new(
                             token.pos,
                             "incompatible string literal encodings",
                         ));
+                        return false;
                     }
                 };
                 let unit_size = encoding.unit_size();
@@ -762,7 +766,7 @@ impl Tokenizer {
                 let token_bytes = if token.string_encoding != encoding {
                     encode_string_literal(&token.s_value, encoding)
                 } else {
-                    token.string_bytes
+                    std::mem::take(&mut token.string_bytes)
                 };
                 previous.string_bytes.extend(token_bytes);
                 previous.string_encoding = encoding;
@@ -774,11 +778,14 @@ impl Tokenizer {
                 previous
                     .string_bytes
                     .truncate(previous.string_bytes.len() / unit_size * unit_size);
+                true
             } else {
-                joined.push(token);
+                false
             }
+        });
+        if let Some(error) = concatenation_error {
+            return Err(error);
         }
-        let mut tokens = joined;
         let mut change = 0;
         let mut current = None;
         for token in &mut tokens {
@@ -981,6 +988,26 @@ mod tests {
         let tokens = Tokenizer::tokenize("u\"A\" \"B\"", false).unwrap();
         assert_eq!(tokens[0].string_encoding, StringEncoding::Utf16);
         assert_eq!(tokens[0].string_bytes, vec![65, 0, 66, 0]);
+    }
+
+    #[test]
+    fn concatenated_strings_preserve_following_tokens_and_packing() {
+        let code = "#pragma pack(push,1)\nu\"A\" /* gap */ \"B\" u\"C\";\n#pragma pack(pop)\n\"x\" \"y\";tail";
+        let tokens = Tokenizer::tokenize(code, false).unwrap();
+        assert_eq!(tokens.len(), 6);
+        assert_eq!(tokens[0].pos, code.find("u\"A\"").unwrap());
+        assert_eq!(tokens[0].packing, Some(1));
+        assert_eq!(tokens[0].string_encoding, StringEncoding::Utf16);
+        assert_eq!(tokens[0].string_bytes, vec![65, 0, 66, 0, 67, 0]);
+        assert_eq!(tokens[1].s_value, ";");
+        assert_eq!(tokens[1].packing, Some(1));
+        assert_eq!(tokens[2].string_bytes, b"xy");
+        assert_eq!(tokens[2].packing, None);
+        assert_eq!(tokens[3].s_value, ";");
+        assert_eq!(tokens[4].s_value, "tail");
+        assert_eq!(tokens[4].pos, code.find("tail").unwrap());
+        assert_eq!(tokens[5].tt, TokenType::EOF);
+        assert_eq!(tokens[5].pos, code.len());
     }
 
     #[test]

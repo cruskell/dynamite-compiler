@@ -8,7 +8,7 @@ use crate::node::{AtomicOperation, Node, NodeType};
 use crate::token::{Token, TokenType};
 use rustc_apfloat::Float;
 use std::collections::{HashMap, HashSet};
-use std::{cell::RefCell, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 #[path = "atomic.rs"]
 mod atomic;
@@ -389,16 +389,17 @@ impl<'a> AstBuilderImpl<'a> {
         builder.scope_stack[0].insert("__builtin_va_list".into(), Identifier::TypeDef(va_list));
         builder
     }
-    fn attempt_reserved(&mut self, s_value: &str) -> Option<Token> {
+    // Borrow input tokens; AST construction clones only the tokens it retains.
+    fn attempt_reserved(&mut self, s_value: &str) -> Option<&'a Token> {
         if let TokenType::Reserved = self.tokens[self.cur].tt {
             if self.tokens[self.cur].s_value == s_value {
                 self.cur += 1;
-                return Some(self.tokens[self.cur - 1].clone());
+                return Some(&self.tokens[self.cur - 1]);
             }
         }
         None
     }
-    fn attempt_inline(&mut self) -> Option<Token> {
+    fn attempt_inline(&mut self) -> Option<&'a Token> {
         self.attempt_reserved("inline")
             .or_else(|| self.attempt_reserved("__inline"))
             .or_else(|| self.attempt_reserved("__inline__"))
@@ -411,11 +412,11 @@ impl<'a> AstBuilderImpl<'a> {
             None
         }
     }
-    fn expect_reserved(&mut self, s_value: &str) -> Token {
+    fn expect_reserved(&mut self, s_value: &str) -> &'a Token {
         if let TokenType::Reserved = self.tokens[self.cur].tt {
             if self.tokens[self.cur].s_value == s_value {
                 self.cur += 1;
-                return self.tokens[self.cur - 1].clone();
+                return &self.tokens[self.cur - 1];
             }
         }
         self.error_logger.print_error_position(
@@ -1020,7 +1021,7 @@ impl<'a> AstBuilderImpl<'a> {
                         );
                     }
                     self.expect_reserved("]");
-                    direct = Declarator::UnspecifiedArray(Box::new(direct), star);
+                    direct = Declarator::UnspecifiedArray(Box::new(direct), star.clone());
                     continue;
                 }
                 if minimum.is_some() && self.tokens[self.cur].s_value == "]" {
@@ -1431,7 +1432,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "invalid automatic storage class");
                 }
-                storage = Some(token);
+                storage = Some(token.clone());
             } else {
                 let q = self.attempt_qualifiers();
                 if q == Qualifiers::default() {
@@ -1466,7 +1467,7 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(token.pos, "invalid automatic storage class");
             }
-            storage = Some(token);
+            storage = Some(token.clone());
         }
         if qualifiers != Qualifiers::default() {
             ty = Type::Qualified(Box::new(ty), qualifiers);
@@ -1699,16 +1700,16 @@ impl<'a> AstBuilderImpl<'a> {
             .or_else(|| self.attempt_reserved("__typeof"))
             .or_else(|| self.attempt_reserved("__typeof__"))
         {
-            return Some(self.typeof_type(token));
+            return Some(self.typeof_type(token.clone()));
         }
         if let Some(token) = self.attempt_reserved("enum") {
-            return Some(self.enum_type(token));
+            return Some(self.enum_type(token.clone()));
         }
         if let Some(token) = self
             .attempt_reserved("struct")
             .or_else(|| self.attempt_reserved("union"))
         {
-            return Some(self.struct_type(token));
+            return Some(self.struct_type(token.clone()));
         }
         let mut specifiers = vec![];
         loop {
@@ -2578,7 +2579,7 @@ impl<'a> AstBuilderImpl<'a> {
                     self.error_logger
                         .print_error_position(token.pos, "conflicting storage classes");
                 } else {
-                    storage = Some(token);
+                    storage = Some(token.clone());
                 }
             } else {
                 let q = self.attempt_qualifiers();
@@ -3912,14 +3913,18 @@ impl<'a> AstBuilderImpl<'a> {
             }
             NodeType::CallFunc => {
                 for (index, arg) in node.args.iter_mut().rev().enumerate() {
-                    let target = node.parameter_types.get(index).cloned().unwrap_or_else(|| {
-                        let ty = arg.resolve_type_view().unwrap().promoted();
-                        if ty == Type::Float(32) {
-                            Type::Float(64)
-                        } else {
-                            ty
-                        }
-                    });
+                    let target = node
+                        .parameter_types
+                        .get(index)
+                        .map(Cow::Borrowed)
+                        .unwrap_or_else(|| {
+                            let ty = arg.resolve_type_view().unwrap().promoted();
+                            Cow::Owned(if ty == Type::Float(32) {
+                                Type::Float(64)
+                            } else {
+                                ty
+                            })
+                        });
                     Self::cast_integer(arg, &target);
                 }
             }
@@ -4003,7 +4008,7 @@ impl<'a> AstBuilderImpl<'a> {
                 .iter()
                 .filter_map(Node::resolve_type_view)
                 .chain(node.resolve_type_view())
-                .any(|ty| matches!(Type::decay_view(ty).unqualified(), Type::LongDouble(128)))
+                .any(|ty| matches!(ty.unqualified(), Type::LongDouble(128)))
         {
             self.error_logger.print_error_position(
                 node.token.as_ref().map_or(0, |token| token.pos),
@@ -4054,7 +4059,7 @@ impl<'a> AstBuilderImpl<'a> {
                 .iter()
                 .filter_map(Node::resolve_type_view)
                 .chain(node.resolve_type_view())
-                .any(|ty| Type::decay_view(ty).contains_vector())
+                .any(|ty| !ty.is_pointer_value() && ty.contains_vector())
         {
             self.error_logger.print_error_position(
                 node.token.as_ref().map_or(0, |token| token.pos),
@@ -4271,7 +4276,7 @@ impl<'a> AstBuilderImpl<'a> {
                 args: self.dynamic_objects.clone(),
                 vla_scope: self.vla_active.clone(),
                 value: Some(id),
-                token: Some(token),
+                token: Some(token.clone()),
                 ..Node::default()
             };
         }
@@ -4280,7 +4285,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(";");
             return Node {
                 nt: NodeType::Block,
-                token: Some(token),
+                token: Some(token.clone()),
                 children: self.take_bounds(),
                 ..Node::default()
             };
@@ -4288,7 +4293,7 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(token) = self.attempt_reserved(";") {
             return Node {
                 nt: NodeType::Block,
-                token: Some(token),
+                token: Some(token.clone()),
                 ..Node::default()
             };
         }
@@ -4314,7 +4319,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.switch_vla_depths.pop();
             self.jump_depths.pop();
             return Node {
-                token: Some(t),
+                token: Some(t.clone()),
                 nt: NodeType::Switch,
                 cond: Some(Box::new(cond)),
                 then: Some(Box::new(body)),
@@ -4356,7 +4361,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             let mut node = Node {
                 nt: NodeType::Case,
-                token: Some(t),
+                token: Some(t.clone()),
                 value,
                 ..Node::default()
             };
@@ -4373,7 +4378,7 @@ impl<'a> AstBuilderImpl<'a> {
             if self.attempt_reserved("else").is_some() {
                 els = Some(self.stmt());
             }
-            return Node::new_if_node(Some(t), cond, then, els);
+            return Node::new_if_node(Some(t.clone()), cond, then, els);
         }
         if let Some(t) = self.attempt_reserved("do") {
             self.loop_stack.push(t.pos);
@@ -4388,7 +4393,7 @@ impl<'a> AstBuilderImpl<'a> {
             let cond = self.expr();
             self.expect_reserved(")");
             self.expect_reserved(";");
-            let mut node = Node::new_while_node(Some(t), cond, body);
+            let mut node = Node::new_while_node(Some(t.clone()), cond, body);
             node.nt = NodeType::DoWhile;
             return node;
         }
@@ -4403,7 +4408,7 @@ impl<'a> AstBuilderImpl<'a> {
             let body = self.stmt();
             self.loop_stack.pop();
             self.jump_depths.pop();
-            return Node::new_while_node(Some(t), cond, body);
+            return Node::new_while_node(Some(t.clone()), cond, body);
         }
         if let Some(t) = self.attempt_reserved("for") {
             let object_depth = self.dynamic_objects.len();
@@ -4439,7 +4444,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.loop_stack.pop();
             self.jump_depths.pop();
             self.scope_stack.pop();
-            let loop_node = Node::new_for_node(Some(t), ini, cond, upd, body);
+            let loop_node = Node::new_for_node(Some(t.clone()), ini, cond, upd, body);
             let mut children = vec![loop_node];
             children.extend(self.cleanup_arrays(object_depth));
             self.dynamic_objects.truncate(object_depth);
@@ -4489,8 +4494,8 @@ impl<'a> AstBuilderImpl<'a> {
             );
         }
         if storage.is_some() || inline.is_some() || thread_local {
-            let mut storage = storage.unwrap_or_else(|| {
-                inline.clone().unwrap_or_else(|| Token {
+            let mut storage = storage.cloned().unwrap_or_else(|| {
+                inline.cloned().unwrap_or_else(|| Token {
                     s_value: "static".to_owned(),
                     ..self.tokens[self.cur - 1].clone()
                 })
@@ -4552,14 +4557,14 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             Node {
-                token: Some(t),
+                token: Some(t.clone()),
                 nt: NodeType::Continue,
                 value: Some(target),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_reserved("break") {
             Node {
-                token: Some(t),
+                token: Some(t.clone()),
                 nt: NodeType::Break,
                 ..Node::default()
             }
@@ -4590,7 +4595,7 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             }
             Node {
-                token: Some(t),
+                token: Some(t.clone()),
                 nt: NodeType::Return,
                 offset: self.return_pointer,
                 lhs: operand.map(Box::new),
@@ -4808,9 +4813,9 @@ impl<'a> AstBuilderImpl<'a> {
             if let Some(token) = self.attempt_reserved("=") {
                 // if initializer element exists, push into AST
                 vec.push(if inferred {
-                    self.inferred_local_array_initializer(&node, &token).1
+                    self.inferred_local_array_initializer(&node, token).1
                 } else {
-                    self.local_variable_initialization(&node, &token)
+                    self.local_variable_initialization(&node, token)
                 });
             }
             if self.attempt_reserved(",").is_none() {
@@ -5146,9 +5151,9 @@ impl<'a> AstBuilderImpl<'a> {
                         let union = matches!(target.resolve_type(), Some(Type::Struct(st)) if st.definition().borrow().is_union);
                         let selected = match target.resolve_type().unwrap() {
                             Type::Arr(_, size) if size.is_none_or(|size| index < size) => {
-                                Some(Self::array_element(&target, index, &token))
+                                Some(Self::array_element(&target, index, token))
                             }
-                            _ => Self::aggregate_elements(&target, &token)
+                            _ => Self::aggregate_elements(&target, token)
                                 .and_then(|targets| targets.get(index).cloned()),
                         };
                         target = selected.unwrap_or_else(|| {
@@ -5294,7 +5299,7 @@ impl<'a> AstBuilderImpl<'a> {
             self.dynamic_objects.truncate(object_depth);
             self.vla_active.truncate(bound_depth);
             self.scope_stack.pop();
-            Some((t, children, cleanup))
+            Some((t.clone(), children, cleanup))
         } else {
             None
         }
@@ -5310,7 +5315,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         Node {
             nt: NodeType::Sequence,
-            token: Some(token),
+            token: Some(token.clone()),
             children,
             ..Node::default()
         }
@@ -5388,9 +5393,9 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_assignable(&node);
             let rhs = self.assign();
             if matches!(node.resolve_type(), Some(Type::Struct(_))) {
-                return self.struct_assignment(node, rhs, token);
+                return self.struct_assignment(node, rhs, token.clone());
             }
-            return Node::new_with_op(Some(token), NodeType::Assign, node, rhs);
+            return Node::new_with_op(Some(token.clone()), NodeType::Assign, node, rhs);
         }
         for (symbol, operation) in [
             ("+=", NodeType::Add),
@@ -5406,7 +5411,7 @@ impl<'a> AstBuilderImpl<'a> {
         ] {
             if let Some(token) = self.attempt_reserved(symbol) {
                 let rhs = self.assign();
-                return self.compound_assignment(token, node, rhs, operation);
+                return self.compound_assignment(token.clone(), node, rhs, operation);
             }
         }
         node
@@ -5417,7 +5422,7 @@ impl<'a> AstBuilderImpl<'a> {
             let then = self.expr();
             self.expect_reserved(":");
             let els = self.ternary();
-            let mut conditional = Node::new_if_node(Some(t), node, then, Some(els));
+            let mut conditional = Node::new_if_node(Some(t.clone()), node, then, Some(els));
             conditional.nt = NodeType::Conditional;
             return conditional;
         }
@@ -5427,7 +5432,12 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.logical_and();
         loop {
             if let Some(t) = self.attempt_reserved("||") {
-                node = Node::new_with_op(Some(t), NodeType::LogicalOr, node, self.logical_and());
+                node = Node::new_with_op(
+                    Some(t.clone()),
+                    NodeType::LogicalOr,
+                    node,
+                    self.logical_and(),
+                );
             } else {
                 return node;
             }
@@ -5437,7 +5447,12 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.bitwise_or();
         loop {
             if let Some(t) = self.attempt_reserved("&&") {
-                node = Node::new_with_op(Some(t), NodeType::LogicalAnd, node, self.bitwise_or());
+                node = Node::new_with_op(
+                    Some(t.clone()),
+                    NodeType::LogicalAnd,
+                    node,
+                    self.bitwise_or(),
+                );
             } else {
                 return node;
             }
@@ -5447,7 +5462,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.bitwise_xor();
         loop {
             if let Some(t) = self.attempt_reserved("|") {
-                node = Node::new_with_op(Some(t), NodeType::BitOr, node, self.bitwise_xor())
+                node = Node::new_with_op(Some(t.clone()), NodeType::BitOr, node, self.bitwise_xor())
             } else {
                 return node;
             }
@@ -5457,7 +5472,8 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.bitwise_and();
         loop {
             if let Some(t) = self.attempt_reserved("^") {
-                node = Node::new_with_op(Some(t), NodeType::BitXor, node, self.bitwise_and())
+                node =
+                    Node::new_with_op(Some(t.clone()), NodeType::BitXor, node, self.bitwise_and())
             } else {
                 return node;
             }
@@ -5467,7 +5483,7 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.equality();
         loop {
             if let Some(t) = self.attempt_reserved("&") {
-                node = Node::new_with_op(Some(t), NodeType::BitAnd, node, self.equality())
+                node = Node::new_with_op(Some(t.clone()), NodeType::BitAnd, node, self.equality())
             } else {
                 return node;
             }
@@ -5477,9 +5493,9 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.relational();
         loop {
             if let Some(t) = self.attempt_reserved("==") {
-                node = Node::new_with_op(Some(t), NodeType::Eq, node, self.relational())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Eq, node, self.relational())
             } else if let Some(t) = self.attempt_reserved("!=") {
-                node = Node::new_with_op(Some(t), NodeType::Ne, node, self.relational())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Ne, node, self.relational())
             } else {
                 return node;
             }
@@ -5489,13 +5505,13 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.bit_shift();
         loop {
             if let Some(t) = self.attempt_reserved("<") {
-                node = Node::new_with_op(Some(t), NodeType::Lt, node, self.bit_shift())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Lt, node, self.bit_shift())
             } else if let Some(t) = self.attempt_reserved("<=") {
-                node = Node::new_with_op(Some(t), NodeType::Le, node, self.bit_shift())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Le, node, self.bit_shift())
             } else if let Some(t) = self.attempt_reserved(">") {
-                node = Node::new_with_op(Some(t), NodeType::Lt, self.bit_shift(), node)
+                node = Node::new_with_op(Some(t.clone()), NodeType::Lt, self.bit_shift(), node)
             } else if let Some(t) = self.attempt_reserved(">=") {
-                node = Node::new_with_op(Some(t), NodeType::Le, self.bit_shift(), node)
+                node = Node::new_with_op(Some(t.clone()), NodeType::Le, self.bit_shift(), node)
             } else {
                 return node;
             }
@@ -5505,9 +5521,9 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.add();
         loop {
             if let Some(t) = self.attempt_reserved("<<") {
-                node = Node::new_with_op(Some(t), NodeType::BitLeft, node, self.add())
+                node = Node::new_with_op(Some(t.clone()), NodeType::BitLeft, node, self.add())
             } else if let Some(t) = self.attempt_reserved(">>") {
-                node = Node::new_with_op(Some(t), NodeType::BitRight, node, self.add())
+                node = Node::new_with_op(Some(t.clone()), NodeType::BitRight, node, self.add())
             } else {
                 return node;
             }
@@ -5517,9 +5533,9 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.mul();
         loop {
             if let Some(t) = self.attempt_reserved("+") {
-                node = Node::new_with_op(Some(t), NodeType::Add, node, self.mul())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Add, node, self.mul())
             } else if let Some(t) = self.attempt_reserved("-") {
-                node = Node::new_with_op(Some(t), NodeType::Sub, node, self.mul())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Sub, node, self.mul())
             } else {
                 return node;
             }
@@ -5529,11 +5545,11 @@ impl<'a> AstBuilderImpl<'a> {
         let mut node = self.unary();
         loop {
             if let Some(t) = self.attempt_reserved("*") {
-                node = Node::new_with_op(Some(t), NodeType::Mul, node, self.unary())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Mul, node, self.unary())
             } else if let Some(t) = self.attempt_reserved("/") {
-                node = Node::new_with_op(Some(t), NodeType::Div, node, self.unary())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Div, node, self.unary())
             } else if let Some(t) = self.attempt_reserved("%") {
-                node = Node::new_with_op(Some(t), NodeType::Mod, node, self.unary())
+                node = Node::new_with_op(Some(t.clone()), NodeType::Mod, node, self.unary())
             } else {
                 return node;
             }
@@ -5689,10 +5705,10 @@ impl<'a> AstBuilderImpl<'a> {
                     let literal = if self.return_type.is_some() {
                         let (object, initializer) = if inferred {
                             let object = self.register_incomplete_local_array(name, ty, 0);
-                            self.inferred_local_array_initializer(&object, &token)
+                            self.inferred_local_array_initializer(&object, token)
                         } else {
                             let object = self.register_local_variable(name, ty);
-                            let initializer = self.local_variable_initialization(&object, &token);
+                            let initializer = self.local_variable_initialization(&object, token);
                             (object, initializer)
                         };
                         let mut children = vec![];
@@ -5712,9 +5728,9 @@ impl<'a> AstBuilderImpl<'a> {
                         } else {
                             0
                         };
-                        ty = self.infer_array_size(ty, count, &token);
-                        self.expect_object_type(&ty, &token);
-                        self.validate_global_initializer(&ty, &data, &token);
+                        ty = self.infer_array_size(ty, count, token);
+                        self.expect_object_type(&ty, token);
+                        self.validate_global_initializer(&ty, &data, token);
                         self.global_variables.insert(
                             name.s_value.clone(),
                             GlobalVariable {
@@ -5784,7 +5800,7 @@ impl<'a> AstBuilderImpl<'a> {
                 bounds.push(result);
                 return Node {
                     nt: NodeType::Sequence,
-                    token: Some(token),
+                    token: Some(token.clone()),
                     children: bounds,
                     ..Node::default()
                 };
@@ -5798,7 +5814,7 @@ impl<'a> AstBuilderImpl<'a> {
                 let pending_start = self.pending_bounds.len();
                 if let Some(base) = self.attempt_type() {
                     let (name, ty, _, _, _) = self.declarator().resolve(base);
-                    self.validate_type_layout(&ty, &t);
+                    self.validate_type_layout(&ty, t);
                     if name.is_some() {
                         self.error_logger
                             .print_error_position(t.pos, "sizeof requires a type name");
@@ -5817,7 +5833,7 @@ impl<'a> AstBuilderImpl<'a> {
                     } else {
                         Node {
                             nt: NodeType::Sequence,
-                            token: Some(t),
+                            token: Some(t.clone()),
                             children,
                             ..Node::default()
                         }
@@ -5825,7 +5841,7 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 self.cur = saved;
             }
-            return self.sizeof_expression(&t);
+            return self.sizeof_expression(t);
         }
         if let Some(token) = self.attempt_reserved("_Alignof") {
             let pending_start = self.pending_bounds.len();
@@ -5833,7 +5849,7 @@ impl<'a> AstBuilderImpl<'a> {
             let base = self.expect_type();
             let (name, ty, _, _, _) = self.declarator().resolve(base);
             self.pending_bounds.truncate(pending_start);
-            self.validate_type_layout(&ty, &token);
+            self.validate_type_layout(&ty, token);
             if name.is_some()
                 || matches!(
                     ty.unqualified(),
@@ -5846,7 +5862,7 @@ impl<'a> AstBuilderImpl<'a> {
             }
             self.expect_reserved(")");
             return Node {
-                token: Some(token),
+                token: Some(token.clone()),
                 value: Some(ty.align_of()),
                 cty: Some(Type::integer(64, false)),
                 ..Node::default()
@@ -5866,12 +5882,12 @@ impl<'a> AstBuilderImpl<'a> {
                     token: Some(t.clone()),
                     ..Node::default()
                 };
-                return Node::new_with_op(Some(t), NodeType::Mul, operand, minus_one);
+                return Node::new_with_op(Some(t.clone()), NodeType::Mul, operand, minus_one);
             }
             return Node::new_with_op(
                 Some(t.clone()),
                 NodeType::Sub,
-                Node::new_with_num(Some(t), 0),
+                Node::new_with_num(Some(t.clone()), 0),
                 operand,
             );
         }
@@ -5896,7 +5912,7 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(token.pos, "expression is not addressable");
             }
-            return Node::new_with_op_and_lhs(Some(token), NodeType::Addr, operand);
+            return Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Addr, operand);
         }
         if let Some(token) = self.attempt_reserved("*") {
             let operand = self.unary();
@@ -5904,11 +5920,11 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(token.pos, "cannot dereference a non-pointer");
             }
-            return Node::new_with_op_and_lhs(Some(token), NodeType::Deref, operand);
+            return Node::new_with_op_and_lhs(Some(token.clone()), NodeType::Deref, operand);
         }
         if let Some(t) = self.attempt_reserved("~") {
             return Node {
-                token: Some(t),
+                token: Some(t.clone()),
                 nt: NodeType::BitNot,
                 lhs: Some(Box::new(self.unary())),
                 ..Node::default()
@@ -5916,7 +5932,7 @@ impl<'a> AstBuilderImpl<'a> {
         }
         if let Some(t) = self.attempt_reserved("!") {
             return Node {
-                token: Some(t),
+                token: Some(t.clone()),
                 nt: NodeType::Eq,
                 lhs: Some(Box::new(self.unary())),
                 rhs: Some(Box::new(Node::new_with_num(None, 0))),
@@ -5926,7 +5942,7 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(token) = self.attempt_reserved("++") {
             let operand = self.unary();
             return self.compound_assignment(
-                token,
+                token.clone(),
                 operand,
                 Node::new_with_num(None, 1),
                 NodeType::Add,
@@ -5935,7 +5951,7 @@ impl<'a> AstBuilderImpl<'a> {
         if let Some(token) = self.attempt_reserved("--") {
             let operand = self.unary();
             return self.compound_assignment(
-                token,
+                token.clone(),
                 operand,
                 Node::new_with_num(None, 1),
                 NodeType::Sub,
@@ -6582,12 +6598,12 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn prim(&mut self) -> Node {
         let node = if let Some(token) = self.attempt_reserved("_Generic") {
-            self.generic_selection(token)
+            self.generic_selection(token.clone())
         } else if let Some(token) = self.attempt_reserved("(") {
             if self.tokens[self.cur].tt == TokenType::Reserved
                 && self.tokens[self.cur].s_value == "{"
             {
-                self.statement_expression(token)
+                self.statement_expression(token.clone())
             } else {
                 let node = self.expr();
                 self.expect_reserved(")");
@@ -7045,7 +7061,7 @@ impl<'a> AstBuilderImpl<'a> {
                     let Some(Type::Struct(st)) = node.resolve_type() else {
                         unreachable!()
                     };
-                    node = Self::member_node(node, &st.member(index), &token);
+                    node = Self::member_node(node, &st.member(index), token);
                 }
             } else if let Some(b_token) = self.attempt_reserved("[") {
                 if matches!(
@@ -7068,10 +7084,10 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             } else if let Some(token) = self.attempt_reserved("++") {
                 // Suffix increment
-                node = self.suffix_update(token, node, true);
+                node = self.suffix_update(token.clone(), node, true);
             } else if let Some(token) = self.attempt_reserved("--") {
                 // Suffix decrement
-                node = self.suffix_update(token, node, false);
+                node = self.suffix_update(token.clone(), node, false);
             } else {
                 return node;
             }
