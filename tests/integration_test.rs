@@ -1107,6 +1107,12 @@ fn array_parameter_declarators(output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix(["asm", "llvm"])]
+fn qualified_arrays_of_pointers_in_parameters(output_option: &str) {
+    let code = "int sum(int *values[__restrict]);int sum(int *values[restrict static 2]){return *values[0]+*values[1];}int main(){int a=3,b=4;int *p[2]={&a,&b};return sum(p)-7;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
 #[test_matrix([
     "int a[static 3];",
     "int main(){int a[const 3];return 0;}",
@@ -1215,6 +1221,31 @@ fn rejects_invalid_anonymous_aggregate_members(code: &str) {
 ], ["asm", "llvm"])]
 fn selected_union_initializers(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn glibc_integer_word_mode(output_option: &str) {
+    let code = "typedef int word __attribute__((__mode__(__word__)));typedef unsigned int uword __attribute__((mode(word)));struct Counter{__extension__ unsigned long long value;};int main(){word x=-1;uword y=0xffffffffffffffffUL;struct Counter c={7};return sizeof(word)!=8 || sizeof(uword)!=8 || x>=0 || y!=0xffffffffffffffffUL || c.value!=7;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
+#[test_matrix([
+    "typedef float invalid __attribute__((mode(word)));",
+    "typedef int invalid __attribute__((mode(byte)));",
+    "int invalid __attribute__((mode(word)));",
+])]
+fn rejects_unsupported_integer_modes(code: &str) {
+    assert_frontend_error(code);
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn gnu_qualifier_spellings(output_option: &str) {
+    for restrict in ["__restrict", "__restrict__"] {
+        let code = format!(
+            "typedef __signed__ char S;int sum(__const int *{restrict} p){{return *p;}}int main(){{__volatile__ int x=7;S s=-1;return sum((__const__ int *)&x)-7+(s>=0)+(__alignof__(S)!=1);}}"
+        );
+        assert_eq!(compile_and_run(&code, output_option).status.code(), Some(0));
+    }
 }
 
 #[test_matrix(["asm", "llvm"])]
@@ -2921,6 +2952,22 @@ int main(void){
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn gnu_weak_declarations_preserve_optional_linkage(output_option: &str, optimization: &str) {
+    let code = "extern int absent(void) __attribute__((__weak__));extern int missing __attribute__((weak));extern int present(void) __attribute__((weak));int main(){return absent!=0 || &missing!=0 || present()!=7;}";
+    let companion = "int present(void){return 7;}";
+    let mut flags = vec![optimization];
+    if cfg!(target_os = "macos") {
+        flags.push("-Wl,-undefined,dynamic_lookup");
+    }
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &flags)
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn weak_import_declarations_can_remain_unused(output_option: &str) {
     let code = "extern int missing __attribute__((weak_import));int absent(void) __attribute__((weak_import));int main(){return 0;}";
@@ -3247,9 +3294,65 @@ struct Mixed foreign(struct Mixed value,long double delta){
 }
 
 #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn extended_long_double_storage_matches_clang(output_option: &str, optimization: &str) {
+    let code = r"
+typedef long double Extended;
+Extended unused_api(Extended);
+struct Packet{char tag;Extended value;char end;};
+Extended zeros[2]={};struct Packet storage={};
+void fill(Extended *);int check(struct Packet *,Extended *);
+int main(){struct Packet local;local.tag=7;local.end=9;fill(&local.value);storage=local;
+return check(&storage,zeros)+(sizeof(Extended)!=16)+(_Alignof(Extended)!=16)
++(sizeof(local)!=48)+((char*)&local.value-(char*)&local!=16)
++((char*)&local.end-(char*)&local!=32);}
+";
+    let companion = "struct Packet{char tag;long double value;char end;};void fill(long double *p){*p=1.25L;}int check(struct Packet *p,long double *z){return p->tag!=7 || p->value!=1.25L || p->end!=9 || z[0]!=0 || z[1]!=0;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn raised_record_typedef_alignment_matches_clang(output_option: &str, optimization: &str) {
+    let code = r"
+typedef struct {long words[13];} Buffer __attribute__((aligned));
+struct Container{char tag;Buffer value;char end;};
+Buffer global={};struct Container storage={};
+int check(Buffer *,struct Container *);
+int main(){Buffer local={};struct Container c={};local.words[12]=7;c.tag=3;c.value=local;c.end=9;storage=c;global=local;
+return check(&global,&storage)+(sizeof(Buffer)!=104)+(_Alignof(Buffer)!=16)
++(sizeof(c)!=128)+((char*)&c.value-(char*)&c!=16)+((char*)&c.end-(char*)&c!=120);}
+";
+    let companion = "typedef struct{long words[13];} Buffer __attribute__((aligned));struct Container{char tag;Buffer value;char end;};int check(Buffer *b,struct Container *c){return b->words[12]!=7 || c->tag!=3 || c->value.words[12]!=7 || c->end!=9;}";
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
 #[test_matrix([
-    "long double value;",
+    "typedef struct{long x;} Buffer __attribute__((aligned(16)));Buffer invalid[2];",
+    "typedef struct{long x;} Buffer __attribute__((aligned(16)));Buffer f(Buffer);",
+    "typedef struct{long x;} Buffer __attribute__((aligned(32)));",
+])]
+fn rejects_unsupported_raised_typedef_uses(code: &str) {
+    assert_frontend_error(code);
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+#[test_matrix([
+    "long double value=1.0L;",
     "int main(){return 1.0L==1.0;}",
+    "long double f(long double x){return x;}",
+    "long double f(void);int main(){f();return 0;}",
+    "struct S{long double x;};struct S f(struct S);",
+    "int main(){long double x;long double y=x;return 0;}",
 ])]
 fn unsupported_long_double_formats_are_diagnosed(code: &str) {
     assert_frontend_error(code);
@@ -5480,6 +5583,12 @@ int check_name(const char *name,const char *expected,unsigned long size){
     let result =
         compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result);
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn gnu_predefined_function_names(output_option: &str) {
+    let code = "int named(void){return sizeof(__FUNCTION__)!=6 || sizeof(__PRETTY_FUNCTION__)!=6 || __PRETTY_FUNCTION__[0]!='n' || __FUNCTION__[4]!='d';}int main(){return named();}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
 #[test_matrix([
