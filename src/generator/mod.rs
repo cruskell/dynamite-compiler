@@ -82,7 +82,7 @@ pub(crate) fn referenced_symbols<'a>(
     let mut names = HashSet::new();
     let mut pending = vec![];
     for function in ast.functions.values().filter(|function| {
-        !function.inline_only() && !(function.internal && function.inline_definition)
+        !(function.inline_only() || function.internal && function.inline_definition)
     }) {
         if let Some(body) = &function.body {
             node_names(body, &mut names, &mut pending);
