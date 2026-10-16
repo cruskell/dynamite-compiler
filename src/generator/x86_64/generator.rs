@@ -1294,6 +1294,12 @@ impl<'a> AsmGenerator<'a> {
     }
 
     fn gen_node(&self, node: &Node, offset: usize, breakable_branch_num: usize) -> Assembly {
+        if node.nt == NodeType::StackAlloc {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "alloca requires the LLVM backend",
+            );
+        }
         match node.nt {
             NodeType::Prefetch(_, locality) => {
                 return self.gen_prefetch(node, locality, offset, breakable_branch_num);

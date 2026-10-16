@@ -1307,3 +1307,11 @@ The GNU C `__FUNCTION__` and `__PRETTY_FUNCTION__` identifiers use the same
 function-name array as `__func__`. GNU `__alignof` and `__alignof__` accept the
 same type-name operands as `_Alignof`. Qualified parameter arrays also support
 pointer elements, for example `int *items[restrict static 2]`.
+
+## Stack allocation builtin
+
+`__builtin_alloca(size)` allocates 16-byte-aligned stack storage until the current
+function returns. The integer byte count is evaluated once and converted to the
+target's size type. The LLVM backend emits a dynamic `alloca`; native assembly
+backends diagnose this operation. File-scope uses and non-integer sizes are
+rejected. The libc `alloca` macro can use this builtin without frontend fallback.

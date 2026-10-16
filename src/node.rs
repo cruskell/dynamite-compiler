@@ -71,6 +71,7 @@ pub enum NodeType {
     Assign,
     Cast,
     FloatAbs,
+    StackAlloc,
     BitScan {
         bits: u8,
         leading: bool,
@@ -451,6 +452,7 @@ impl Node {
                     .promoted(),
             )),
             NodeType::Prefetch(..)
+            | NodeType::StackAlloc
             | NodeType::BitScan { .. }
             | NodeType::ZeroFill { .. }
             | NodeType::CopyBytes { .. }

@@ -1252,6 +1252,12 @@ impl<'a> AsmGenerator<'a> {
 
     // Keep recursive logical chains out of the large dispatch frame in debug builds.
     fn gen_node(&self, node: &Node, options: Options) -> Assembly {
+        if node.nt == NodeType::StackAlloc {
+            self.error_logger.print_error_position(
+                node.token.as_ref().unwrap().pos,
+                "alloca requires the LLVM backend",
+            );
+        }
         match node.nt {
             NodeType::LogicalAnd | NodeType::LogicalOr => self.gen_logical(node, options),
             _ => self.gen_node_inner(node, options),
