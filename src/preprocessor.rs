@@ -229,18 +229,47 @@ impl Drop for IncludeDirectory {
     }
 }
 
-struct Source {
-    name: String,
+struct SourceText {
     code: String,
     lines: Vec<usize>,
 }
 
-impl Source {
-    fn new(name: String, code: String) -> Self {
+impl SourceText {
+    fn new(code: String) -> Self {
         let lines = std::iter::once(0)
             .chain(code.match_indices('\n').map(|(pos, _)| pos + 1))
             .collect();
-        Self { name, code, lines }
+        Self { code, lines }
+    }
+}
+
+struct Source {
+    name: String,
+    path: Option<std::path::PathBuf>,
+    text: std::sync::OnceLock<SourceText>,
+}
+
+impl Source {
+    fn new(name: String, code: String) -> Self {
+        Self {
+            name,
+            path: None,
+            text: std::sync::OnceLock::from(SourceText::new(code)),
+        }
+    }
+
+    fn deferred(name: String, path: std::path::PathBuf) -> Self {
+        Self {
+            name,
+            path: Some(path),
+            text: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn text(&self) -> &SourceText {
+        self.text.get_or_init(|| {
+            SourceText::new(fs::read_to_string(self.path.as_ref().unwrap()).unwrap_or_default())
+        })
     }
 }
 
@@ -264,17 +293,18 @@ impl Preprocessed {
             return (&self.sources[0], 0);
         };
         let source = &self.sources[origin.source];
-        let start = source
+        let text = source.text();
+        let start = text
             .lines
             .get(origin.line.saturating_sub(1))
             .copied()
-            .unwrap_or(source.code.len());
-        let end = source.code[start..]
+            .unwrap_or(text.code.len());
+        let end = text.code[start..]
             .find('\n')
             .map(|len| start + len)
-            .unwrap_or(source.code.len());
+            .unwrap_or(text.code.len());
         let mut column = pos.saturating_sub(origin.start).min(end - start);
-        while !source.code.is_char_boundary(start + column) {
+        while !text.code.is_char_boundary(start + column) {
             column -= 1;
         }
         (source, start + column)
@@ -284,20 +314,21 @@ impl Preprocessed {
 impl ErrorLogger for Preprocessed {
     fn line_from_position(&self, pos: usize) -> (usize, usize, &str) {
         let (source, position) = self.location(pos);
-        let row = source
+        let text = source.text();
+        let row = text
             .lines
             .partition_point(|start| *start <= position)
             .max(1);
-        let start = source.lines[row - 1];
-        let end = source.code[start..]
+        let start = text.lines[row - 1];
+        let end = text.code[start..]
             .find('\n')
             .map(|len| start + len)
-            .unwrap_or(source.code.len());
-        (row, position - start, &source.code[start..end])
+            .unwrap_or(text.code.len());
+        (row, position - start, &text.code[start..end])
     }
     fn print_error_position(&self, pos: usize, message: &str) {
         let (source, position) = self.location(pos);
-        ErrorPrinter::new(&source.code)
+        ErrorPrinter::new(&source.text().code)
             .print_error_position(position, &format!("{}: {}", source.name, message));
     }
 }
@@ -362,6 +393,7 @@ fn preprocess_input(
         && options.undefinitions.is_empty()
     {
         let origins = source
+            .text()
             .lines
             .iter()
             .enumerate()
@@ -489,8 +521,13 @@ fn preprocess_input(
                             .unwrap_or(Path::new("."))
                             .join(filename_path)
                     };
-                    let text = fs::read_to_string(resolved).unwrap_or_default();
-                    result.sources.push(Source::new(filename, text));
+                    let source = if file_input.is_some() {
+                        // File compilation needs included text only when rendering diagnostics.
+                        Source::deferred(filename, resolved)
+                    } else {
+                        Source::new(filename, fs::read_to_string(resolved).unwrap_or_default())
+                    };
+                    result.sources.push(source);
                     index
                 });
                 current_line = number;
@@ -556,6 +593,39 @@ mod tests {
         assert_eq!(source_line, "int from_header = VALUE;");
         let expanded = preprocess("int line = __LINE__;", None).unwrap();
         assert!(expanded.code.contains("int line = 1;"));
+    }
+
+    #[test]
+    fn file_input_defers_header_text_until_diagnostics() {
+        let directory = IncludeDirectory::new().unwrap();
+        let header = directory.0.join("values.h");
+        let text = "// Header line one\nint from_header=7; /* café */\n";
+        fs::write(&header, text).unwrap();
+        let main = directory.0.join("main.c");
+        let code = "#include \"values.h\"\nint main(){return from_header;}\n";
+        fs::write(&main, code).unwrap();
+        let snapshot = preprocess(code, Some(&main)).unwrap();
+        let expanded = preprocess_file(&main, "clang", &[]).unwrap();
+        let source = expanded
+            .sources
+            .iter()
+            .find(|source| source.name.ends_with("values.h"))
+            .unwrap();
+        assert!(source.text.get().is_none());
+        let position = expanded.code.find("int from_header").unwrap();
+        assert_eq!(
+            expanded.line_from_position(position),
+            (2, 0, "int from_header=7; /* café */")
+        );
+        fs::remove_file(header).unwrap();
+        assert_eq!(
+            snapshot.line_from_position(snapshot.code.find("int from_header").unwrap()),
+            (2, 0, "int from_header=7; /* café */")
+        );
+        assert_eq!(
+            expanded.line_from_position(position),
+            (2, 0, "int from_header=7; /* café */")
+        );
     }
 
     #[test]
