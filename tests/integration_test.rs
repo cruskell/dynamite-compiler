@@ -3619,6 +3619,10 @@ int main(){
     i=1;
     if((0 && __builtin_clz(i++)) || (1?0:__builtin_ctz(i++)) || sizeof(__builtin_clzll(i++))!=4 || i!=1) return 9;
     if(_Generic(__builtin_clzll(x),int:0,default:1) || global!=32 || __builtin_clz(-1)!=0) return 10;
+    volatile unsigned long zero=0;
+    if(__builtin_clz(zero)!=32 || __builtin_ctz(zero)!=32) return 11;
+    if(__builtin_clzl(zero)!=64 || __builtin_ctzl(zero)!=64) return 12;
+    if(__builtin_clzll(zero)!=64 || __builtin_ctzll(zero)!=64) return 13;
     return 0;
 }
 "#;
@@ -3629,6 +3633,19 @@ int main(){
             .code(),
         Some(0)
     );
+}
+
+#[test]
+fn runtime_bit_scans_use_width_correct_llvm_intrinsics() {
+    let ir = dynamite_compiler::generate(
+        "int leading(unsigned long x){return __builtin_clzll(x);}int trailing(unsigned int x){return __builtin_ctz(x);}",
+        "llvm",
+        false,
+    );
+    assert!(ir.contains("call i64 @llvm.ctlz.i64(i64"), "{ir}");
+    assert!(ir.contains("call i32 @llvm.cttz.i32(i32"), "{ir}");
+    assert!(ir.contains("trunc i64"), "{ir}");
+    assert_eq!(ir.matches("i1 false)").count(), 2, "{ir}");
 }
 
 #[test_matrix([

@@ -71,6 +71,7 @@ pub enum NodeType {
     Assign,
     Cast,
     FloatAbs,
+    BitScan { bits: u8, leading: bool },
     LocalVar,
     GlobalVar,
     Add,
@@ -425,6 +426,7 @@ impl Node {
                     .promoted(),
             ),
             NodeType::Prefetch(..)
+            | NodeType::BitScan { .. }
             | NodeType::Atomic(_)
             | NodeType::LocalVar
             | NodeType::CallFunc

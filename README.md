@@ -899,8 +899,10 @@ initializers with an explicit unsigned underlying type.
 `__builtin_clz`, `__builtin_ctz` and their `l`/`ll` variants return an int count
 of leading or trailing zero bits after conversion to the declared unsigned
 argument width. Their GNU contract requires a nonzero operand. Constant inputs
-are folded, and runtime inputs are evaluated once using shared integer operations
-without target-specific instructions or runtime library calls.
+are folded, and runtime inputs are evaluated once. Runtime scans remain explicit
+AST operations: LLVM uses `llvm.ctlz`/`llvm.cttz`, AArch64 uses `clz` and `rbit`,
+and x86_64 uses baseline `bsr`/`bsf` with an explicit zero fallback. No optional
+CPU extension or runtime library call is required.
 
 `__builtin_constant_p(expression)` returns an int constant without evaluating its
 operand or variable-array bounds. It recognizes numeric/string literals and

@@ -16,6 +16,8 @@ pub enum InstOperator {
     FCVTZS,
     FCVTZU,
 
+    CLZ,
+    RBIT,
     MOV,
     CSET,
     SXTB,
@@ -88,6 +90,8 @@ impl InstOperator {
             UCVTF => "ucvtf",
             FCVTZS => "fcvtzs",
             FCVTZU => "fcvtzu",
+            CLZ => "clz",
+            RBIT => "rbit",
             MOV => "mov",
             CSET => "cset",
             SXTB => "sxtb",

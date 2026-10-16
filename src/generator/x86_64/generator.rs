@@ -1330,6 +1330,35 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
 
+            NodeType::BitScan { bits, leading } => {
+                let (input, count) = if bits == 32 { (EAX, ECX) } else { (RAX, RCX) };
+                let mut lines = vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    Assembly::inst1(POP, RAX),
+                    Assembly::inst2(if leading { BSR } else { BSF }, count, input),
+                    Assembly::inst2(
+                        MOV,
+                        R11,
+                        if leading {
+                            usize::MAX
+                        } else {
+                            usize::from(bits)
+                        },
+                    ),
+                    // BSF/BSR leave the destination undefined for zero; select a fallback first.
+                    Assembly::inst2(CMOVE, RCX, R11),
+                ];
+                if leading {
+                    lines.extend([
+                        Assembly::inst2(MOV, RAX, usize::from(bits - 1)),
+                        Assembly::inst2(SUB, RAX, RCX),
+                    ]);
+                } else {
+                    lines.push(Assembly::inst2(MOV, RAX, RCX));
+                }
+                lines.push(Assembly::inst1(PUSH, RAX));
+                return lines.into();
+            }
             NodeType::FloatAbs => {
                 let shift = 65 - node.resolve_type().unwrap().float_bits().unwrap() as usize;
                 return vec![
