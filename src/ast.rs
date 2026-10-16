@@ -117,6 +117,7 @@ struct DeclarationAttributes {
     typedef_declarator: bool,
     transparent_union: bool,
     vector_size: Option<usize>,
+    word_mode: bool,
 }
 
 pub struct AstBuilderImpl<'a> {
@@ -440,6 +441,12 @@ impl<'a> AstBuilderImpl<'a> {
             }
             Type::Ptr(child) => self.validate_type_layout(child, token),
             Type::Arr(child, _) | Type::Vla(child, _) => {
+                if child.size_of() % child.align_of() != 0 {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "array element size must be a multiple of its alignment",
+                    );
+                }
                 if child.has_flexible_array() {
                     self.error_logger.print_error_position(
                         token.pos,
@@ -471,9 +478,9 @@ impl<'a> AstBuilderImpl<'a> {
                 }
                 for ty in args.iter().chain(std::iter::once(result.as_ref())) {
                     if matches!(ty.unqualified(), Type::Struct(_))
-                        && ty.contains_reduced_alignment()
+                        && ty.contains_typedef_alignment()
                     {
-                        self.error_logger.print_error_position(token.pos, "records containing reduced-alignment typedefs cannot be passed or returned by value");
+                        self.error_logger.print_error_position(token.pos, "records containing non-natural-alignment typedefs cannot be passed or returned by value");
                     }
                     if ty.contains_vector() {
                         self.error_logger.print_error_position(token.pos, "vectors and records containing vectors cannot be passed or returned by value");
@@ -495,6 +502,11 @@ impl<'a> AstBuilderImpl<'a> {
                             token.pos,
                             "records containing _Float16 cannot be passed or returned by value",
                         );
+                    }
+                    if matches!(ty.unqualified(), Type::Struct(_))
+                        && ty.contains_extended_long_double()
+                    {
+                        self.error_logger.print_error_position(token.pos, "records containing extended long double cannot be passed or returned by value");
                     }
                     self.validate_type_layout(ty, token);
                 }
@@ -652,7 +664,7 @@ impl<'a> AstBuilderImpl<'a> {
                     }
                     continue;
                 }
-                if name.s_value.trim_matches('_') == "weak_import" {
+                if matches!(name.s_value.trim_matches('_'), "weak_import" | "weak") {
                     if self.parameter_depth != 0
                         || self.declaration_attributes_state.is_none()
                         || self
@@ -746,6 +758,35 @@ impl<'a> AstBuilderImpl<'a> {
                             .print_error_position(name.pos, "common does not take arguments");
                     }
                     self.declaration_attributes_state.as_mut().unwrap().common = true;
+                    if self.tokens[self.cur].s_value != ")" {
+                        self.expect_reserved(",");
+                    }
+                    continue;
+                }
+                if name.s_value.trim_matches('_') == "mode" {
+                    if !self
+                        .declaration_attributes_state
+                        .as_ref()
+                        .is_some_and(|a| a.typedef_declarator)
+                    {
+                        self.error_logger.print_error_position(
+                            name.pos,
+                            "mode is supported only on integer typedefs",
+                        );
+                    }
+                    self.cur += 1;
+                    self.expect_reserved("(");
+                    let mode = &self.tokens[self.cur];
+                    if mode.s_value.trim_matches('_') != "word" {
+                        self.error_logger
+                            .print_error_position(mode.pos, "only word integer mode is supported");
+                    }
+                    self.cur += 1;
+                    self.expect_reserved(")");
+                    self.declaration_attributes_state
+                        .as_mut()
+                        .unwrap()
+                        .word_mode = true;
                     if self.tokens[self.cur].s_value != ")" {
                         self.expect_reserved(",");
                     }
@@ -940,10 +981,7 @@ impl<'a> AstBuilderImpl<'a> {
                     minimum = self.attempt_reserved("static");
                 }
                 if minimum.is_some() || qualifiers != Qualifiers::default() {
-                    if self.parameter_depth == 0
-                        || !matches!(direct, Declarator::Name(_))
-                        || !pointers.is_empty()
-                    {
+                    if self.parameter_depth == 0 || !matches!(direct, Declarator::Name(_)) {
                         self.error_logger.print_error_position(
                             self.tokens[self.cur].pos,
                             "array parameter modifiers require an outer parameter array",
@@ -1532,6 +1570,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn attempt_type(&mut self) -> Option<Type> {
         let saved = self.cur;
+        while self.attempt_reserved("__extension__").is_some() {}
         let mut nullability = None;
         let mut q = self.qualifiers_with_nullability(&mut nullability);
         let Some(ty) = self.attempt_unqualified_type(&mut q) else {
@@ -1573,13 +1612,18 @@ impl<'a> AstBuilderImpl<'a> {
         })
     }
     fn long_double_type(&self, token: &Token) -> Type {
-        if !cfg!(all(target_arch = "aarch64", target_os = "macos")) {
-            self.error_logger.print_error_position(
-                token.pos,
-                "long double is only supported on targets with a binary64 long double ABI",
-            );
+        if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+            return Type::LongDouble(64);
         }
-        Type::LongDouble(64)
+        if cfg!(target_arch = "x86_64") {
+            return Type::LongDouble(80);
+        }
+        if cfg!(all(target_arch = "aarch64", target_os = "linux")) {
+            return Type::LongDouble(128);
+        }
+        self.error_logger
+            .print_error_position(token.pos, "unsupported long double storage format");
+        unreachable!()
     }
 
     fn typeof_type(&mut self, token: Token) -> Type {
@@ -2341,6 +2385,21 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             let attributes = self.declaration_attributes_state.take().unwrap();
+            if attributes.word_mode {
+                let Some((_, signed)) = ty
+                    .integer_info()
+                    .filter(|_| *ty.unqualified() != Type::Bool)
+                else {
+                    self.error_logger
+                        .print_error_position(token.pos, "word mode requires an integer typedef");
+                    unreachable!()
+                };
+                let qualifiers = ty.qualifiers();
+                ty = Type::integer(64, signed);
+                if qualifiers != Qualifiers::default() {
+                    ty = Type::Qualified(Box::new(ty), qualifiers);
+                }
+            }
             if attributes.transparent_union {
                 self.apply_transparent_union(&ty, &token);
             }
@@ -2369,9 +2428,13 @@ impl<'a> AstBuilderImpl<'a> {
                     );
                 }
                 if alignment != ty.align_of() {
-                    if alignment > ty.natural_align_of()
-                        || !(ty.integer_info().is_some()
-                            || matches!(ty.unqualified(), Type::Float(32 | 64) | Type::Ptr(_)))
+                    let raised_record = matches!(ty.unqualified(), Type::Struct(_))
+                        && alignment > ty.natural_align_of()
+                        && alignment <= 16;
+                    if !raised_record
+                        && (alignment > ty.natural_align_of()
+                            || !(ty.integer_info().is_some()
+                                || matches!(ty.unqualified(), Type::Float(32 | 64) | Type::Ptr(_))))
                     {
                         self.error_logger.print_error_position(token.pos, "non-natural typedef alignment is supported only for scalar alignment reductions");
                     }
@@ -2735,6 +2798,13 @@ impl<'a> AstBuilderImpl<'a> {
                     if parameters
                         .iter()
                         .chain(std::iter::once(result))
+                        .any(Type::contains_extended_long_double)
+                    {
+                        self.error_logger.print_error_position(token.pos, "extended long double parameters and results in function definitions are not supported");
+                    }
+                    if parameters
+                        .iter()
+                        .chain(std::iter::once(result))
                         .any(|ty| matches!(ty.unqualified(), Type::Float16))
                     {
                         self.error_logger.print_error_position(token.pos,
@@ -2942,6 +3012,12 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger.print_error_position(
                     token.pos,
                     "_Float16 value initialization is not supported",
+                );
+            }
+            (Type::LongDouble(bits), _) if *bits != 64 => {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "extended long double value initialization is not supported",
                 );
             }
             (Type::Integer128 { .. }, _) => {
@@ -3756,11 +3832,24 @@ impl<'a> AstBuilderImpl<'a> {
                 .iter()
                 .filter_map(Node::resolve_type_view)
                 .chain(node.resolve_type_view())
+                .any(|ty| Type::decay_view(ty).contains_extended_long_double())
+        {
+            self.error_logger.print_error_position(
+                node.token.as_ref().map_or(0, |token| token.pos),
+                "extended long double cannot be passed or returned by value",
+            );
+        }
+        if node.nt == NodeType::CallFunc
+            && node
+                .args
+                .iter()
+                .filter_map(Node::resolve_type_view)
+                .chain(node.resolve_type_view())
                 .any(|ty| {
-                    matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_reduced_alignment()
+                    matches!(ty.unqualified(), Type::Struct(_)) && ty.contains_typedef_alignment()
                 })
         {
-            self.error_logger.print_error_position(node.token.as_ref().map_or(0, |token| token.pos), "records containing reduced-alignment typedefs cannot be passed or returned by value");
+            self.error_logger.print_error_position(node.token.as_ref().map_or(0, |token| token.pos), "records containing non-natural-alignment typedefs cannot be passed or returned by value");
         }
         if node.nt == NodeType::CallFunc
             && node
@@ -3807,6 +3896,9 @@ impl<'a> AstBuilderImpl<'a> {
                     Some("128-bit integer value operations are not supported")
                 }
                 Some(Type::Float16) => Some("_Float16 value operations are not supported"),
+                Some(Type::LongDouble(bits)) if *bits != 64 => {
+                    Some("extended long double value operations are not supported")
+                }
                 Some(Type::Vector(..)) => Some("vector value operations are not supported"),
                 _ => None,
             };
@@ -6468,7 +6560,10 @@ impl<'a> AstBuilderImpl<'a> {
                 };
                 return self.overflow_builtin(t, operation);
             }
-            if t.s_value == "__func__" {
+            if matches!(
+                t.s_value.as_str(),
+                "__func__" | "__FUNCTION__" | "__PRETTY_FUNCTION__"
+            ) {
                 let name = self.predefined_function_name(t);
                 return self.postfix(name);
             }

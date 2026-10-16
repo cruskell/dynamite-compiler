@@ -601,6 +601,7 @@ impl Type {
             Type::Integer128 { .. } => 16,
             Type::Integer { bits, .. } => (*bits as usize) / 8,
             Type::Bool => 1,
+            Type::LongDouble(80) => 16,
             Type::Float(bits) | Type::LongDouble(bits) => usize::from(*bits) / 8,
             Type::Ptr(_) => 8,
             Type::Arr(t, s) => t.size_of() * s.unwrap_or(0),
@@ -651,18 +652,35 @@ impl Type {
         }
     }
 
-    pub fn contains_reduced_alignment(&self) -> bool {
+    /// Whether an object contains a long double format supported only as storage.
+    pub fn contains_extended_long_double(&self) -> bool {
+        match self.unqualified() {
+            Self::LongDouble(bits) => *bits != 64,
+            Self::Arr(child, _) | Self::Vla(child, _) => child.contains_extended_long_double(),
+            Self::Struct(ty) => ty
+                .definition()
+                .borrow()
+                .members
+                .iter()
+                .any(|member| member.ty.contains_extended_long_double()),
+            _ => false,
+        }
+    }
+
+    pub fn contains_typedef_alignment(&self) -> bool {
         match self {
-            Self::Aligned(child, alignment) => *alignment < child.natural_align_of(),
+            Self::Aligned(child, alignment) => {
+                *alignment != child.natural_align_of() || child.contains_typedef_alignment()
+            }
             Self::Qualified(child, _) | Self::Arr(child, _) | Self::Vla(child, _) => {
-                child.contains_reduced_alignment()
+                child.contains_typedef_alignment()
             }
             Self::Struct(record) => record
                 .definition()
                 .borrow()
                 .members
                 .iter()
-                .any(|member| member.ty.contains_reduced_alignment()),
+                .any(|member| member.ty.contains_typedef_alignment()),
             _ => false,
         }
     }

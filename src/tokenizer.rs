@@ -620,7 +620,14 @@ impl Tokenizer {
                     {
                         pos += 1;
                     }
-                    let value = &code[start..pos];
+                    let value = match &code[start..pos] {
+                        "__restrict" | "__restrict__" => "restrict",
+                        "__const" | "__const__" => "const",
+                        "__volatile" | "__volatile__" => "volatile",
+                        "__signed" | "__signed__" => "signed",
+                        "__alignof" | "__alignof__" => "_Alignof",
+                        value => value,
+                    };
                     tokens.push(
                         if reserved_words.contains(value) || TYPES.contains(&value) {
                             Self::reserved_token(start, value.to_string())

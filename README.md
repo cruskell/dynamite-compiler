@@ -391,8 +391,14 @@ the usual arithmetic conversions; variadic calls promote `float` to `double`.
 Native calls use the platform floating-register and stack conventions.
 On macOS AArch64, `long double` is a distinct C type using the platform's
 binary64 representation, including `L` literals, arithmetic, and function calls.
-Other long-double formats are diagnosed as unsupported. Floating environment
-control and complex types are not supported.
+On x86_64, the 80-bit format occupies 16 bytes; Linux AArch64 uses 16-byte
+binary128 storage. These extended formats support declarations, size/alignment
+queries, zero-initialized storage, record copies, and pointer interoperation.
+Value operations, explicit scalar value initialization, function definitions
+with extended long-double parameters/results, and calls passing or returning
+these values are diagnosed. Unused scalar function declarations are accepted
+for system-header compatibility. Floating environment control and complex
+types are not supported.
 
 ## Aggregate function values
 
@@ -1011,8 +1017,9 @@ only to the annotated declarator.
 Native output uses Mach-O `.weak_reference` or ELF `.weak`; LLVM uses
 `extern_weak` declarations. Definitions of imported symbols in the same
 translation unit, internal declarations, TLS imports and block-scope attributes
-remain diagnosed. Weak symbol definitions and GNU `weak` are separate features
-and remain unsupported.
+remain diagnosed. GNU `weak` and `__weak__` are accepted on these external
+declarations with the same optional-reference behavior. Weak definitions remain
+unsupported.
 
 On macOS, completely undefined weak symbols require an appropriate weak-linked
 library or an explicit linker policy such as `-undefined dynamic_lookup`, as with
@@ -1133,14 +1140,19 @@ an ordinary integer, float or pointer alias's object alignment. The byte size an
 underlying C type identity are unchanged. Prefix attributes apply to each alias;
 postfix attributes stay local, and combined requests use the greatest alignment.
 Natural-alignment requests remain supported for other complete object typedefs.
+Record typedefs can also raise alignment through 16 bytes, including the default
+GNU `aligned` request used in glibc's pthread headers. Typedef alignment leaves
+`sizeof` unchanged; array elements whose size is not a multiple of their
+alignment are diagnosed.
 
 The requested alignment is preserved in globals, locals, arrays, VLAs and record
 members, including initialized storage and indirect unaligned accesses. Native
 and LLVM output retain the layout, with conservative LLVM load/store alignment.
-Scalar calls keep their normal ABI. Increasing alignment beyond the underlying
-natural alignment, reducing record or extended storage-only scalar alignment,
-conflicting typedef redeclarations and passing/returning records containing these
-aliases by value are diagnosed. Pointer-based record interoperation is supported.
+Scalar calls keep their normal ABI. Increasing scalar alignment or raising
+record typedef alignment above 16 bytes, reducing record or extended
+storage-only scalar alignment,
+conflicting typedef redeclarations and passing/returning records with
+non-natural typedef alignment by value are diagnosed. Pointer-based record interoperation is supported.
 
 ## Alias annotations
 
@@ -1280,3 +1292,18 @@ are always evaluated; these operators do not short-circuit. This is a compiler
 evaluation policy: portable C must not rely on a particular order for these
 operators, and this policy does not specify the order of other C operators or
 function arguments.
+
+## GNU system-header spellings
+
+GNU `__const`, `__volatile`, `__restrict`, and `__signed` spellings, with or
+without trailing double underscores, have the same meaning as the ordinary
+keywords. `__extension__` is accepted before member type specifiers as well as
+ordinary declarations and expressions. Integer typedefs accept `mode(word)`
+and `__mode__(__word__)`, preserving signedness and qualifiers while selecting
+the supported targets' 64-bit word type. Other machine modes and non-integer
+or non-typedef uses remain diagnosed.
+
+The GNU C `__FUNCTION__` and `__PRETTY_FUNCTION__` identifiers use the same
+function-name array as `__func__`. GNU `__alignof` and `__alignof__` accept the
+same type-name operands as `_Alignof`. Qualified parameter arrays also support
+pointer elements, for example `int *items[restrict static 2]`.

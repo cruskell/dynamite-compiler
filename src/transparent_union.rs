@@ -44,7 +44,7 @@ impl AstBuilderImpl<'_> {
                     && ty.align_of() == first.ty.align_of()
                     && members.iter().all(|member| {
                         member.bit_field.is_none()
-                            && !member.ty.contains_reduced_alignment()
+                            && !member.ty.contains_typedef_alignment()
                             && Self::transparent_mode(&member.ty) == mode
                     })
             });
