@@ -6193,12 +6193,8 @@ unsigned long reference64(int i){double values[]={VALUES(__builtin_nan)};unsigne
 unsigned int reference32(int i){float values[]={VALUES(__builtin_nanf)};unsigned int bits;memcpy(&bits,&values[i],4);return bits;}
 int check_runtime(double d,float f){return !isnan(d) || !isnan(f);}
 "#;
-    let result = compile_and_run_with_c_flags(
-        &code,
-        output_option,
-        Some(companion),
-        &[optimization, "-lm"],
-    );
+    let result =
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization, "-lm"]);
     assert_eq!(result.status.code(), Some(0), "{result:?}");
 }
 
