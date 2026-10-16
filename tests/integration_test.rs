@@ -1346,6 +1346,66 @@ int main(){return bridge(3)+callbacks[0].function(5)-11;}
     );
 }
 
+#[test]
+fn llvm_omits_unreferenced_function_declarations() {
+    let code = r#"
+int unused(void);
+int unused_alias(void) __asm__("unused_link_name");
+int unused_weak(void) __attribute__((weak_import));
+inline int unused_inline(void){return unused();}
+static inline int unused_static_inline(void){return unused();}
+int exported(void){return 7;}
+static int retained(void){return 8;}
+int main(){return 0;}
+"#;
+    let output = dynamite_compiler::generate(code, "llvm", false);
+    assert!(!output.contains("unused"));
+    for name in ["malloc", "free", "printf", "puts"] {
+        assert!(!output.contains(&format!("@{name}(")));
+    }
+    assert!(output.contains("define i32 @exported("));
+    assert!(output.contains("define internal i32 @retained("));
+}
+
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn external_declarations_follow_emitted_references(output_option: &str, optimization: &str) {
+    let code = r#"
+int direct(int);
+int addressed(int);
+int renamed(int) __asm__("external_alias");
+int optional(void) __attribute__((weak_import));
+int from_retained(void);
+inline int supplied_inline(int x){return x+100;}
+static inline int leaf(int x){return direct(x);}
+static inline int bridge(int x){return leaf(x);}
+int retained(void){return from_retained();}
+union Callback{int (*function)(int);long raw;};
+struct Holder{union Callback callback;};
+struct Holder callbacks[1]={{{.function=addressed}}};
+int (*alias_pointer)(int)=renamed;
+int main(){
+    int (*local)(int)=direct;
+    char *p=malloc(1);p[0]=7;int value=p[0];free(p);
+    return bridge(1)+local(2)+callbacks[0].callback.function(3)
+        +alias_pointer(4)+supplied_inline(5)+value-67+(optional!=0);
+}
+"#;
+    let companion = r#"
+int direct(int x){return x+1;}
+int addressed(int x){return x+2;}
+int renamed(int) __asm__("external_alias");
+int renamed(int x){return x+3;}
+int from_retained(void){return 0;}
+int supplied_inline(int x){return x+38;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn restrict_qualified_pointers(output_option: &str) {
     let code = "typedef int *P;int sum(int n,int a[restrict static n],const int *restrict b){P restrict p=a;int result=0;for(int i=0;i<n;i++){p[i]+=b[i];result+=p[i];}return result;}int main(){int a[3]={1,2,3};int b[3]={4,5,6};return sum(3,a,b)-21;}";
@@ -1516,7 +1576,7 @@ if(names){for(int i=0;i<count;i++){fprintf(stderr,"%s\n",names[i]);if(strstr(nam
 
 #[test]
 fn noinline_attributes_preserve_external_declarations_and_redeclarations() {
-    let code = "int external(void) __attribute__((noinline));struct Pair{long a,b;};struct Pair aggregate(struct Pair) __attribute__((__noinline__));int later(void){return external();}int later(void) __attribute__((noinline));int main(){return 0;}";
+    let code = "int external(void) __attribute__((noinline));struct Pair{long a,b;};struct Pair aggregate(struct Pair) __attribute__((__noinline__));int later(void){struct Pair p={1,2};return external()+aggregate(p).a;}int later(void) __attribute__((noinline));int main(){return 0;}";
     let generated = dynamite_compiler::generate(code, "llvm", false);
     for name in ["external", "aggregate", "later"] {
         assert!(

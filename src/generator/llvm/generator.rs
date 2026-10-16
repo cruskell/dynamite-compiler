@@ -64,15 +64,7 @@ impl<'a> IrGenerator<'a> {
         }
     }
     pub fn generate(&self, ast: ProgramAst) -> String {
-        let references =
-            if ast.functions.values().any(|function| {
-                function.hidden || (function.internal && function.inline_definition)
-            }) || ast.global_variables.values().any(|object| object.hidden)
-            {
-                crate::generator::referenced_symbols(&ast)
-            } else {
-                std::collections::HashSet::new()
-            };
+        let references = crate::generator::referenced_symbols(&ast);
         let generator = Self {
             error_logger: self.error_logger,
             symbol_names: ast.symbol_names.clone(),
@@ -108,12 +100,18 @@ impl<'a> IrGenerator<'a> {
                         || (function.body.is_some() && !function.inline_only())
                         || references.contains(name.as_str())
                 })
+                // Preserve ABI diagnostics when omitting an unused declaration.
+                .inspect(|(_, function)| generator.validate_function_abi(function))
+                .filter(|(name, function)| {
+                    (function.body.is_some() && !function.inline_only())
+                        || references.contains(name.as_str())
+                })
                 .map(|(name, f)| generator.gen_func(name, f) + "\n")
                 .collect::<Vec<String>>(),
             reserved_functions()
                 .iter()
                 .filter_map(|(name, ident)| {
-                    if ast.functions.contains_key(name) {
+                    if ast.functions.contains_key(name) || !references.contains(name.as_str()) {
                         return None;
                     }
                     let Identifier::Static(ty) = ident else {
@@ -778,15 +776,22 @@ impl<'a> IrGenerator<'a> {
         }
     }
 
-    fn aggregate_function(&self, name: &str, func: &Func) -> String {
-        let (types, result, variadic) = func.cty.function_signature_ref().unwrap();
-        if types
-            .iter()
-            .chain(std::iter::once(result))
-            .any(Type::contains_extended_long_double)
+    fn validate_function_abi(&self, func: &Func) {
+        let (types, result, _) = func.cty.function_signature_ref().unwrap();
+        let aggregate = matches!(result, Type::Struct(_))
+            || types.iter().any(|ty| matches!(ty, Type::Struct(_)));
+        if aggregate
+            && types
+                .iter()
+                .chain(std::iter::once(result))
+                .any(Type::contains_extended_long_double)
         {
             self.error_logger.print_error_position(func.token.as_ref().map_or(0, |token|token.pos), "extended long double cannot be combined with by-value aggregate parameters or results");
         }
+    }
+
+    fn aggregate_function(&self, name: &str, func: &Func) -> String {
+        let (types, result, variadic) = func.cty.function_signature_ref().unwrap();
         let signature = Self::aggregate_signature(types, result, types.len(), variadic);
         let return_type = if matches!(result, Type::Struct(_)) {
             Self::aggregate_result_type(result)
