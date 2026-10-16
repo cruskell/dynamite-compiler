@@ -326,8 +326,9 @@ impl Node {
                         *offset,
                     );
                 }
+                return ty.unqualified().clone();
             }
-            ty.unqualified().clone()
+            ty
         })
     }
     pub(crate) fn resolve_qualified_type(&self) -> Option<Type> {
