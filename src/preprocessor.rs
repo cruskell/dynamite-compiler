@@ -84,6 +84,9 @@ fn compiler_macros(command: &mut Command) {
     }
     for name in [
         "__builtin_bzero",
+        "__builtin_memcpy",
+        "__builtin_memmove",
+        "__builtin_memset",
         "__builtin_prefetch",
         "__atomic_exchange_n",
         "__atomic_fetch_add",

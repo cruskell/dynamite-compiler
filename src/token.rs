@@ -22,6 +22,7 @@ pub struct Token {
     /// Active pragma pack limit at this source position.
     pub packing: Option<usize>,
     pub i_value: usize,
+    pub extended_float: Option<Box<u128>>,
     pub s_value: String,
     pub string_encoding: StringEncoding,
     pub string_bytes: Vec<u8>,

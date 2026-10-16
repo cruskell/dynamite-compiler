@@ -652,7 +652,7 @@ impl Type {
         }
     }
 
-    /// Whether an object contains a long double format supported only as storage.
+    /// Whether an object contains a non-binary64 long double format.
     pub fn contains_extended_long_double(&self) -> bool {
         match self.unqualified() {
             Self::LongDouble(bits) => *bits != 64,

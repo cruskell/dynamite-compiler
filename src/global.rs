@@ -109,7 +109,12 @@ pub fn initializer_bytes(
                     addresses.insert(offset, (value[1..].to_string(), 0));
                 }
                 Some(GlobalVariableData::Elem(value)) => {
-                    let word = value.parse::<i64>().unwrap().to_le_bytes();
+                    let word = if ty.float_bits() == Some(80) {
+                        value.parse::<u128>().unwrap()
+                    } else {
+                        value.parse::<i64>().unwrap() as u64 as u128
+                    }
+                    .to_le_bytes();
                     bytes[offset..offset + ty.size_of()].copy_from_slice(&word[..ty.size_of()]);
                 }
                 _ => {}

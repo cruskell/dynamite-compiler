@@ -2,6 +2,7 @@ pub mod ast;
 mod bitfield;
 pub mod ctype;
 pub mod error;
+mod floating;
 pub mod func;
 pub mod generator;
 pub mod global;
