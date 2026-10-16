@@ -59,24 +59,31 @@ fn identifier(byte: u8) -> bool {
 /// Preserve physical line numbers while performing line splicing and comment removal.
 fn lex(code: &str) -> Result<Vec<Token>, String> {
     let bytes = code.as_bytes();
-    let mut spliced = Vec::with_capacity(bytes.len());
+    let mut spliced = Vec::new();
     let mut splices = vec![];
-    let (mut pos, mut line) = (0, 1);
-    while pos < bytes.len() {
-        if bytes[pos] == b'\\'
-            && (bytes.get(pos + 1) == Some(&b'\n') || bytes.get(pos + 1..pos + 3) == Some(b"\r\n"))
-        {
-            pos += if bytes[pos + 1] == b'\r' { 3 } else { 2 };
-            splices.push(spliced.len());
-        } else {
-            spliced.push(bytes[pos]);
-            pos += 1;
+    let mut line = 1;
+    let code = if bytes.contains(&b'\\') {
+        spliced.reserve(bytes.len());
+        let mut pos = 0;
+        while pos < bytes.len() {
+            if bytes[pos] == b'\\'
+                && (bytes.get(pos + 1) == Some(&b'\n')
+                    || bytes.get(pos + 1..pos + 3) == Some(b"\r\n"))
+            {
+                pos += if bytes[pos + 1] == b'\r' { 3 } else { 2 };
+                splices.push(spliced.len());
+            } else {
+                spliced.push(bytes[pos]);
+                pos += 1;
+            }
         }
-    }
-    let code = String::from_utf8(spliced).map_err(|e| e.to_string())?;
+        std::str::from_utf8(&spliced).map_err(|e| e.to_string())?
+    } else {
+        code
+    };
     let bytes = code.as_bytes();
     let (mut pos, mut space) = (0, false);
-    let mut out = vec![];
+    let mut out = Vec::with_capacity((bytes.len() / 4 + 1).min(256));
     while pos < bytes.len() {
         let start = pos;
         let physical_line = line + splices.partition_point(|offset| *offset <= pos);
@@ -257,19 +264,21 @@ impl CleanSource {
         let bytes = code.as_bytes();
         let mut spliced = Vec::with_capacity(bytes.len());
         let mut splices = vec![];
-        let mut pos = 0;
+        let (mut pos, mut run) = (0, 0);
         while pos < bytes.len() {
             if bytes[pos] == b'\\'
                 && (bytes.get(pos + 1) == Some(&b'\n')
                     || bytes.get(pos + 1..pos + 3) == Some(b"\r\n"))
             {
+                spliced.extend_from_slice(&bytes[run..pos]);
                 pos += if bytes[pos + 1] == b'\r' { 3 } else { 2 };
                 splices.push(spliced.len());
+                run = pos;
             } else {
-                spliced.push(bytes[pos]);
                 pos += 1;
             }
         }
+        spliced.extend_from_slice(&bytes[run..]);
         let bytes = spliced.as_slice();
         let mut output = Vec::with_capacity(bytes.len());
         let mut lines = vec![(0, 1)];
@@ -318,6 +327,16 @@ impl CleanSource {
                     pos += 1;
                 }
             } else {
+                let start = pos;
+                // Stop before a splice so its physical-line marker stays in place.
+                let limit = splices.get(splice).copied().unwrap_or(bytes.len());
+                while pos < limit && !matches!(bytes[pos], b'\n' | b'/' | b'\'' | b'"') {
+                    pos += 1;
+                }
+                if pos > start {
+                    output.extend_from_slice(&bytes[start..pos]);
+                    continue;
+                }
                 let byte = bytes[pos];
                 if byte == b'\'' || byte == b'"' {
                     quote = Some(byte);
@@ -683,9 +702,9 @@ impl Preprocessor {
                 }
                 continue;
             }
-            if self.builtin_names.contains(&name)
+            if matches!(name.as_str(), "__has_include" | "__has_include_next")
+                && self.builtin_names.contains(&name)
                 && !self.macros.contains_key(&name)
-                && matches!(name.as_str(), "__has_include" | "__has_include_next")
             {
                 if !pending.pop_front().is_some_and(|t| t.is("(")) {
                     return Err("__has_include requires parentheses".into());
@@ -731,7 +750,11 @@ impl Preprocessor {
                 }
                 continue;
             }
-            let builtin = if self.builtin_names.contains(&name) && !self.macros.contains_key(&name)
+            let builtin = if matches!(
+                name.as_str(),
+                "__LINE__" | "__FILE__" | "__BASE_FILE__" | "__INCLUDE_LEVEL__" | "__COUNTER__"
+            ) && self.builtin_names.contains(&name)
+                && !self.macros.contains_key(&name)
             {
                 match name.as_str() {
                     "__LINE__" => Some(token.line.to_string()),
@@ -1833,6 +1856,68 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tokens(&output), ["1", "\"other.c\"", "100", "0", "1"]);
+    }
+
+    #[test]
+    fn builtins_can_be_redefined_and_undefined() {
+        let mut pp = Preprocessor::new(vec![], vec![]);
+        let output = pp
+            .process(
+                "ordinary __LINE__ __COUNTER__\n\
+                 #define __LINE__ 73\n\
+                 #define __COUNTER__ replacement\n\
+                 __LINE__ __COUNTER__\n\
+                 #undef __LINE__\n\
+                 #undef __COUNTER__\n\
+                 __LINE__ __COUNTER__\n\
+                 #define __LINE__ 91\n\
+                 #define __COUNTER__ 5\n\
+                 #define __has_include(x) 42\n\
+                 __LINE__ __COUNTER__ __has_include(\"missing.h\")\n\
+                 #undef __has_include\n\
+                 __has_include\n",
+                Path::new("test.c"),
+            )
+            .unwrap();
+        assert_eq!(
+            tokens(&output),
+            [
+                "ordinary",
+                "1",
+                "0",
+                "73",
+                "replacement",
+                "__LINE__",
+                "__COUNTER__",
+                "91",
+                "5",
+                "42",
+                "__has_include"
+            ]
+        );
+    }
+
+    #[test]
+    fn source_runs_preserve_literals_comments_and_splice_boundaries() {
+        for (code, expected) in [
+            (
+                "alpha beta / gamma \"/* λ */\" 'x' // ignored\n__LINE__\n",
+                vec!["alpha", "beta", "/", "gamma", "\"/* λ */\"", "'x'", "2"],
+            ),
+            ("left\\\n\\\r\nright __LINE__\n", vec!["leftright", "3"]),
+            (
+                "a /\\\n* ignored *\\\r\n/ b __LINE__\n",
+                vec!["a", "b", "3"],
+            ),
+            (
+                "\"a\\\"/*b*/\" '\\'' __LINE__\n",
+                vec!["\"a\\\"/*b*/\"", "'\\''", "1"],
+            ),
+        ] {
+            let mut pp = Preprocessor::new(vec![], vec![]);
+            let output = pp.process(code, Path::new("test.c")).unwrap();
+            assert_eq!(tokens(&output), expected, "{code}");
+        }
     }
 
     #[test]

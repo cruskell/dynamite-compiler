@@ -7998,9 +7998,9 @@ fn native_preprocessing_generates_executable_code_without_clang(format: &str) {
     let files = DriverFixture::new();
     files.write(
         "values.h",
-        "#ifndef VALUES_H\n#define VALUES_H\n#define CAT(a,b) a##b\n#define VALUE 42\n#endif\n",
+        "#ifndef VALUES_H\n#define VALUES_H\n#define CAT(a,b) a##b\n#define VALUE 4\\\n2\n#endif\n",
     );
-    files.write("source.c","#include \"values.h\"\n#include \"values.h\"\n#define PICK(x) (x)\n#if defined(VALUE) && VALUE==42\nint CAT(ma,in)(){return PICK(VALUE);}\n#else\n#error wrong branch\n#endif\n");
+    files.write("source.c","#include \"values.h\"\n#include \"values.h\"\n#define PICK(x) (x)\n#if defined(VALUE) && VALUE==42\nint CAT(ma,in)(){const char *s=\"/*kept*/\"; /* ignored\\\ncomment */ return s[0]=='/'?PICK(VALUE):0;}\n#else\n#error wrong branch\n#endif\n");
     let result = Command::new(env!("CARGO_BIN_EXE_dynamite_compiler"))
         .current_dir(&files.0)
         .env("PATH", "/no-external-compiler")
