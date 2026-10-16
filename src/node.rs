@@ -71,8 +71,17 @@ pub enum NodeType {
     Assign,
     Cast,
     FloatAbs,
-    BitScan { bits: u8, leading: bool },
-    ZeroFill { bytes: usize },
+    BitScan {
+        bits: u8,
+        leading: bool,
+    },
+    ZeroFill {
+        bytes: usize,
+    },
+    /// Copy storage once, retaining the destination address as the result.
+    CopyBytes {
+        bytes: usize,
+    },
     LocalVar,
     GlobalVar,
     Add,
@@ -185,6 +194,7 @@ impl Node {
                 | NodeType::Atomic(_)
                 | NodeType::Assign
                 | NodeType::ZeroFill { .. }
+                | NodeType::CopyBytes { .. }
                 | NodeType::CallFunc
                 | NodeType::AddOverflow
                 | NodeType::SubOverflow
@@ -430,6 +440,7 @@ impl Node {
             NodeType::Prefetch(..)
             | NodeType::BitScan { .. }
             | NodeType::ZeroFill { .. }
+            | NodeType::CopyBytes { .. }
             | NodeType::Atomic(_)
             | NodeType::LocalVar
             | NodeType::CallFunc

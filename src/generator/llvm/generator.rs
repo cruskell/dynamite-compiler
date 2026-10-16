@@ -1467,6 +1467,7 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, options: &mut Options) -> Vec<String> {
         match node.nt {
+            NodeType::CopyBytes { .. } => self.gen_node(node, options),
             NodeType::CallFunc => {
                 let lines = self.gen_node(node, options);
                 options.register_queue.pop();
@@ -1871,6 +1872,21 @@ impl<'a> IrGenerator<'a> {
                 return lines;
             }
 
+            NodeType::CopyBytes { bytes } => {
+                let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
+                let destination = options.register_queue.pop().unwrap();
+                lines.extend(self.gen_addr(node.rhs.as_ref().unwrap(), options));
+                let source = options.register_queue.pop().unwrap();
+                let value = options.new_temporary();
+                lines.push(format!(
+                    "  %{value} = load [{bytes} x i8], ptr {source}, align 1"
+                ));
+                lines.push(format!(
+                    "  store [{bytes} x i8] %{value}, ptr {destination}, align 1"
+                ));
+                options.register_queue.push(destination);
+                return lines;
+            }
             NodeType::ZeroFill { bytes } => {
                 let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
                 let pointer = options.register_queue.pop().unwrap();

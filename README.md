@@ -1246,6 +1246,12 @@ and empty initializers, including nested records, arrays, and compound literals.
 Fixed-size aggregates without volatile subobjects use one zero-fill operation
 instead of expanding implicit initialization into a store for every element.
 LLVM output uses `llvm.memset`; native output uses inline zeroing instructions.
+Nonvolatile record assignments and local string initializers retain compact copy
+operations rather than byte-wise AST assignments. Record assignment evaluates
+each operand once in the existing order and supports self-assignment. String
+initialization copies only the available code units (including a terminator when
+it fits), clearing any remaining storage in bulk. Native output uses inline
+copying; LLVM output uses aggregate loads and stores with conservative alignment.
 Aggregates containing volatile subobjects retain member-wise initialization.
 Explicit member writes retain their normal types and volatile access widths.
 C does not generally require padding bytes to have a specified value after

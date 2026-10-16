@@ -7051,6 +7051,68 @@ fn memory_clobber_inline_assembly_emits_llvm_barriers() {
 }
 
 #[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
+fn compact_aggregate_memory_operations_preserve_values_and_evaluation(
+    (output_option, optimization): (&str, &str),
+) {
+    let code = r#"
+struct S { unsigned char bytes[4097]; };
+struct S first, second;
+int trace;
+struct S *destination(void){trace=trace*10+1;return &second;}
+struct S *source(void){trace=trace*10+2;return &first;}
+struct __attribute__((packed)) P {char tag;long value;char tail[4];};
+int main(void){
+    for(int i=0;i<4097;i++)first.bytes[i]=(unsigned char)(i*17+3);
+    *destination()=*source();
+    if(trace!=12)return 1;
+    second=second;
+    struct S third=second;
+    for(int i=0;i<4097;i++)if(first.bytes[i]!=third.bytes[i])return 2;
+    if((second=first).bytes[13]!=first.bytes[13])return 3;
+    struct P p={1,42,{3,4,5,6}},q={0};q=p;
+    if(q.tag!=1 || q.value!=42 || q.tail[3]!=6)return 4;
+    char large[16384]="x\0y";
+    for(int i=0;i<16384;i++)if(large[i]!=(i==0?'x':i==2?'y':0))return 5;
+    char truncated[3]="abc",inferred[]="xy";
+    unsigned short u16[100]=u"\U0001F600";
+    unsigned int u32[100]=U"\U0001F600";
+    int wide[13]=L"x";
+    volatile char v[5]="ab";
+    return truncated[2]!='c' || sizeof(inferred)!=3 || inferred[2]!=0
+        || u16[0]!=0xd83d || u16[1]!=0xde00 || u16[99]!=0
+        || u32[0]!=0x1f600 || u32[99]!=0 || wide[0]!='x' || wide[12]!=0
+        || v[0]!='a' || v[1]!='b' || v[4]!=0;
+}
+"#;
+    let output = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+#[test]
+fn compact_aggregate_memory_operations_bound_llvm_size_and_keep_volatile_accesses() {
+    let ir = dynamite_compiler::generate(
+        "struct S{char bytes[4097];};void copy(struct S*d,struct S*s){*d=*s;}void consume(char*);void fill(void){char a[16384]=\"x\";consume(a);}",
+        "llvm",
+        false,
+    );
+    assert!(ir.contains("load [4097 x i8]"), "{ir}");
+    assert!(ir.contains("store [4097 x i8]"), "{ir}");
+    assert!(ir.contains("i64 16384, i1 false"), "{ir}");
+    assert!(
+        ir.len() < 10000,
+        "compact operations expanded to {} bytes",
+        ir.len()
+    );
+    let ir = dynamite_compiler::generate(
+        "struct V{volatile int x;};void copy(struct V*d,struct V*s){*d=*s;}void fill(void){volatile char a[3]=\"ab\";}",
+        "llvm",
+        false,
+    );
+    assert!(!ir.contains("load [4 x i8]"), "{ir}");
+    assert_eq!(ir.matches("store volatile i8").count(), 3, "{ir}");
+}
+
+#[test_matrix([("asm", "-O0"), ("llvm", "-O0"), ("llvm", "-O2")])]
 fn aggregate_zero_fill_preserves_storage_and_explicit_initializers(
     (output_option, optimization): (&str, &str),
 ) {

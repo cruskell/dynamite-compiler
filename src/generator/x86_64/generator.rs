@@ -1330,6 +1330,18 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
 
+            NodeType::CopyBytes { bytes } => {
+                return vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    self.gen_addr(node.rhs.as_ref().unwrap(), offset, breakable_branch_num),
+                    Assembly::inst1(POP, RSI),
+                    Assembly::inst1(POP, RDI),
+                    Assembly::inst1(PUSH, RDI),
+                    Assembly::inst2(MOV, RCX, bytes),
+                    Assembly::inst0(REPMOVSB),
+                ]
+                .into();
+            }
             NodeType::ZeroFill { bytes } => {
                 return vec![
                     self.gen_addr(node.lhs.as_ref().unwrap(), offset, breakable_branch_num),
@@ -2033,6 +2045,7 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, offset: usize, branch_num: usize) -> Assembly {
         match node.nt {
+            NodeType::CopyBytes { .. } => self.gen_node(node, offset, branch_num),
             NodeType::CallFunc => self.gen_node(node, offset, branch_num),
             NodeType::Conditional => self.gen_node(node, offset, branch_num),
 

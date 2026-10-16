@@ -4749,6 +4749,47 @@ impl<'a> AstBuilderImpl<'a> {
                 self.error_logger
                     .print_error_position(token.pos, "string initializer is too long");
             }
+            if size != 0 && !node.object_type().unwrap().contains_volatile_subobject() {
+                let Type::Arr(element, _) = node.resolve_type().unwrap() else {
+                    unreachable!()
+                };
+                let literal_size = bytes.len() / unit_size + 1;
+                let literal = Node {
+                    nt: NodeType::GlobalVar,
+                    token: Some(token.clone()),
+                    cty: Some(Type::Arr(element, Some(literal_size))),
+                    dest: self.new_string_literal(&token),
+                    ..Node::default()
+                };
+                let mut children = vec![];
+                if size > literal_size {
+                    children.push(Node {
+                        nt: NodeType::ZeroFill {
+                            bytes: size * unit_size,
+                        },
+                        cty: Some(Type::Void),
+                        token: Some(token.clone()),
+                        lhs: Some(Box::new(node.clone())),
+                        ..Node::default()
+                    });
+                }
+                children.push(Node {
+                    nt: NodeType::CopyBytes {
+                        bytes: size.min(literal_size) * unit_size,
+                    },
+                    cty: Some(Type::Void),
+                    token: Some(token.clone()),
+                    lhs: Some(Box::new(node.clone())),
+                    rhs: Some(Box::new(literal)),
+                    ..Node::default()
+                });
+                return Node {
+                    nt: NodeType::Block,
+                    token: Some(token),
+                    children,
+                    ..Node::default()
+                };
+            }
             return Node {
                 nt: NodeType::Block,
                 token: Some(token.clone()),
@@ -4885,6 +4926,21 @@ impl<'a> AstBuilderImpl<'a> {
         if rhs.resolve_type() != Some(ty.clone()) {
             self.error_logger
                 .print_error_position(token.pos, "incompatible struct assignment");
+        }
+        if ty.size_of() != 0
+            && !lhs.object_type().unwrap().contains_volatile_subobject()
+            && !rhs.object_type().unwrap().contains_volatile_subobject()
+        {
+            return Node {
+                nt: NodeType::CopyBytes {
+                    bytes: ty.size_of(),
+                },
+                cty: Some(ty),
+                token: Some(token),
+                lhs: Some(Box::new(lhs)),
+                rhs: Some(Box::new(rhs)),
+                ..Node::default()
+            };
         }
         let mut children = vec![];
         let mut addresses = vec![];
