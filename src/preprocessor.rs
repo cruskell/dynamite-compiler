@@ -9,6 +9,8 @@ use std::{
 
 use crate::error::{ErrorLogger, ErrorPrinter};
 
+mod native;
+
 /// Explicit preprocessing configuration shared by the CLI and library callers.
 #[derive(Default, Debug, Clone)]
 pub struct PreprocessorOptions {
@@ -18,32 +20,37 @@ pub struct PreprocessorOptions {
     pub undefinitions: Vec<String>,
 }
 
-fn compiler_macros(command: &mut Command) {
+fn compiler_macro_arguments() -> Vec<String> {
+    let mut arguments = vec![];
     // Keep host ABI/GNU compatibility macros, but do not impersonate Clang.
-    command.args([
-        "-std=gnu99",
-        "-Wno-builtin-macro-redefined",
-        "-U__clang__",
-        "-U__clang_major__",
-        "-U__clang_minor__",
-        "-U__clang_patchlevel__",
-        "-U__clang_version__",
-        "-U__llvm__",
-        // Layout-only support must not select code requiring integer arithmetic.
-        "-U__SIZEOF_INT128__",
-        "-D__DYNAMITE__=1",
-        "-D__has_feature(x)=0",
-        "-D__has_extension(x)=0",
-        "-D__has_c_attribute(x)=0",
-        "-D__has_cpp_attribute(x)=0",
-        "-D__has_declspec_attribute(x)=0",
-        "-D__has_warning(x)=0",
-        "-D__has_constexpr_builtin(x)=0",
-        "-D__DYNAMITE_SECOND(_0,_1,...)=_1",
-        "-D__DYNAMITE_PROBE(...)=__DYNAMITE_SECOND(__VA_ARGS__,0,0)",
-        "-D__has_builtin(x)=__DYNAMITE_PROBE(__DYNAMITE_BUILTIN_##x)",
-        "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
-    ]);
+    arguments.extend(
+        [
+            "-std=gnu99",
+            "-Wno-builtin-macro-redefined",
+            "-U__clang__",
+            "-U__clang_major__",
+            "-U__clang_minor__",
+            "-U__clang_patchlevel__",
+            "-U__clang_version__",
+            "-U__llvm__",
+            // Layout-only support must not select code requiring integer arithmetic.
+            "-U__SIZEOF_INT128__",
+            "-D__DYNAMITE__=1",
+            "-D__has_feature(x)=0",
+            "-D__has_extension(x)=0",
+            "-D__has_c_attribute(x)=0",
+            "-D__has_cpp_attribute(x)=0",
+            "-D__has_declspec_attribute(x)=0",
+            "-D__has_warning(x)=0",
+            "-D__has_constexpr_builtin(x)=0",
+            "-D__DYNAMITE_SECOND(_0,_1,...)=_1",
+            "-D__DYNAMITE_PROBE(...)=__DYNAMITE_SECOND(__VA_ARGS__,0,0)",
+            "-D__has_builtin(x)=__DYNAMITE_PROBE(__DYNAMITE_BUILTIN_##x)",
+            "-D__has_attribute(x)=__DYNAMITE_PROBE(__DYNAMITE_ATTRIBUTE_##x)",
+        ]
+        .into_iter()
+        .map(String::from),
+    );
     // SIMD storage types do not provide the corresponding vector intrinsic families.
     for name in [
         "__ARM_NEON",
@@ -81,7 +88,7 @@ fn compiler_macros(command: &mut Command) {
         "__AVX512FP16__",
         "__AVX512BF16__",
     ] {
-        command.arg(format!("-U{name}"));
+        arguments.push(format!("-U{name}"));
     }
     for name in [
         "__builtin_bzero",
@@ -144,7 +151,7 @@ fn compiler_macros(command: &mut Command) {
         "__builtin___strlcpy_chk",
         "__builtin___strlcat_chk",
     ] {
-        command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
+        arguments.push(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
     }
     if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
         for name in [
@@ -153,7 +160,7 @@ fn compiler_macros(command: &mut Command) {
             "__builtin_huge_vall",
             "__builtin_nanl",
         ] {
-            command.arg(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
+            arguments.push(format!("-D__DYNAMITE_BUILTIN_{name}=~,1"));
         }
     }
     for name in crate::ast::METADATA_ATTRIBUTES.iter().copied().chain([
@@ -167,9 +174,14 @@ fn compiler_macros(command: &mut Command) {
         "transparent_union",
     ]) {
         for spelling in [name.to_string(), format!("__{name}__")] {
-            command.arg(format!("-D__DYNAMITE_ATTRIBUTE_{spelling}=~,1"));
+            arguments.push(format!("-D__DYNAMITE_ATTRIBUTE_{spelling}=~,1"));
         }
     }
+    arguments
+}
+
+fn compiler_macros(command: &mut Command) {
+    command.args(compiler_macro_arguments());
 }
 
 /// Create a preprocessing command with Dynamite's capability macros.
@@ -185,6 +197,31 @@ struct IncludeDirectory(std::path::PathBuf);
 
 impl IncludeDirectory {
     fn new() -> Result<Self, String> {
+        Self::prepare(&[
+            ("stdio.h", include_str!("../include/stdio.h")),
+            ("stdlib.h", include_str!("../include/stdlib.h")),
+            ("stdarg.h", include_str!("../include/stdarg.h")),
+            ("stddef.h", include_str!("../include/stddef.h")),
+            ("assert.h", include_str!("../include/assert.h")),
+            ("stdint.h", include_str!("../include/stdint.h")),
+            ("stdbool.h", include_str!("../include/stdbool.h")),
+            ("string.h", include_str!("../include/string.h")),
+            ("ctype.h", include_str!("../include/ctype.h")),
+            ("math.h", include_str!("../include/math.h")),
+            ("limits.h", include_str!("../include/limits.h")),
+            ("float.h", include_str!("../include/float.h")),
+        ])
+    }
+    fn native() -> Result<Self, String> {
+        Self::prepare(&[
+            ("stddef.h", include_str!("../include/native/stddef.h")),
+            ("stdarg.h", include_str!("../include/native/stdarg.h")),
+            ("stdbool.h", include_str!("../include/native/stdbool.h")),
+            ("limits.h", include_str!("../include/native/limits.h")),
+            ("float.h", include_str!("../include/native/float.h")),
+        ])
+    }
+    fn prepare(headers: &[(&str, &str)]) -> Result<Self, String> {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -207,20 +244,7 @@ impl IncludeDirectory {
                 }
             }
         };
-        for (name, contents) in [
-            ("stdio.h", include_str!("../include/stdio.h")),
-            ("stdlib.h", include_str!("../include/stdlib.h")),
-            ("stdarg.h", include_str!("../include/stdarg.h")),
-            ("stddef.h", include_str!("../include/stddef.h")),
-            ("assert.h", include_str!("../include/assert.h")),
-            ("stdint.h", include_str!("../include/stdint.h")),
-            ("stdbool.h", include_str!("../include/stdbool.h")),
-            ("string.h", include_str!("../include/string.h")),
-            ("ctype.h", include_str!("../include/ctype.h")),
-            ("math.h", include_str!("../include/math.h")),
-            ("limits.h", include_str!("../include/limits.h")),
-            ("float.h", include_str!("../include/float.h")),
-        ] {
+        for (name, contents) in headers {
             fs::write(directory.0.join(name), contents)
                 .map_err(|error| format!("failed to prepare builtin headers: {error}"))?;
         }
@@ -385,6 +409,30 @@ pub(crate) fn preprocess_file(
     )
 }
 
+/// Preprocess a native Linux x86_64 C input without Clang or LLVM.
+/// Unsupported preprocessing options return an error rather than invoking a fallback.
+pub fn preprocess_file_native(path: &Path, arguments: &[String]) -> Result<String, String> {
+    let code = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    native::preprocess(
+        &code,
+        path,
+        &PreprocessorOptions {
+            system_headers: true,
+            ..Default::default()
+        },
+        arguments,
+    )
+}
+
+/// Preprocess independent inputs while reusing immutable header scans.
+/// Macro state, include guards, counters, and dependency lists reset for each input.
+pub fn preprocess_files_native(
+    paths: &[std::path::PathBuf],
+    arguments: &[String],
+) -> Result<String, String> {
+    native::preprocess_many(paths, arguments)
+}
+
 fn preprocess_input(
     code: &str,
     path: Option<&Path>,
@@ -430,84 +478,94 @@ fn preprocess_input(
             origins,
         });
     }
-    let includes = if options.system_headers {
-        None
+    let expanded = if std::env::var("DYNAMITE_PREPROCESSOR").as_deref() == Ok("native") {
+        let _timer = crate::timing::Timer::new("preprocess.native");
+        native::preprocess(
+            code,
+            absolute_path.as_deref().unwrap_or(Path::new("<stdin>")),
+            options,
+            file_input.map(|(_, args)| args).unwrap_or(&[]),
+        )?
     } else {
-        Some(IncludeDirectory::new()?)
-    };
-    let mut command = clang_command(file_input.map_or("clang", |(clang, _)| clang));
-    command.args(["-x", "c"]);
-    if let Some(includes) = &includes {
-        command.arg("-nostdinc").arg("-I").arg(&includes.0);
-    }
-    if let Some(parent) = absolute_path
-        .as_deref()
-        .and_then(Path::parent)
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        if file_input.is_none() {
-            command.current_dir(parent).arg("-iquote").arg(parent);
-        }
-    }
-    for directory in &options.include_directories {
-        let directory = if directory.is_absolute() {
-            directory.clone()
+        let includes = if options.system_headers {
+            None
         } else {
-            std::env::current_dir()
-                .map_err(|error| error.to_string())?
-                .join(directory)
+            Some(IncludeDirectory::new()?)
         };
-        command.arg("-I").arg(directory);
-    }
-    for definition in &options.definitions {
-        command.arg("-D").arg(definition);
-    }
-    for name in &options.undefinitions {
-        command.arg("-U").arg(name);
-    }
-    let timer = crate::timing::Timer::new("preprocess.clang");
-    let output = if let Some((_, arguments)) = file_input {
-        command.args(arguments).arg(absolute_path.as_ref().unwrap());
-        #[cfg(feature = "clang-in-process")]
-        {
-            crate::native_clang::preprocess(&command)
+        let mut command = clang_command(file_input.map_or("clang", |(clang, _)| clang));
+        command.args(["-x", "c"]);
+        if let Some(includes) = &includes {
+            command.arg("-nostdinc").arg("-I").arg(&includes.0);
         }
-        #[cfg(not(feature = "clang-in-process"))]
+        if let Some(parent) = absolute_path
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|path| !path.as_os_str().is_empty())
         {
-            command.output()
+            if file_input.is_none() {
+                command.current_dir(parent).arg("-iquote").arg(parent);
+            }
         }
-    } else {
-        command.arg("-");
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("preprocessing requires clang in PATH: {error}"))?;
-        let input = format!(
-            "#line 1 \"{}\"\n{}",
-            name.replace('\\', "\\\\").replace('"', "\\\""),
-            code
-        );
-        let mut stdin = child.stdin.take().unwrap();
-        std::thread::scope(|scope| {
-            let writer = scope.spawn(move || stdin.write_all(input.as_bytes()));
-            let output = child.wait_with_output();
-            let written = writer.join().unwrap();
-            output.and_then(|output| written.map(|_| output))
-        })
-    }
-    .map_err(|error| format!("failed to preprocess source: {error}"))?;
-    drop(timer);
+        for directory in &options.include_directories {
+            let directory = if directory.is_absolute() {
+                directory.clone()
+            } else {
+                std::env::current_dir()
+                    .map_err(|error| error.to_string())?
+                    .join(directory)
+            };
+            command.arg("-I").arg(directory);
+        }
+        for definition in &options.definitions {
+            command.arg("-D").arg(definition);
+        }
+        for name in &options.undefinitions {
+            command.arg("-U").arg(name);
+        }
+        let timer = crate::timing::Timer::new("preprocess.clang");
+        let output = if let Some((_, arguments)) = file_input {
+            command.args(arguments).arg(absolute_path.as_ref().unwrap());
+            #[cfg(feature = "clang-in-process")]
+            {
+                crate::native_clang::preprocess(&command)
+            }
+            #[cfg(not(feature = "clang-in-process"))]
+            {
+                command.output()
+            }
+        } else {
+            command.arg("-");
+            let mut child = command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|error| format!("preprocessing requires clang in PATH: {error}"))?;
+            let input = format!(
+                "#line 1 \"{}\"\n{}",
+                name.replace('\\', "\\\\").replace('"', "\\\""),
+                code
+            );
+            let mut stdin = child.stdin.take().unwrap();
+            std::thread::scope(|scope| {
+                let writer = scope.spawn(move || stdin.write_all(input.as_bytes()));
+                let output = child.wait_with_output();
+                let written = writer.join().unwrap();
+                output.and_then(|output| written.map(|_| output))
+            })
+        }
+        .map_err(|error| format!("failed to preprocess source: {error}"))?;
+        drop(timer);
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        }
+        if file_input.is_some() {
+            let _ = std::io::stderr().write_all(&output.stderr);
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|error| format!("preprocessor returned invalid UTF-8: {error}"))?
+    };
     let _timer = crate::timing::Timer::new("preprocess.map");
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    if file_input.is_some() {
-        let _ = std::io::stderr().write_all(&output.stderr);
-    }
-    let expanded = String::from_utf8(output.stdout)
-        .map_err(|error| format!("preprocessor returned invalid UTF-8: {error}"))?;
     let mut result = Preprocessed {
         code: String::new(),
         sources: vec![source],

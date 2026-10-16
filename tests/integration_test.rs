@@ -7865,7 +7865,11 @@ fn driver_stage_timings_are_optional_and_preserve_parallel_results() {
         if enabled {
             for stage in [
                 "preprocess",
-                "preprocess.clang",
+                if std::env::var("DYNAMITE_PREPROCESSOR").as_deref() == Ok("native") {
+                    "preprocess.native"
+                } else {
+                    "preprocess.clang"
+                },
                 "tokenize",
                 "parse",
                 "parse.declarations",
@@ -7928,6 +7932,106 @@ fn driver_compiles_objects_and_assembly_and_links_existing_inputs() {
     files.success(&["-S", "-O2", "source.c", "-o", "source.s"]);
     files.success(&["source.s", "-o", "from_assembly"]);
     assert_eq!(files.executable_status("from_assembly"), Some(42));
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn native_dependency_scan_does_not_require_clang() {
+    let files = DriverFixture::new();
+    files.write("value.h", "#define VALUE 42\n");
+    files.write(
+        "source.c",
+        "#include \"value.h\"\nint value(){return VALUE;}\n",
+    );
+    let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+        .current_dir(&files.0)
+        .env("DYNAMITE_CLANG", "/missing-clang")
+        .env_remove("DYNAMITE_PREPROCESSOR")
+        .args(["-MM", "source.c"])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    let output = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        output.contains("source.o:") && output.contains("value.h"),
+        "{output}"
+    );
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn native_dependency_batch_resets_macros_and_once_state() {
+    let files = DriverFixture::new();
+    files.write("one.h", "#define VALUE 1\n");
+    files.write("two.h", "#define VALUE 2\n");
+    files.write("shared.h", "#pragma once\n#ifndef SHARED_H\n#define SHARED_H\n#if KIND==1\n#include \"one.h\"\n#else\n#include \"two.h\"\n#endif\n#endif\n");
+    for (file, kind) in [("first.c", 1), ("second.c", 2)] {
+        files.write(file,&format!("#define KIND {kind}\n#if __COUNTER__ != 0\n#error counter leaked\n#endif\n#include \"shared.h\"\n"));
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+        .current_dir(&files.0)
+        .env("DYNAMITE_CLANG", "/missing-clang")
+        .env("DYNAMITE_PREPROCESSOR", "native")
+        .args(["-MM", "first.c", "second.c"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    let lines = text.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(
+        lines[0].contains("one.h") && !lines[0].contains("two.h"),
+        "{text}"
+    );
+    assert!(
+        lines[1].contains("two.h") && !lines[1].contains("one.h"),
+        "{text}"
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+        .current_dir(&files.0)
+        .env("DYNAMITE_CLANG", "/missing-clang")
+        .env("DYNAMITE_PREPROCESSOR", "native")
+        .args(["-MM", "first.c", "second.c", "-MF", "all.d"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert_eq!(fs::read_to_string(files.0.join("all.d")).unwrap(), text);
+}
+
+#[test_matrix(["asm","llvm"])]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn native_preprocessing_generates_executable_code_without_clang(format: &str) {
+    let files = DriverFixture::new();
+    files.write(
+        "values.h",
+        "#ifndef VALUES_H\n#define VALUES_H\n#define CAT(a,b) a##b\n#define VALUE 42\n#endif\n",
+    );
+    files.write("source.c","#include \"values.h\"\n#include \"values.h\"\n#define PICK(x) (x)\n#if defined(VALUE) && VALUE==42\nint CAT(ma,in)(){return PICK(VALUE);}\n#else\n#error wrong branch\n#endif\n");
+    let result = Command::new(env!("CARGO_BIN_EXE_dynamite_compiler"))
+        .current_dir(&files.0)
+        .env("PATH", "/no-external-compiler")
+        .env("DYNAMITE_PREPROCESSOR", "native")
+        .args(["-o", format, "source.c"])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    let source = if format == "asm" {
+        "output.s"
+    } else {
+        "output.ll"
+    };
+    fs::write(files.0.join(source), result.stdout).unwrap();
+    assert!(
+        Command::new("clang")
+            .current_dir(&files.0)
+            .args([source, "-o", "program"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert_eq!(files.executable_status("program"), Some(42));
 }
 
 #[test]
