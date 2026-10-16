@@ -51,6 +51,7 @@ pub fn generate_with_options(
 }
 
 /// Generate a file using host system headers and explicit Clang preprocessing arguments.
+/// Included-source text for diagnostics is loaded on demand during file compilation.
 /// Dependency arguments are handled in the same preprocessing pass. As with
 /// `generate`, source-language diagnostics use the existing panic-based interface.
 pub fn generate_file(
