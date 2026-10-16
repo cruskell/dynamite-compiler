@@ -184,6 +184,6 @@ impl AstBuilderImpl<'_> {
                 "asm requires a narrow ASCII string without embedded nulls",
             );
         }
-        String::from_utf8(token.string_bytes).unwrap()
+        String::from_utf8(token.string_bytes.into_vec()).unwrap()
     }
 }

@@ -520,6 +520,17 @@ impl Tokenizer {
             pos,
         )))
     }
+    fn refresh_string_spelling(token: &mut Token) {
+        let mut spelling = String::with_capacity(token.string_bytes.len() * 4);
+        for &byte in token.string_bytes.iter() {
+            spelling.push('\\');
+            spelling.push(char::from(b'0' + (byte >> 6)));
+            spelling.push(char::from(b'0' + ((byte >> 3) & 7)));
+            spelling.push(char::from(b'0' + (byte & 7)));
+        }
+        token.s_value = spelling.into();
+    }
+
     pub fn tokenize(code: &str, is_debug: bool) -> Result<Vec<Token>, error::SyntaxError> {
         let mut tokens = vec![];
         let mut packing = Packing::default();
@@ -728,7 +739,7 @@ impl Tokenizer {
                             pos: start,
                             s_value: value.into(),
                             string_encoding,
-                            string_bytes: encoded,
+                            string_bytes: encoded.into(),
                             ..Token::default()
                         });
                     }
@@ -744,6 +755,8 @@ impl Tokenizer {
             }
         }
         let mut concatenation_error = None;
+        // Rebuild spelling once per run, or before promoting its encoding.
+        let mut spelling_dirty = false;
         // Compact adjacent strings in place instead of copying the whole token stream.
         tokens.dedup_by(|token, previous| {
             if concatenation_error.is_none()
@@ -759,35 +772,42 @@ impl Tokenizer {
                             token.pos,
                             "incompatible string literal encodings",
                         ));
+                        spelling_dirty = false;
                         return false;
                     }
                 };
                 let unit_size = encoding.unit_size();
                 if previous.string_encoding != encoding {
-                    previous.string_bytes = encode_string_literal(&previous.s_value, encoding);
+                    if spelling_dirty {
+                        Self::refresh_string_spelling(previous);
+                    }
+                    previous.string_bytes =
+                        encode_string_literal(&previous.s_value, encoding).into();
                 }
                 let token_bytes = if token.string_encoding != encoding {
                     encode_string_literal(&token.s_value, encoding)
                 } else {
-                    std::mem::take(&mut token.string_bytes)
+                    std::mem::take(&mut token.string_bytes).into_vec()
                 };
                 previous.string_bytes.extend(token_bytes);
                 previous.string_encoding = encoding;
-                previous.s_value = previous
-                    .string_bytes
-                    .iter()
-                    .map(|byte| format!("\\{:03o}", byte))
-                    .collect();
-                previous
-                    .string_bytes
-                    .truncate(previous.string_bytes.len() / unit_size * unit_size);
+                spelling_dirty = true;
+                let aligned_len = previous.string_bytes.len() / unit_size * unit_size;
+                previous.string_bytes.truncate(aligned_len);
                 true
             } else {
+                if spelling_dirty {
+                    Self::refresh_string_spelling(previous);
+                    spelling_dirty = false;
+                }
                 false
             }
         });
         if let Some(error) = concatenation_error {
             return Err(error);
+        }
+        if spelling_dirty {
+            Self::refresh_string_spelling(tokens.last_mut().unwrap());
         }
         let mut change = 0;
         let mut current = None;
@@ -796,7 +816,7 @@ impl Tokenizer {
                 current = packing_changes[change].1;
                 change += 1;
             }
-            token.packing = current;
+            token.packing = current.map(|limit| limit as u8);
         }
         tokens.push(Token {
             tt: TokenType::EOF,
@@ -990,7 +1010,7 @@ mod tests {
     fn wide_string_prefixes_encode_code_units_and_concatenate() {
         let tokens = Tokenizer::tokenize("u\"A\" \"B\"", false).unwrap();
         assert_eq!(tokens[0].string_encoding, StringEncoding::Utf16);
-        assert_eq!(tokens[0].string_bytes, vec![65, 0, 66, 0]);
+        assert_eq!(tokens[0].string_bytes.as_slice(), vec![65, 0, 66, 0]);
     }
 
     #[test]
@@ -1001,10 +1021,10 @@ mod tests {
         assert_eq!(tokens[0].pos, code.find("u\"A\"").unwrap());
         assert_eq!(tokens[0].packing, Some(1));
         assert_eq!(tokens[0].string_encoding, StringEncoding::Utf16);
-        assert_eq!(tokens[0].string_bytes, vec![65, 0, 66, 0, 67, 0]);
+        assert_eq!(tokens[0].string_bytes.as_slice(), vec![65, 0, 66, 0, 67, 0]);
         assert_eq!(tokens[1].s_value, ";");
         assert_eq!(tokens[1].packing, Some(1));
-        assert_eq!(tokens[2].string_bytes, b"xy");
+        assert_eq!(tokens[2].string_bytes.as_slice(), b"xy");
         assert_eq!(tokens[2].packing, None);
         assert_eq!(tokens[3].s_value, ";");
         assert_eq!(tokens[4].s_value, "tail");
@@ -1014,14 +1034,37 @@ mod tests {
     }
 
     #[test]
+    fn concatenated_runs_finalize_spelling_and_promote_all_fragments() {
+        let code = r#""" "A" "B" u"C" "D"; "\000" "\377" """#;
+        let tokens = Tokenizer::tokenize(code, false).unwrap();
+        assert_eq!(tokens.len(), 4);
+        assert_eq!(tokens[0].string_encoding, StringEncoding::Utf16);
+        assert_eq!(tokens[0].decoded_string(), b"A\0B\0C\0D\0");
+        assert_eq!(
+            tokens[0].s_value,
+            "\\101\\000\\102\\000\\103\\000\\104\\000"
+        );
+        assert_eq!(tokens[2].decoded_string(), [0, 255]);
+        assert_eq!(tokens[2].s_value, "\\000\\377");
+        assert_eq!(tokens[2].encoded_string(), [0, 255, 0]);
+        assert_eq!(tokens[3].tt, TokenType::EOF);
+
+        let incompatible = r#""A" "B" u"C" U"D""#;
+        assert!(Tokenizer::tokenize(incompatible, false).is_err());
+    }
+
+    #[test]
     fn utf32_and_wide_strings_encode_scalar_units() {
         assert!(Tokenizer::tokenize("U\"😀\" L\"x\"", false).is_err());
         let utf32 = Tokenizer::tokenize("U\"😀\"", false).unwrap();
         assert_eq!(utf32[0].string_encoding, StringEncoding::Utf32);
-        assert_eq!(utf32[0].string_bytes, vec![0x00, 0xf6, 0x01, 0x00]);
+        assert_eq!(
+            utf32[0].string_bytes.as_slice(),
+            vec![0x00, 0xf6, 0x01, 0x00]
+        );
         let wide = Tokenizer::tokenize("L\"x\"", false).unwrap();
         assert_eq!(wide[0].string_encoding, StringEncoding::Wide);
-        assert_eq!(wide[0].string_bytes, vec![120, 0, 0, 0]);
+        assert_eq!(wide[0].string_bytes.as_slice(), vec![120, 0, 0, 0]);
     }
 
     #[test]
