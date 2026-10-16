@@ -30,11 +30,16 @@ impl Options<'_> {
         format!("block.{}", self.label_number)
     }
 
-    fn new_register(&mut self) -> usize {
+    /// Allocate an SSA register without putting a value on the expression stack.
+    fn new_temporary(&mut self) -> usize {
         *self.register_number += 1;
-        self.register_queue
-            .push(format!("%{}", self.register_number));
         *self.register_number
+    }
+
+    fn new_register(&mut self) -> usize {
+        let register = self.new_temporary();
+        self.register_queue.push(format!("%{register}"));
+        register
     }
     fn register_from_offset(&mut self, offset: usize) -> usize {
         let entry = self.register_map.entry(offset);
@@ -104,7 +109,9 @@ impl<'a> IrGenerator<'a> {
                 })
                 .collect(),
         ]
-        .concat()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
         .join("\n")
     }
 
@@ -682,8 +689,7 @@ impl<'a> IrGenerator<'a> {
         if offset == 0 {
             return base.into();
         }
-        let register = options.new_register();
-        options.register_queue.pop();
+        let register = options.new_temporary();
         lines.push(format!(
             "  %{register} = getelementptr i8, ptr {base}, i64 {offset}"
         ));
@@ -697,8 +703,7 @@ impl<'a> IrGenerator<'a> {
         lines: &mut Vec<String>,
     ) -> String {
         let pointer = Self::aggregate_pointer(base, part.offset, options, lines);
-        let register = options.new_register();
-        options.register_queue.pop();
+        let register = options.new_temporary();
         let remaining = size - part.offset;
         let loaded_type = if remaining < part.ty.size_of() {
             format!("i{}", remaining * 8)
@@ -709,8 +714,7 @@ impl<'a> IrGenerator<'a> {
             "  %{register} = load {loaded_type}, ptr {pointer}, align 1"
         ));
         if remaining < part.ty.size_of() {
-            let extended = options.new_register();
-            options.register_queue.pop();
+            let extended = options.new_temporary();
             lines.push(format!(
                 "  %{extended} = zext {loaded_type} %{register} to {}",
                 Self::gen_type(part.ty.clone())
@@ -794,8 +798,7 @@ impl<'a> IrGenerator<'a> {
         )];
         for (index, argument) in signature.arguments.iter().enumerate() {
             let ty = &types[index];
-            let register = options.new_register();
-            options.register_queue.pop();
+            let register = options.new_temporary();
             options
                 .register_map
                 .insert(func.args[index].offset.unwrap(), register);
@@ -805,8 +808,7 @@ impl<'a> IrGenerator<'a> {
                 ty.align_of()
             ));
             if argument.memory.is_some() || argument.indirect {
-                let value = options.new_register();
-                options.register_queue.pop();
+                let value = options.new_temporary();
                 lines.push(format!(
                     "  %{value} = load {}, ptr %abi.arg.{index}.0, align 1",
                     Self::gen_type(ty.clone())
@@ -832,8 +834,7 @@ impl<'a> IrGenerator<'a> {
                 }
                 for (part_index, (part, _)) in argument.parts.iter().enumerate() {
                     let value = if grouped {
-                        let value = options.new_register();
-                        options.register_queue.pop();
+                        let value = options.new_temporary();
                         lines.push(format!("  %{value} = extractvalue {group_type} %abi.arg.{index}.0, {part_index}"));
                         format!("%{value}")
                     } else {
@@ -852,10 +853,7 @@ impl<'a> IrGenerator<'a> {
                 }
             }
         }
-        lines.extend(Self::allocate_locals(
-            func.body.as_ref().unwrap(),
-            &mut options,
-        ));
+        Self::allocate_locals(func.body.as_ref().unwrap(), &mut options, &mut lines);
         lines.extend(self.gen_node(func.body.as_ref().unwrap(), &mut options));
         if !options.terminated {
             lines.push(if return_type == "void" {
@@ -911,8 +909,7 @@ impl<'a> IrGenerator<'a> {
                 // preserve sixteen-byte alignment, including larger HFAs.
                 for offset in (0..ty.size_of()).step_by(16) {
                     let pointer = Self::aggregate_pointer(&value, offset, options, &mut lines);
-                    let register = options.new_register();
-                    options.register_queue.pop();
+                    let register = options.new_temporary();
                     lines.push(format!("  %{register} = load i128, ptr {pointer}, align 1"));
                     arguments.push(format!("i128 %{register}"));
                 }
@@ -920,8 +917,7 @@ impl<'a> IrGenerator<'a> {
             }
             if argument.memory.is_some() || argument.indirect {
                 let slot = options.argument_slots[&(node.token.as_ref().unwrap().pos, index)];
-                let register = options.new_register();
-                options.register_queue.pop();
+                let register = options.new_temporary();
                 let alignment = ty.align_of().max(argument.stack_alignment);
                 lines.push(format!(
                     "  %{register} = load {}, ptr {value}, align 1",
@@ -933,8 +929,7 @@ impl<'a> IrGenerator<'a> {
                 ));
                 arguments.push(format!("{} %{slot}", parameter_types[0]));
             } else if aggregate && (parameter_types[0] == "i128") {
-                let register = options.new_register();
-                options.register_queue.pop();
+                let register = options.new_temporary();
                 lines.push(format!(
                     "  %{register} = load {}, ptr {value}, align 1",
                     parameter_types[0]
@@ -953,8 +948,7 @@ impl<'a> IrGenerator<'a> {
                 if parameter_types.len() == 1 && values.len() > 1 {
                     let mut group = "poison".to_string();
                     for (index, value) in values.iter().enumerate() {
-                        let register = options.new_register();
-                        options.register_queue.pop();
+                        let register = options.new_temporary();
                         lines.push(format!(
                             "  %{register} = insertvalue {} {group}, {} {value}, {index}",
                             parameter_types[0],
@@ -1030,8 +1024,7 @@ impl<'a> IrGenerator<'a> {
             ));
             "0".into()
         } else {
-            let register = options.new_register();
-            options.register_queue.pop();
+            let register = options.new_temporary();
             lines.push(format!(
                 "  %{register} = call {return_abi}{variadic_signature} {callee}({})",
                 arguments.join(", ")
@@ -1043,8 +1036,7 @@ impl<'a> IrGenerator<'a> {
             if !signature.indirect_result {
                 for (index, part) in signature.result.iter().enumerate() {
                     let value = if signature.result.len() > 1 {
-                        let register = options.new_register();
-                        options.register_queue.pop();
+                        let register = options.new_temporary();
                         lines.push(format!(
                             "  %{register} = extractvalue {return_type} {value}, {index}"
                         ));
@@ -1056,8 +1048,7 @@ impl<'a> IrGenerator<'a> {
                     let remaining = result.size_of() - part.offset;
                     let mut stored_type = Self::gen_type(part.ty.clone());
                     let value = if remaining < part.ty.size_of() {
-                        let narrowed = options.new_register();
-                        options.register_queue.pop();
+                        let narrowed = options.new_temporary();
                         let narrow_type = format!("i{}", remaining * 8);
                         lines.push(format!(
                             "  %{narrowed} = trunc {stored_type} {value} to {narrow_type}"
@@ -1094,8 +1085,7 @@ impl<'a> IrGenerator<'a> {
         }
         let parts = crate::generator::abi::aggregate_parts(&ty, &Self::target_arch());
         if let Some(pointer) = options.return_pointer.clone() {
-            let register = options.new_register();
-            options.register_queue.pop();
+            let register = options.new_temporary();
             lines.push(format!(
                 "  %{register} = load {}, ptr {address}, align 1",
                 Self::gen_type(ty.clone())
@@ -1115,8 +1105,7 @@ impl<'a> IrGenerator<'a> {
                 if parts.len() == 1 {
                     result = value;
                 } else {
-                    let combined = options.new_register();
-                    options.register_queue.pop();
+                    let combined = options.new_temporary();
                     lines.push(format!(
                         "  %{combined} = insertvalue {return_type} {result}, {} {value}, {index}",
                         Self::gen_type(part.ty.clone())
@@ -1207,7 +1196,11 @@ impl<'a> IrGenerator<'a> {
                         )
                 })
                 .collect::<Vec<String>>(),
-            Self::allocate_locals(func.body.as_ref().unwrap(), options),
+            {
+                let mut lines = vec![];
+                Self::allocate_locals(func.body.as_ref().unwrap(), options, &mut lines);
+                lines
+            },
             self.gen_node(func.body.as_ref().unwrap(), options),
             if options.terminated {
                 vec!["}".to_string()]
@@ -1232,12 +1225,13 @@ impl<'a> IrGenerator<'a> {
                 ]
             },
         ]
-        .concat()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
         .join("\n")
     }
 
-    fn allocate_locals(node: &Node, options: &mut Options) -> Vec<String> {
-        let mut lines = vec![];
+    fn allocate_locals(node: &Node, options: &mut Options, lines: &mut Vec<String>) {
         if matches!(node.nt, NodeType::LocalVar)
             || (node.nt == NodeType::CallFunc
                 && matches!(node.resolve_type(), Some(Type::Struct(_))))
@@ -1273,8 +1267,7 @@ impl<'a> IrGenerator<'a> {
             );
             for (index, (ty, argument)) in types.iter().zip(&signature.arguments).enumerate() {
                 if argument.memory.is_some() || argument.indirect {
-                    let register = options.new_register();
-                    options.register_queue.pop();
+                    let register = options.new_temporary();
                     options
                         .argument_slots
                         .insert((node.token.as_ref().unwrap().pos, index), register);
@@ -1292,8 +1285,7 @@ impl<'a> IrGenerator<'a> {
         ) {
             let ty = node.resolve_type().unwrap();
             if ty != Type::Void {
-                let register = options.new_register();
-                options.register_queue.pop();
+                let register = options.new_temporary();
                 options
                     .expression_slots
                     .insert(node.token.as_ref().unwrap().pos, register);
@@ -1311,12 +1303,11 @@ impl<'a> IrGenerator<'a> {
         .into_iter()
         .flatten()
         {
-            lines.extend(Self::allocate_locals(child, options));
+            Self::allocate_locals(child, options, lines);
         }
         for child in node.children.iter().chain(&node.args) {
-            lines.extend(Self::allocate_locals(child, options));
+            Self::allocate_locals(child, options, lines);
         }
-        lines
     }
 
     fn convert_integer(
@@ -1332,15 +1323,13 @@ impl<'a> IrGenerator<'a> {
             return value;
         }
         if source.float_bits().is_some() || target.float_bits().is_some() {
-            let register = options.new_register();
-            options.register_queue.pop();
+            let register = options.new_temporary();
             if *target == Type::Bool {
                 lines.push(format!(
                     "  %{register} = fcmp une {} {value}, 0.0",
                     Self::gen_type(source.clone())
                 ));
-                let result = options.new_register();
-                options.register_queue.pop();
+                let result = options.new_temporary();
                 lines.push(format!("  %{result} = zext i1 %{register} to i8"));
                 return format!("%{result}");
             }
@@ -1386,23 +1375,19 @@ impl<'a> IrGenerator<'a> {
                 options,
                 lines,
             );
-            let register = options.new_register();
-            options.register_queue.pop();
+            let register = options.new_temporary();
             lines.push(format!("  %{register} = inttoptr i64 {wide_value} to ptr"));
             return format!("%{register}");
         }
         if *target == Type::Bool && source.is_pointer_value() {
-            let predicate = options.new_register();
-            options.register_queue.pop();
+            let predicate = options.new_temporary();
             lines.push(format!("  %{predicate} = icmp ne ptr {value}, null"));
-            let result = options.new_register();
-            options.register_queue.pop();
+            let result = options.new_temporary();
             lines.push(format!("  %{result} = zext i1 %{predicate} to i8"));
             return format!("%{result}");
         }
         if source.is_pointer_value() && target.integer_info().is_some() {
-            let register = options.new_register();
-            options.register_queue.pop();
+            let register = options.new_temporary();
             lines.push(format!(
                 "  %{} = ptrtoint ptr {} to {}",
                 register,
@@ -1412,14 +1397,12 @@ impl<'a> IrGenerator<'a> {
             return format!("%{}", register);
         }
         if *target == Type::Bool {
-            let register = options.new_register();
-            options.register_queue.pop();
+            let register = options.new_temporary();
             lines.push(format!(
                 "  %{register} = icmp ne {} {value}, 0",
                 Self::gen_type(source.clone())
             ));
-            let result = options.new_register();
-            options.register_queue.pop();
+            let result = options.new_temporary();
             lines.push(format!("  %{result} = zext i1 %{register} to i8"));
             return format!("%{result}");
         }
@@ -1434,8 +1417,7 @@ impl<'a> IrGenerator<'a> {
             (Some((sb, _)), Some((tb, _))) if sb > tb => "trunc",
             _ => return value,
         };
-        let register = options.new_register();
-        options.register_queue.pop();
+        let register = options.new_temporary();
         lines.push(format!(
             "  %{} = {} {} {} to {}",
             register,
@@ -1452,8 +1434,7 @@ impl<'a> IrGenerator<'a> {
         let value = options.register_queue.pop().unwrap();
         let ty = node.resolve_type().unwrap();
         let pointer = ty.is_pointer_value();
-        let register = options.new_register();
-        options.register_queue.pop();
+        let register = options.new_temporary();
         lines.push(format!(
             "  %{} = {} {} {}, {}",
             register,
@@ -1566,20 +1547,17 @@ impl<'a> IrGenerator<'a> {
         } else {
             ""
         };
-        let old = options.new_register();
-        options.register_queue.pop();
+        let old = options.new_temporary();
         lines.push(format!(
             "  %{old} = atomicrmw {volatile}{mnemonic} ptr {}, {scalar} {value} seq_cst, align {}",
             values[0],
             object.align_of()
         ));
         let result = if return_new {
-            let result = options.new_register();
-            options.register_queue.pop();
+            let result = options.new_temporary();
             if operation == AtomicRmwOperation::Nand {
                 lines.push(format!("  %{result} = and {scalar} %{old}, {value}"));
-                let inverted = options.new_register();
-                options.register_queue.pop();
+                let inverted = options.new_temporary();
                 lines.push(format!("  %{inverted} = xor {scalar} %{result}, -1"));
                 format!("%{inverted}")
             } else {
@@ -1609,29 +1587,25 @@ impl<'a> IrGenerator<'a> {
             options,
             lines,
         );
-        let expected = options.new_register();
-        options.register_queue.pop();
+        let expected = options.new_temporary();
         let expected_volatile = if expected_volatile { "volatile " } else { "" };
         lines.push(format!(
             "  %{expected} = load {expected_volatile}{scalar}, ptr {}, align {}",
             values[1],
             object.align_of()
         ));
-        let exchanged = options.new_register();
-        options.register_queue.pop();
+        let exchanged = options.new_temporary();
         let volatile = if node.volatile_access {
             "volatile "
         } else {
             ""
         };
         lines.push(format!("  %{exchanged} = cmpxchg {volatile}ptr {}, {scalar} %{expected}, {scalar} {desired} seq_cst seq_cst, align {}", values[0], object.align_of()));
-        let old = options.new_register();
-        options.register_queue.pop();
+        let old = options.new_temporary();
         lines.push(format!(
             "  %{old} = extractvalue {{ {scalar}, i1 }} %{exchanged}, 0"
         ));
-        let success = options.new_register();
-        options.register_queue.pop();
+        let success = options.new_temporary();
         lines.push(format!(
             "  %{success} = extractvalue {{ {scalar}, i1 }} %{exchanged}, 1"
         ));
@@ -1648,8 +1622,7 @@ impl<'a> IrGenerator<'a> {
         ));
         lines.push(format!("  br label %{done}"));
         lines.push(format!("{done}:"));
-        let result = options.new_register();
-        options.register_queue.pop();
+        let result = options.new_temporary();
         lines.push(format!("  %{result} = zext i1 %{success} to i8"));
         format!("%{result}")
     }
@@ -1815,8 +1788,7 @@ impl<'a> IrGenerator<'a> {
         let result = if types.is_empty() {
             String::new()
         } else {
-            let register = format!("%{}", options.new_register());
-            options.register_queue.pop();
+            let register = format!("%{}", options.new_temporary());
             register
         };
         let assignment = if types.is_empty() {
@@ -1834,8 +1806,7 @@ impl<'a> IrGenerator<'a> {
             let value = if types.len() == 1 {
                 result.clone()
             } else {
-                let value = format!("%{}", options.new_register());
-                options.register_queue.pop();
+                let value = format!("%{}", options.new_temporary());
                 lines.push(format!(
                     "  {value} = extractvalue {result_type} {result}, {index}"
                 ));
@@ -1901,10 +1872,8 @@ impl<'a> IrGenerator<'a> {
                 let ty = node.resolve_type().unwrap();
                 let bits = ty.float_bits().unwrap();
                 let float = Self::gen_type(ty);
-                let raw = options.new_register();
-                options.register_queue.pop();
-                let masked = options.new_register();
-                options.register_queue.pop();
+                let raw = options.new_temporary();
+                let masked = options.new_temporary();
                 let result = options.new_register();
                 let mask = (1u64 << (bits - 1)) - 1;
                 lines.extend([
@@ -2030,9 +1999,8 @@ impl<'a> IrGenerator<'a> {
                 return node
                     .children
                     .iter()
-                    .map(|node| self.gen_node(node, options))
-                    .collect::<Vec<Vec<String>>>()
-                    .concat();
+                    .flat_map(|node| self.gen_node(node, options))
+                    .collect();
             }
             NodeType::Return => {
                 if matches!(options.return_ty, Type::Struct(_)) {
@@ -2135,17 +2103,13 @@ impl<'a> IrGenerator<'a> {
                 let rhs = options.register_queue.pop().unwrap();
                 lines.extend(self.gen_node(node.lhs.as_ref().unwrap(), options));
                 let lhs = options.register_queue.pop().unwrap();
-                let left = options.new_register();
-                options.register_queue.pop();
+                let left = options.new_temporary();
                 lines.push(format!("  %{} = ptrtoint ptr {} to i64", left, lhs));
-                let right = options.new_register();
-                options.register_queue.pop();
+                let right = options.new_temporary();
                 lines.push(format!("  %{} = ptrtoint ptr {} to i64", right, rhs));
-                let difference = options.new_register();
-                options.register_queue.pop();
+                let difference = options.new_temporary();
                 lines.push(format!("  %{} = sub i64 %{}, %{}", difference, left, right));
-                let count = options.new_register();
-                options.register_queue.pop();
+                let count = options.new_temporary();
                 lines.push(format!(
                     "  %{} = sdiv i64 %{}, {}",
                     count,
@@ -2174,8 +2138,7 @@ impl<'a> IrGenerator<'a> {
                 );
                 let index_ty = "i64";
                 if matches!(node.nt, NodeType::Sub) {
-                    let register = options.new_register();
-                    options.register_queue.pop();
+                    let register = options.new_temporary();
                     lines.push(format!("  %{} = sub {} 0, {}", register, index_ty, value));
                     value = format!("%{}", register);
                 }
@@ -2387,8 +2350,7 @@ impl<'a> IrGenerator<'a> {
                 lines.push(format!("  br label %{}", end_label));
                 lines.push(format!("{}:", rhs_label));
                 let predicate = self.gen_predicate(node.rhs.as_ref().unwrap(), options, &mut lines);
-                let value = options.new_register();
-                options.register_queue.pop();
+                let value = options.new_temporary();
                 lines.push(format!("  %{} = zext i1 {} to i32", value, predicate));
                 lines.push(format!("  store i32 %{}, ptr %{}, align 4", value, slot));
                 lines.push(format!("  br label %{}", end_label));
@@ -2476,8 +2438,7 @@ impl<'a> IrGenerator<'a> {
                 let mut lines = self.gen_addr(operand, options);
                 let address = options.register_queue.pop().unwrap();
                 let ty = operand.resolve_type().unwrap();
-                let old = options.new_register();
-                options.register_queue.pop();
+                let old = options.new_temporary();
                 lines.push(format!(
                     "  %{} = load {}{}, ptr {}, align {}",
                     old,
@@ -2490,8 +2451,7 @@ impl<'a> IrGenerator<'a> {
                     address,
                     Self::access_alignment(operand)
                 ));
-                let new = options.new_register();
-                options.register_queue.pop();
+                let new = options.new_temporary();
                 if let Type::Ptr(child) = &ty {
                     lines.push(format!(
                         "  %{} = getelementptr inbounds {}, ptr %{}, i32 {}",
@@ -2529,11 +2489,9 @@ impl<'a> IrGenerator<'a> {
                     ));
                 }
                 let new = if ty == Type::Bool {
-                    let predicate = options.new_register();
-                    options.register_queue.pop();
+                    let predicate = options.new_temporary();
                     lines.push(format!("  %{predicate} = icmp ne i8 %{new}, 0"));
-                    let result = options.new_register();
-                    options.register_queue.pop();
+                    let result = options.new_temporary();
                     lines.push(format!("  %{result} = zext i1 %{predicate} to i8"));
                     result
                 } else {
@@ -2723,7 +2681,9 @@ impl<'a> IrGenerator<'a> {
                 }
             }],
         ]
-        .concat();
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         if comparison {
             let value = options.register_queue.pop().unwrap();
             let register = options.new_register();
