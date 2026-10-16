@@ -721,7 +721,7 @@ impl<'a> AstBuilderImpl<'a> {
                             "only default and hidden symbol visibility are supported",
                         );
                     }
-                    if visibility.string_bytes == b"hidden" {
+                    if visibility.string_bytes.as_slice() == b"hidden" {
                         if self.parameter_depth != 0
                             || self
                                 .declaration_attributes_state
@@ -2060,7 +2060,7 @@ impl<'a> AstBuilderImpl<'a> {
 
     fn struct_type_body(&mut self, token: Token) -> Type {
         let is_union = token.s_value == "union";
-        let packing = token.packing;
+        let packing = token.packing.map(usize::from);
         let (mut requested_record_alignment, mut packed, mut transparent) =
             self.record_attributes();
         let name = self.attempt_ident();
@@ -2549,7 +2549,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.expect_reserved(")");
         self.expect_reserved(";");
         if self.eval(&expression) == 0 {
-            let bytes = message.string_bytes.clone();
+            let bytes = message.decoded_string();
             self.error_logger.print_error_position(
                 token.pos,
                 &format!(
@@ -3296,7 +3296,7 @@ impl<'a> AstBuilderImpl<'a> {
             );
         }
         if let Some(token) = self.attempt_string_initializer(ty) {
-            let mut bytes = token.string_bytes.clone();
+            let mut bytes = token.decoded_string();
             let unit_size = token.string_encoding.unit_size();
             let Type::Arr(_, size) = ty.unqualified() else {
                 unreachable!()
@@ -5067,7 +5067,7 @@ impl<'a> AstBuilderImpl<'a> {
             );
         }
         if let Some(token) = self.attempt_string_initializer(&node.resolve_type().unwrap()) {
-            let bytes = token.string_bytes.clone();
+            let bytes = token.decoded_string();
             let unit_size = token.string_encoding.unit_size();
             let Type::Arr(_, size) = node.resolve_type().unwrap() else {
                 unreachable!()

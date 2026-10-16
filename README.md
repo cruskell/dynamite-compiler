@@ -125,6 +125,10 @@ Single-input `-c`/`-S` CLI processes retain AST and token storage until exit to
 avoid individual deallocations. Multi-input and library compilation release it.
 Library type constructors now use `Rc` for recursive children and parameter
 lists, and token spellings use `SmolStr`; `.into()` converts owned values.
+`Token.string_bytes` uses copy-on-write `StringBytes` storage: construct it with
+`vec![...].into()`, borrow bytes with `.as_slice()`, or consume it with
+`.into_vec()`. Clones share literal bytes until mutation. `Token.packing` is
+`Option<u8>` for the supported pragma pack limits (1, 2, 4, 8, and 16).
 
 The driver calls Dynamite's frontend directly, then uses the selected external
 backend to lower LLVM IR and link. It removes the Python adapter and extra Dynamite process from each
