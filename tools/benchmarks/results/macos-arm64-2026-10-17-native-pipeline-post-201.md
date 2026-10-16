@@ -5,6 +5,8 @@ caching and rewritten-path fixes. This separate follow-up rebuilds both variants
 against main `de9de24`; candidate `096a261` includes the same changes.
 The baseline is Dynamite using Clang preprocessing/lowering, not Clang compiling C.
 The earlier six-round results are retained separately and are not pooled with these samples.
+The branch subsequently incorporated documentation-only main #202; compiler sources
+remain identical to the measured candidate.
 
 ## Method
 

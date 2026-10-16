@@ -210,9 +210,10 @@ compiler cache was used.
 | Redis, 184 C compilations | 10.94 s | 14.01 s | 21.9% |
 | Git, 568 C compilations | 38.90 s | 40.83 s | 4.7% |
 
-Dynamite used `DYNAMITE_PREPROCESSOR=native` and `DYNAMITE_BACKEND=llvm`, with
-external LLVM 15 `llc`/`opt`/LLD tools and Clang disabled in its driver. This is
-an opt-in configuration; the default driver still uses Clang. Clang's reference
+That snapshot explicitly selected native preprocessing and `DYNAMITE_BACKEND=llvm`,
+with external LLVM 15 `llc`/`opt`/LLD tools and Clang disabled in its driver.
+Preprocessing is now always native; selecting the LLVM tools backend remains
+opt-in, and the default IR lowering/linking backend still uses Clang. Clang's reference
 build used its complete C toolchain. Compiler capability macros can select
 different source paths, so this compares application builds rather than
 identical preprocessed inputs. It does not measure generated-program performance.
@@ -231,7 +232,7 @@ These two-run samples are a snapshot, not a guaranteed speedup. Raw elapsed
 samples, source commits, compiler hashes, build commands and validation are in
 [the measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-17-native-llvm.json).
 Reproduce with [the benchmark runner](tools/benchmarks/README.md), setting the
-native preprocessor and LLVM tool paths and passing `--no-trace --runs 2 --jobs 4`.
+LLVM tools backend and tool paths and passing `--no-trace --runs 2 --jobs 4`.
 
 ### Scalar expression type reuse (#201)
 
