@@ -1406,6 +1406,36 @@ int supplied_inline(int x){return x+38;}
     );
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn call_type_queries_preserve_decay_and_argument_promotions(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+typedef int Vector __attribute__((vector_size(16)));
+int accepts(void *p){return p!=0;}
+int increment(int x){return x+1;}
+int invoke(int callback(int),const int values[2]){return callback(values[1]);}
+int fixed(signed char n,float x){return n+(int)x;}
+int variadic(int count,...){
+    __builtin_va_list ap;__builtin_va_start(ap,count);
+    int n=__builtin_va_arg(ap,int);double x=__builtin_va_arg(ap,double);
+    __builtin_va_end(ap);return n+(int)x;
+}
+int main(){
+    int values[2]={3,7};Vector vectors[1];long double storage[1];
+    return invoke(increment,values)!=8 || !accepts(vectors) || !accepts(storage)
+        || fixed(257,3.5)!=4 || variadic(2,(signed char)-1,(float)3.5)!=2;
+}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
 #[test_matrix(["asm", "llvm"])]
 fn restrict_qualified_pointers(output_option: &str) {
     let code = "typedef int *P;int sum(int n,int a[restrict static n],const int *restrict b){P restrict p=a;int result=0;for(int i=0;i<n;i++){p[i]+=b[i];result+=p[i];}return result;}int main(){int a[3]={1,2,3};int b[3]={4,5,6};return sum(3,a,b)-21;}";
