@@ -90,7 +90,7 @@ comparisons and interpretation of nested stage and Clang trace totals.
 
 ## Measured Linux build times
 
-On 2026-10-16, clean upstream Redis 8.10.2 and Git v2.56.0 builds were measured
+Before declaration pruning, on 2026-10-16, clean upstream Redis 8.10.2 and Git v2.56.0 builds were measured
 with the release compiler, Clang 15.0.7, GNU99, -O0/-g0 and four make workers on
 Linux x86_64 (Intel i5-5575R, Rust 1.86). Each compiler ran twice with alternating
 order; filesystem caches were not cleared. Sources were unchanged. Git disabled
@@ -137,14 +137,44 @@ comparisons use identical preprocessed inputs. These show the frontend core is
 competitive on these samples; extra Clang invocations and IR reading/backend
 work explain much of the end-to-end gap, rather than IR text generation alone.
 
-A concrete output-size bottleneck is unused external declarations: Git abspath
-emits 5,744 declarations versus Clang's 22, making its IR 299,703 versus 46,866
-bytes. Lowering those IR files with the same Clang takes median 47.02 versus
-28.52 ms. Filtering unused declarations is therefore a focused next experiment.
+Unused external function declarations were subsequently removed from LLVM output,
+including unused built-in libc declarations. References in retained function
+bodies, reachable static inline bodies and global initializers preserve the
+necessary declarations; ABI diagnostics still run before declaration omission.
+Definitions retain their previous emission rules. Native assembly is unchanged.
+
+The following before/after measurements use the same preprocessed bytes and
+release binaries on the same host. Frontend runs alternate order; IR lowering
+rotates before/after/Clang order, with 15 serial runs each and Clang 15 at -O0/-g0.
+Times are median process wall time for Clang IR-to-object invocation, not full
+build time. Nine unconditional intrinsic declarations remain in Dynamite IR.
+
+| Input | Declarations before → after | IR bytes before → after | Lowering before → after | Clang IR lowering |
+| --- | ---: | ---: | ---: | ---: |
+| Redis adlist | 265 → 11 | 49,391 → 40,381 | 29.65 → 29.88 ms | 28.73 ms |
+| Redis server | 4,526 → 505 | 1,484,479 → 1,322,124 | 192.34 → 179.75 ms | 140.67 ms |
+| Git abspath | 5,744 → 31 | 299,703 → 48,120 | 48.32 → 30.40 ms | 29.48 ms |
+| Git revision | 7,188 → 222 | 1,269,466 → 958,482 | 162.31 → 140.71 ms | 105.72 ms |
+
+This reduces lowering time by 37.1% for abspath, 13.3% for revision and 6.5% for
+server; adlist shows no gain. Median frontend generation time also decreased on
+all four samples. These gains apply to these stages and inputs, not whole builds.
+Input/binary hashes, timer boundaries and individual samples are in the
+[declaration-pruning snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16-declaration-pruning.json).
+
+Follow-up clean builds with the same flags and two alternating runs each take
+median 15.66 s / 14.00 s for Redis and 48.63 s / 41.07 s for Git
+(Dynamite / Clang). Each run compiles 184 / 568 C files, with unchanged upstream
+sources; basic Redis persistence/Lua/extended-float and Git repository/gc/fsck
+checks pass for both compilers. These follow-up builds were not interleaved
+with the old compiler, so their difference from the earlier whole-build table
+is not a controlled before/after speedup measurement.
+
 A 7,547-sample user-CPU profile of the Git revision frontend also attributes at
 least 25.5% of self samples to allocator/free routines and 7.2% to memory copying;
 reducing token/type ownership churn and repeated header work are additional
-candidates. These are findings, not measured gains from proposed optimizations.
+candidates. These profile findings are not measured gains from those further
+optimizations.
 
 ## Proposed direction
 
