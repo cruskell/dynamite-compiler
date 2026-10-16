@@ -1295,6 +1295,37 @@ impl<'a> AsmGenerator<'a> {
                 return lines.into();
             }
 
+            NodeType::CopyBytes { bytes } => {
+                let mut lines = vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
+                    self.gen_addr(node.rhs.as_ref().unwrap(), options),
+                    Self::pop(X10),
+                    Self::pop(X11),
+                    Self::push(X11),
+                ];
+                if bytes >= 8 {
+                    lines.extend([
+                        Assembly::inst2(MOV, X9, bytes / 8),
+                        "902:".into(),
+                        Assembly::inst2(LDR, X12, Ptr(X10, 8)),
+                        Assembly::inst2(STR, X12, Ptr(X11, 8)),
+                        Assembly::inst3(ADD, X10, X10, 8),
+                        Assembly::inst3(ADD, X11, X11, 8),
+                        Assembly::inst3(SUB, X9, X9, 1),
+                        Assembly::inst2(CMP, X9, 0),
+                        Assembly::inst1(JNE, "902b"),
+                    ]);
+                }
+                for _ in 0..bytes % 8 {
+                    lines.extend([
+                        Assembly::inst2(LDRU, X12, Ptr(X10, 1)),
+                        Assembly::inst2(STR, X12, Ptr(X11, 1)),
+                        Assembly::inst3(ADD, X10, X10, 1),
+                        Assembly::inst3(ADD, X11, X11, 1),
+                    ]);
+                }
+                return lines.into();
+            }
             NodeType::ZeroFill { bytes } => {
                 let mut lines = vec![
                     self.gen_addr(node.lhs.as_ref().unwrap(), options),
@@ -1984,6 +2015,7 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
+            NodeType::CopyBytes { .. } => self.gen_node(node, options),
             NodeType::CallFunc => self.gen_node(node, options),
             NodeType::Conditional => self.gen_node(node, options),
 
