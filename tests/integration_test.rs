@@ -7057,6 +7057,7 @@ fn compact_aggregate_memory_operations_preserve_values_and_evaluation(
     let code = r#"
 struct S { unsigned char bytes[4097]; };
 struct S first, second;
+int check_zero(const unsigned char*,unsigned long);
 int trace;
 struct S *destination(void){trace=trace*10+1;return &second;}
 struct S *source(void){trace=trace*10+2;return &first;}
@@ -7069,6 +7070,8 @@ int main(void){
     struct S third=second;
     for(int i=0;i<4097;i++)if(first.bytes[i]!=third.bytes[i])return 2;
     if((second=first).bytes[13]!=first.bytes[13])return 3;
+    struct S zero={0};third=zero;
+    if(check_zero(third.bytes,sizeof(third)))return 6;
     struct P p={1,42,{3,4,5,6}},q={0};q=p;
     if(q.tag!=1 || q.value!=42 || q.tail[3]!=6)return 4;
     char large[16384]="x\0y";
@@ -7084,7 +7087,14 @@ int main(void){
         || v[0]!='a' || v[1]!='b' || v[4]!=0;
 }
 "#;
-    let output = compile_and_run_with_c_flags(code, output_option, None, &[optimization]);
+    let output = compile_and_run_with_c_flags(
+        code,
+        output_option,
+        Some(
+            "int check_zero(const unsigned char*p,unsigned long n){for(unsigned long i=0;i<n;i++)if(p[i])return 1;return 0;}",
+        ),
+        &[optimization],
+    );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
@@ -7095,8 +7105,13 @@ fn compact_aggregate_memory_operations_bound_llvm_size_and_keep_volatile_accesse
         "llvm",
         false,
     );
-    assert!(ir.contains("load [4097 x i8]"), "{ir}");
-    assert!(ir.contains("store [4097 x i8]"), "{ir}");
+    assert_eq!(
+        ir.matches("call void @llvm.memcpy.p0.p0.i64").count(),
+        2,
+        "{ir}"
+    );
+    assert!(ir.contains("i64 4097, i1 false"), "{ir}");
+    assert!(!ir.contains("load [4097 x i8]"), "{ir}");
     assert!(ir.contains("i64 16384, i1 false"), "{ir}");
     assert!(
         ir.len() < 10000,
