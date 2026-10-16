@@ -1418,8 +1418,12 @@ int renamed(int x){return x+3;}
 int from_retained(void){return 0;}
 int supplied_inline(int x){return x+38;}
 "#;
+    let mut flags = vec![optimization];
+    if cfg!(target_os = "macos") {
+        flags.push("-Wl,-undefined,dynamic_lookup");
+    }
     assert_eq!(
-        compile_and_run_with_c_flags(code, output_option, Some(companion), &[optimization])
+        compile_and_run_with_c_flags(code, output_option, Some(companion), &flags)
             .status
             .code(),
         Some(0)
