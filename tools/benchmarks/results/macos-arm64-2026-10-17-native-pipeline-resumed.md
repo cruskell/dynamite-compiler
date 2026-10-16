@@ -1,5 +1,7 @@
 # Resumed native pipeline measurements
 
+Main subsequently changed in #201; see the [separate latest-main confirmation](macos-arm64-2026-10-17-native-pipeline-post-201.md).
+
 This follow-up supersedes the earlier load-contended measurement for assessing
 PR #198. It compares freshly built Rust release binaries for main `824be9a`
 and candidate `e21534c`. Both include the token-storage changes from #199.
