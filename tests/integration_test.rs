@@ -7717,6 +7717,67 @@ impl Drop for DriverFixture {
     }
 }
 
+#[test]
+fn driver_stage_timings_are_optional_and_preserve_parallel_results() {
+    let files = DriverFixture::new();
+    files.write(
+        "first.c",
+        "int second(void);int main(){return 20+second();}",
+    );
+    files.write("second.c", "int second(void){return 22;}");
+    for enabled in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"));
+        command
+            .current_dir(&files.0)
+            .env("DYNAMITE_CLANG", "clang")
+            .env_remove("DYNAMITE_TIMINGS")
+            .args(["--jobs", "2", "first.c", "second.c", "-o", "program"]);
+        if enabled {
+            command.env("DYNAMITE_TIMINGS", "1");
+        }
+        let result = command.output().unwrap();
+        assert!(result.status.success(), "{result:?}");
+        assert!(result.stdout.is_empty());
+        assert_eq!(files.executable_status("program"), Some(42));
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        let mut stages = std::collections::HashMap::new();
+        for line in stderr
+            .lines()
+            .filter(|line| line.starts_with("dynamite-timing\t"))
+        {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 4);
+            assert!(fields[1].parse::<u32>().unwrap() > 0);
+            let seconds = fields[3].parse::<f64>().unwrap();
+            assert!(seconds.is_finite() && seconds >= 0.0);
+            *stages.entry(fields[2]).or_insert(0) += 1;
+        }
+        if enabled {
+            for stage in [
+                "preprocess",
+                "preprocess.clang",
+                "tokenize",
+                "parse",
+                "parse.declarations",
+                "parse.validate",
+                "parse.lower",
+                "parse.inline",
+                "generate",
+                "drop_ast",
+                "drop_tokens",
+                "frontend_total",
+                "write_ir",
+                "lower",
+            ] {
+                assert_eq!(stages.get(stage), Some(&2), "{stage}: {stderr}");
+            }
+            assert_eq!(stages.get("link"), Some(&1));
+        } else {
+            assert!(stages.is_empty());
+        }
+    }
+}
+
 #[test_matrix(["1", "4"])]
 fn driver_parallel_translation_units_keep_types_and_symbols_local(jobs: &str) {
     let files = DriverFixture::new();

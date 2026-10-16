@@ -82,6 +82,70 @@ response files, and C compilation from stdin are rejected. Compile mixed C and
 assembly inputs separately before linking. `-g` cannot add C source debug
 metadata that the LLVM frontend does not emit.
 
+Set `DYNAMITE_TIMINGS=1` to emit stage elapsed times to stderr. Measurements
+separate preprocessing, tokenization, parsing/lowering, output generation,
+teardown, IR writes, Clang lowering and linking. See
+[the build benchmark tools](tools/benchmarks/README.md) for repeatable Redis/Git
+comparisons and interpretation of nested stage and Clang trace totals.
+
+## Measured Linux build times
+
+On 2026-10-16, clean upstream Redis 8.10.2 and Git v2.56.0 builds were measured
+with the release compiler, Clang 15.0.7, GNU99, -O0/-g0 and four make workers on
+Linux x86_64 (Intel i5-5575R, Rust 1.86). Each compiler ran twice with alternating
+order; filesystem caches were not cleared. Sources were unchanged. Git disabled
+Rust/PCH and optional scripting/localization frontends; Redis used libc, with
+TLS/Vector Sets/C11 atomics disabled and Lua also at -O0. External/test modules
+were excluded from these timed builds.
+
+| Clean build | Dynamite median | Clang median | Ratio |
+| --- | ---: | ---: | ---: |
+| Redis, 184 C compilations | 15.95 s | 13.90 s | 1.15x |
+| Git, 568 C compilations | 51.68 s | 40.89 s | 1.26x |
+
+Mean Dynamite stage totals below are **worker seconds**, whose parallel work
+overlaps; they must not be added to or compared directly with build wall time.
+
+| Stage | Redis | Git |
+| --- | ---: | ---: |
+| Preprocessing, including Clang invocation | 8.86 | 53.55 |
+| Tokenization | 1.79 | 18.54 |
+| Parsing, validation and AST lowering | 5.44 | 46.13 |
+| LLVM text generation | 1.28 | 4.85 |
+| AST/token teardown | 0.64 | 8.39 |
+| IR file write | 0.07 | 0.62 |
+| Clang IR-to-object invocation | 9.74 | 34.36 |
+
+Clang's C trace combines preprocessing/tokenization/parsing/semantics/IR
+construction into Frontend, rather than matching Dynamite's inner timers. Its
+Frontend totals are 13.24/106.08 worker seconds for Redis/Git. Dynamite's enclosing
+frontend_total is 18.12/131.84, including the preprocessing subprocess and explicit
+AST/token teardown; those timer boundaries differ from Clang's Frontend.
+
+The common Clang backend's internal timer excludes driver startup and IR input
+parsing. These comparable trace/link totals are also worker seconds:
+
+| Phase | Redis Dynamite | Redis Clang | Git Dynamite | Git Clang |
+| --- | ---: | ---: | ---: | ---: |
+| Clang internal Backend | 4.04 | 2.88 | 11.25 | 5.96 |
+| Link invocations | 0.40 | 0.37 | 3.19 | 3.24 |
+
+Full trace totals, CPU/RSS data, dependency times, exact flags and repeated
+samples are in the [measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16.json).
+Capability profiles may select different code paths, so four additional serial
+comparisons use identical preprocessed inputs. These show the frontend core is
+competitive on these samples; extra Clang invocations and IR reading/backend
+work explain much of the end-to-end gap, rather than IR text generation alone.
+
+A concrete output-size bottleneck is unused external declarations: Git abspath
+emits 5,744 declarations versus Clang's 22, making its IR 299,703 versus 46,866
+bytes. Lowering those IR files with the same Clang takes median 47.02 versus
+28.52 ms. Filtering unused declarations is therefore a focused next experiment.
+A 7,547-sample user-CPU profile of the Git revision frontend also attributes at
+least 25.5% of self samples to allocator/free routines and 7.2% to memory copying;
+reducing token/type ownership churn and repeated header work are additional
+candidates. These are findings, not measured gains from proposed optimizations.
+
 ## Proposed direction
 
 Dynamite aims to shorten the time from editing C code to seeing results and
