@@ -70,6 +70,7 @@ impl<'a> IrGenerator<'a> {
         };
         [
             vec![
+                "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)".into(),
                 "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)".into(),
                 "declare void @llvm.va_start(ptr)".into(),
                 "declare void @llvm.va_end(ptr)".into(),
@@ -1874,12 +1875,8 @@ impl<'a> IrGenerator<'a> {
                 let destination = options.register_queue.pop().unwrap();
                 lines.extend(self.gen_addr(node.rhs.as_ref().unwrap(), options));
                 let source = options.register_queue.pop().unwrap();
-                let value = options.new_temporary();
                 lines.push(format!(
-                    "  %{value} = load [{bytes} x i8], ptr {source}, align 1"
-                ));
-                lines.push(format!(
-                    "  store [{bytes} x i8] %{value}, ptr {destination}, align 1"
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {destination}, ptr align 1 {source}, i64 {bytes}, i1 false)"
                 ));
                 options.register_queue.push(destination);
                 return lines;

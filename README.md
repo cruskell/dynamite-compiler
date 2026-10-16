@@ -1251,7 +1251,9 @@ operations rather than byte-wise AST assignments. Record assignment evaluates
 each operand once in the existing order and supports self-assignment. String
 initialization copies only the available code units (including a terminator when
 it fits), clearing any remaining storage in bulk. Native output uses inline
-copying; LLVM output uses aggregate loads and stores with conservative alignment.
+copying; LLVM output uses `llvm.memcpy` with conservative alignment. The intrinsic
+supports copying an object onto itself and lets LLVM choose inline instructions
+or a runtime call without expanding the copy into a large aggregate SSA value.
 Aggregates containing volatile subobjects retain member-wise initialization.
 Explicit member writes retain their normal types and volatile access widths.
 C does not generally require padding bytes to have a specified value after
