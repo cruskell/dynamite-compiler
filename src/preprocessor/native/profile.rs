@@ -1,4 +1,4 @@
-//! Predefined macros for Dynamite's native Linux x86_64 C data model.
+//! Predefined macros for Dynamite's supported native C data models.
 
 use super::Preprocessor;
 
@@ -12,18 +12,6 @@ pub(super) fn define(pp: &mut Preprocessor) -> Result<(), String> {
         ("__GNUC_MINOR__", "2"),
         ("__GNUC_PATCHLEVEL__", "1"),
         ("__GNUC_STDC_INLINE__", "1"),
-        ("__x86_64__", "1"),
-        ("__x86_64", "1"),
-        ("__amd64__", "1"),
-        ("__amd64", "1"),
-        ("__linux__", "1"),
-        ("__linux", "1"),
-        ("linux", "1"),
-        ("__gnu_linux__", "1"),
-        ("__unix__", "1"),
-        ("__unix", "1"),
-        ("unix", "1"),
-        ("__ELF__", "1"),
         ("__LP64__", "1"),
         ("_LP64", "1"),
         ("__CHAR_BIT__", "8"),
@@ -220,6 +208,98 @@ pub(super) fn define(pp: &mut Preprocessor) -> Result<(), String> {
             ("FMTo", "\"lo\""),
         ] {
             pp.define(&format!("__{prefix}_{property}__ {value}"))?;
+        }
+    }
+    if cfg!(target_arch = "x86_64") {
+        for name in ["__x86_64__", "__x86_64", "__amd64__", "__amd64"] {
+            pp.define(&format!("{name} 1"))?;
+        }
+    }
+    if cfg!(target_os = "linux") {
+        for name in [
+            "__linux__",
+            "__linux",
+            "linux",
+            "__gnu_linux__",
+            "__unix__",
+            "__unix",
+            "unix",
+            "__ELF__",
+        ] {
+            pp.define(&format!("{name} 1"))?;
+        }
+    }
+    if cfg!(target_os = "macos") {
+        pp.undefine("__WINT_UNSIGNED__");
+        for (name, value) in [
+            ("__APPLE__", "1"),
+            ("__APPLE_CC__", "6000"),
+            ("__MACH__", "1"),
+            ("__USER_LABEL_PREFIX__", "_"),
+            ("__WINT_TYPE__", "int"),
+            ("__WINT_MAX__", "2147483647"),
+        ] {
+            pp.define(&format!("{name} {value}"))?;
+        }
+        let version =
+            crate::toolchain::macos_version_number(&crate::toolchain::macos_deployment_target()?)?;
+        pp.define(&format!(
+            "__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ {version}"
+        ))?;
+        pp.define(&format!(
+            "__ENVIRONMENT_OS_VERSION_MIN_REQUIRED__ {version}"
+        ))?;
+        for prefix in ["INT64", "INT_LEAST64", "INT_FAST64"] {
+            for (property, value) in [
+                ("TYPE", "long long int"),
+                ("MAX", "9223372036854775807LL"),
+                ("C_SUFFIX", "LL"),
+                ("FMTd", "\"lld\""),
+                ("FMTi", "\"lli\""),
+            ] {
+                pp.define(&format!("__{prefix}_{property}__ {value}"))?;
+            }
+        }
+        for prefix in ["UINT64", "UINT_LEAST64", "UINT_FAST64"] {
+            for (property, value) in [
+                ("TYPE", "long long unsigned int"),
+                ("MAX", "18446744073709551615ULL"),
+                ("C_SUFFIX", "ULL"),
+                ("FMTu", "\"llu\""),
+                ("FMTx", "\"llx\""),
+                ("FMTX", "\"llX\""),
+                ("FMTo", "\"llo\""),
+            ] {
+                pp.define(&format!("__{prefix}_{property}__ {value}"))?;
+            }
+        }
+    }
+    if cfg!(target_arch = "aarch64") {
+        for (name, value) in [
+            ("__aarch64__", "1"),
+            ("__arm64__", "1"),
+            ("__arm64", "1"),
+            ("__ARM64_ARCH_8__", "1"),
+            ("__ARM_ARCH", "8"),
+            ("__ARM_ARCH_ISA_A64", "1"),
+            ("__ARM_64BIT_STATE", "1"),
+            ("__ARM_PCS_AAPCS64", "1"),
+            ("__ARM_SIZEOF_MINIMAL_ENUM", "4"),
+            ("__ARM_SIZEOF_WCHAR_T", "4"),
+            ("__SIZEOF_LONG_DOUBLE__", "8"),
+            ("__LDBL_MANT_DIG__", "53"),
+            ("__LDBL_DIG__", "15"),
+            ("__LDBL_DECIMAL_DIG__", "17"),
+            ("__LDBL_MIN_EXP__", "(-1021)"),
+            ("__LDBL_MAX_EXP__", "1024"),
+            ("__LDBL_MIN_10_EXP__", "(-307)"),
+            ("__LDBL_MAX_10_EXP__", "308"),
+            ("__LDBL_MIN__", "2.2250738585072014e-308L"),
+            ("__LDBL_MAX__", "1.7976931348623157e+308L"),
+            ("__LDBL_EPSILON__", "2.2204460492503131e-16L"),
+            ("__LDBL_DENORM_MIN__", "4.9406564584124654e-324L"),
+        ] {
+            pp.define(&format!("{name} {value}"))?;
         }
     }
     Ok(())

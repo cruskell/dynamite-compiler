@@ -421,6 +421,7 @@ fn include_guard(source: &CleanSource) -> Option<SmolStr> {
 pub(super) struct Preprocessor {
     macros: HashMap<SmolStr, Rc<Macro>>,
     includes: Vec<PathBuf>,
+    frameworks: Vec<PathBuf>,
     quotes: Vec<PathBuf>,
     include_cache: HashMap<(PathBuf, SmolStr, bool, bool), Option<PathBuf>>,
     search_origins: HashMap<PathBuf, usize>,
@@ -434,6 +435,7 @@ pub(super) struct Preprocessor {
     seen_dependencies: HashSet<PathBuf>,
     warnings_as_errors: bool,
     dependency_only: bool,
+    condition_expansion: bool,
     stateful: HashSet<SmolStr>,
     // Keep historical edges after redefinition: extra expansion is safe; missing effects is not.
     dependents: HashMap<SmolStr, HashSet<SmolStr>>,
@@ -489,6 +491,7 @@ impl Preprocessor {
         Self {
             macros: HashMap::new(),
             includes,
+            frameworks: vec![],
             quotes,
             include_cache: HashMap::new(),
             search_origins: HashMap::new(),
@@ -502,6 +505,7 @@ impl Preprocessor {
             seen_dependencies: HashSet::new(),
             warnings_as_errors: false,
             dependency_only: false,
+            condition_expansion: false,
             stateful: [SmolStr::new("__COUNTER__"), SmolStr::new("_Pragma")]
                 .into_iter()
                 .collect(),
@@ -660,6 +664,37 @@ impl Preprocessor {
             steps += 1;
             if steps > 10_000_000 {
                 return Err("macro expansion token limit exceeded".into());
+            }
+            // Darwin headers use the GNU extension that produces defined via expansion.
+            if self.condition_expansion && token.is("defined") {
+                let parens = pending.front().is_some_and(|t| t.is("("));
+                if parens {
+                    pending.pop_front();
+                }
+                let name = pending
+                    .pop_front()
+                    .ok_or("defined requires an identifier")?;
+                if !name
+                    .text
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|b| identifier(*b) && !b.is_ascii_digit())
+                {
+                    return Err("defined requires an identifier".into());
+                }
+                if parens && !pending.pop_front().is_some_and(|t| t.is(")")) {
+                    return Err("missing ')' after defined".into());
+                }
+                out.push(Token::new(
+                    if self.is_defined(&name.text) {
+                        "1"
+                    } else {
+                        "0"
+                    },
+                    token.space,
+                    token.line,
+                ));
+                continue;
             }
             let name = token.text.clone();
             if !name
@@ -1054,8 +1089,13 @@ impl Preprocessor {
                 index += 1;
             }
         }
-        let expanded = self.expand(replaced, file, 0)?;
-        Expression::evaluate(&expanded).map(|v| v.bits != 0)
+        let previous = std::mem::replace(&mut self.condition_expansion, true);
+        let expanded = self.expand(replaced, file, 0);
+        self.condition_expansion = previous;
+        let expanded = expanded?;
+        Expression::evaluate(&expanded)
+            .map(|v| v.bits != 0)
+            .map_err(|error| format!("{file}:{}: {error}", tokens.first().map_or(1, |t| t.line)))
     }
 
     fn find_include(
@@ -1098,6 +1138,16 @@ impl Preprocessor {
                 self.search_origins.insert(path.clone(), index);
             }
             Some(path)
+        });
+        let result = result.or_else(|| {
+            if next {
+                return None;
+            }
+            let (framework, header) = name.split_once('/')?;
+            self.frameworks
+                .iter()
+                .map(|directory| directory.join(format!("{framework}.framework/Headers/{header}")))
+                .find(|path| path.is_file())
         });
         self.include_cache.insert(key, result.clone());
         result
@@ -1506,8 +1556,14 @@ fn preprocess_cached(
     arguments: &[String],
     headers: &mut HashMap<PathBuf, Header>,
 ) -> Result<String, String> {
-    if !cfg!(all(target_arch = "x86_64", target_os = "linux")) {
-        return Err("native preprocessing currently supports Linux x86_64".into());
+    if !cfg!(any(
+        all(target_arch = "x86_64", target_os = "linux"),
+        all(
+            target_os = "macos",
+            any(target_arch = "aarch64", target_arch = "x86_64")
+        )
+    )) {
+        return Err("native preprocessing supports Linux x86_64 and macOS ARM64/x86_64".into());
     }
     let bundled = if options.system_headers {
         Some(super::IncludeDirectory::native()?)
@@ -1518,6 +1574,8 @@ fn preprocess_cached(
     let mut quotes = vec![];
     let mut after = vec![];
     let mut system_includes = vec![];
+    let mut sdk = None;
+    let mut frameworks = vec![];
     let mut definitions = vec![];
     let mut forced = vec![];
     let mut dependency_file = None;
@@ -1565,6 +1623,13 @@ fn preprocess_cached(
                     text
                 });
             }
+            _ if arg.starts_with("-isysroot") && cfg!(target_os = "macos") => {
+                sdk = Some(PathBuf::from(value("-isysroot")?))
+            }
+            _ if arg.starts_with("-iframework") => {
+                frameworks.push(PathBuf::from(value("-iframework")?))
+            }
+            _ if arg.starts_with("-F") => frameworks.push(PathBuf::from(value("-F")?)),
             _ if arg.starts_with("-isystem") => {
                 system_includes.push(PathBuf::from(value("-isystem")?))
             }
@@ -1604,15 +1669,26 @@ fn preprocess_cached(
     let builtin_path = bundled.as_ref().unwrap().0.clone();
     system_paths.push(builtin_path.clone());
     if options.system_headers {
-        system_paths.extend([
-            PathBuf::from("/usr/local/include"),
-            PathBuf::from("/usr/include/x86_64-linux-gnu"),
-            PathBuf::from("/usr/include"),
-        ]);
+        if cfg!(target_os = "macos") {
+            let sdk = sdk
+                .map(Ok)
+                .unwrap_or_else(crate::toolchain::macos_sdk_root)?;
+            system_paths.push(sdk.join("usr/include"));
+            let framework_root = sdk.join("System/Library/Frameworks");
+            system_paths.push(framework_root.clone());
+            frameworks.push(framework_root);
+        } else {
+            system_paths.extend([
+                PathBuf::from("/usr/local/include"),
+                PathBuf::from("/usr/include/x86_64-linux-gnu"),
+                PathBuf::from("/usr/include"),
+            ]);
+        }
     }
     includes.extend(system_paths.iter().cloned());
     includes.extend(after);
     let mut pp = Preprocessor::new(includes, quotes);
+    pp.frameworks = frameworks;
     pp.headers = std::mem::take(headers);
     pp.dependency_only = dependency_only;
     pp.warnings_as_errors = warnings_as_errors;
@@ -1856,6 +1932,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tokens(&output), ["1", "\"other.c\"", "100", "0", "1"]);
+    }
+
+    #[test]
+    fn condition_macros_can_produce_defined_without_expanding_its_operand() {
+        let mut pp = Preprocessor::new(vec![], vec![]);
+        let output = pp.process("#define ENABLED 7\n#define CHECK() defined(ENABLED) && !defined(MISSING)\n#if CHECK()\nselected\n#else\n#error wrong conditional\n#endif\ndefined(ENABLED)\n", Path::new("test.c")).unwrap();
+        assert_eq!(tokens(&output), ["selected", "defined", "(", "7", ")"]);
     }
 
     #[test]
