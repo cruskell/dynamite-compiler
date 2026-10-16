@@ -5,6 +5,19 @@ A compiler for a language with syntax similar to the C language, written in Rust
 > [!IMPORTANT]
 > This project is development phase and is not ready for use.
 
+## Development checks
+
+Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
+`cargo test` for local validation. The regular GitHub Actions CI builds and tests
+using the published development image without rebuilding it.
+
+The image workflow runs only when `dockerfiles/dev.Dockerfile`, `.dockerignore`,
+or `.github/workflows/publish.yaml` changes, or when started manually. Image
+changes are tested in a newly built image on pull requests. Publishing runs only
+on main after image validation; manual runs on main can also refresh the image.
+Local Docker commands may reuse a cached image; refresh it after image changes
+with `docker pull ghcr.io/cruskell/dynamite-compiler-dev:latest`.
+
 ## Verified project builds
 
 The following upstream tags were clean-built with Dynamite compiler commit
