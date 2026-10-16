@@ -7106,3 +7106,228 @@ int main(void){{
     let output = compile_and_run_with_c_flags(&code, output_option, None, &[optimization]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
+
+struct DriverFixture(std::path::PathBuf);
+
+impl DriverFixture {
+    fn new() -> Self {
+        let name = Alphanumeric.sample_string(&mut rand::thread_rng(), 24);
+        let directory = std::path::PathBuf::from("tests/temp").join(format!("driver-{name}"));
+        fs::create_dir_all(&directory).unwrap();
+        Self(directory.canonicalize().unwrap())
+    }
+
+    fn write(&self, name: &str, code: &str) {
+        let path = self.0.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, code).unwrap();
+    }
+
+    fn cc(&self, arguments: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
+            .current_dir(&self.0)
+            .env("DYNAMITE_CLANG", "clang")
+            .args(arguments)
+            .output()
+            .unwrap()
+    }
+
+    fn success(&self, arguments: &[&str]) {
+        let result = self.cc(arguments);
+        assert!(result.status.success(), "{result:?}");
+    }
+
+    fn executable_status(&self, name: &str) -> Option<i32> {
+        Command::new(self.0.join(name)).status().unwrap().code()
+    }
+}
+
+impl Drop for DriverFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test_matrix(["1", "4"])]
+fn driver_parallel_translation_units_keep_types_and_symbols_local(jobs: &str) {
+    let files = DriverFixture::new();
+    files.write(
+        "first.c",
+        "struct S{int x;};int first(){struct S s={17};return s.x;}",
+    );
+    files.write(
+        "second.c",
+        "struct S{long x;long y;};int second(){struct S s={20,5};return s.x+s.y;}",
+    );
+    files.write("main.c", "#ifndef __DYNAMITE__\n#error wrong compiler profile\n#endif\nint first();int second();int main(){return first()+second();}");
+    files.success(&[
+        "--jobs", jobs, "-O2", "-MMD", "first.c", "second.c", "main.c", "-o", "program",
+    ]);
+    assert_eq!(files.executable_status("program"), Some(42));
+    for index in 0..3 {
+        let deps = fs::read_to_string(files.0.join(format!("program-{index}.d"))).unwrap();
+        assert!(deps.starts_with("program:"), "{deps}");
+    }
+}
+
+#[test]
+fn driver_compiles_objects_and_assembly_and_links_existing_inputs() {
+    let files = DriverFixture::new();
+    files.write("source.c", "int main(){return 42;}");
+    files.success(&["-c", "source.c"]);
+    assert!(files.0.join("source.o").is_file());
+    files.success(&["source.o", "-o", "from_object"]);
+    assert_eq!(files.executable_status("from_object"), Some(42));
+    files.success(&["-S", "-O2", "source.c", "-o", "source.s"]);
+    files.success(&["source.s", "-o", "from_assembly"]);
+    assert_eq!(files.executable_status("from_assembly"), Some(42));
+}
+
+#[test]
+fn driver_dependency_files_track_relative_headers_and_escape_targets() {
+    let files = DriverFixture::new();
+    files.write("forced.h", "#define BASE 17\n");
+    files.write("include/value.h", "#define VALUE 25\n");
+    files.write(
+        "nested/source.c",
+        "#include \"value.h\"\nint value(){return BASE+VALUE;}",
+    );
+    files.success(&[
+        "-c",
+        "nested/source.c",
+        "-include",
+        "forced.h",
+        "-iquote",
+        "include",
+        "-MMD",
+        "-MP",
+        "-MF",
+        "deps.d",
+        "-o",
+        "result object.o",
+    ]);
+    files.write("Makefile", "include deps.d\nresult\\ object.o:\n\t@false\n");
+    let make = || {
+        Command::new("make")
+            .current_dir(&files.0)
+            .args(["-q", "result object.o"])
+            .output()
+            .unwrap()
+    };
+    let result = make();
+    assert_eq!(result.status.code(), Some(0), "{result:?}");
+    let header = fs::File::options()
+        .write(true)
+        .open(files.0.join("include/value.h"))
+        .unwrap();
+    header
+        .set_times(
+            fs::FileTimes::new()
+                .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2)),
+        )
+        .unwrap();
+    assert_eq!(make().status.code(), Some(1));
+    fs::remove_file(files.0.join("include/value.h")).unwrap();
+    assert_eq!(make().status.code(), Some(1));
+}
+
+#[test]
+fn driver_dependency_modes_distinguish_system_headers() {
+    let files = DriverFixture::new();
+    files.write("system/value.h", "#define VALUE 42\n");
+    files.write("source.c", "#include <value.h>\nint value(){return VALUE;}");
+    for (mode, system) in [("-MD", true), ("-MMD", false)] {
+        files.success(&["-c", "source.c", "-isystem", "system", mode]);
+        let deps = fs::read_to_string(files.0.join("source.d")).unwrap();
+        assert_eq!(deps.contains("value.h"), system, "{deps}");
+        assert!(deps.contains("source.c"), "{deps}");
+    }
+    files.write("invalid.c", "int invalid = ;");
+    files.success(&["-MM", "invalid.c", "-MF", "invalid.d"]);
+    assert!(files.0.join("invalid.d").is_file());
+    assert!(!files.0.join("invalid.o").exists());
+}
+
+#[test]
+fn driver_preserves_static_library_order_and_separates_link_flags() {
+    let files = DriverFixture::new();
+    files.write("helper.c", "int helper(){return 42;}");
+    files.write("main.c", "int helper();int main(){return helper();}");
+    files.success(&["-c", "helper.c"]);
+    assert!(
+        Command::new("ar")
+            .current_dir(&files.0)
+            .args(["crs", "libhelper.a", "helper.o"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    files.success(&["-Werror", "main.c", "-L.", "-lhelper", "-o", "program"]);
+    assert_eq!(files.executable_status("program"), Some(42));
+}
+
+#[test]
+fn driver_diagnostics_keep_original_header_locations() {
+    let files = DriverFixture::new();
+    files.write("include/problem.h", "\n\nint invalid = ;\n");
+    files.write("nested/source.c", "#include <problem.h>\n");
+    let result = files.cc(&["-c", "nested/source.c", "-Iinclude"]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        error.contains("include/problem.h") && error.contains("int invalid = ;"),
+        "{error}"
+    );
+    files.write(
+        "warning.c",
+        "#warning expected_driver_warning\nint value;\n",
+    );
+    let warning = files.cc(&["-c", "warning.c"]);
+    assert!(warning.status.success(), "{warning:?}");
+    assert!(String::from_utf8_lossy(&warning.stderr).contains("expected_driver_warning"));
+    let rejected = files.cc(&["-Werror", "-c", "warning.c", "-o", "rejected.o"]);
+    assert!(!rejected.status.success(), "{rejected:?}");
+    assert!(!files.0.join("rejected.o").exists());
+}
+
+#[test]
+fn driver_never_falls_back_to_clang_for_unsupported_c() {
+    let files = DriverFixture::new();
+    files.write(
+        "unsupported.c",
+        "_Atomic(int) value;int main(){return value;}",
+    );
+    let result = files.cc(&["-std=c11", "-c", "unsupported.c"]);
+    assert!(!result.status.success(), "{result:?}");
+    assert!(!files.0.join("unsupported.o").exists());
+    files.write("supported.c", "int helper(){return 42;}");
+    let result = files.cc(&[
+        "--jobs",
+        "2",
+        "unsupported.c",
+        "supported.c",
+        "-o",
+        "program",
+    ]);
+    assert!(!result.status.success(), "{result:?}");
+    assert!(!files.0.join("program").exists());
+}
+
+#[test]
+fn driver_rejects_colliding_outputs_and_unsupported_frontend_modes() {
+    let files = DriverFixture::new();
+    files.write("one/source.c", "int one(){return 1;}");
+    files.write("two/source.c", "int two(){return 2;}");
+    files.write("wrong.so.cpp", "int main(){auto value=42;return value;}");
+    for arguments in [
+        vec!["--jobs", "0", "-c", "one/source.c"],
+        vec!["--jobs", "4", "-c", "one/source.c", "two/source.c"],
+        vec!["-c", "one/source.c", "two/source.c", "-o", "one.o"],
+        vec!["-x", "c++", "one/source.c"],
+        vec!["wrong.so.cpp", "-o", "wrong"],
+        vec!["@arguments"],
+    ] {
+        let result = files.cc(&arguments);
+        assert!(!result.status.success(), "{result:?}");
+    }
+}

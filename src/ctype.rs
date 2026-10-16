@@ -87,6 +87,9 @@ impl StructType {
     pub fn members(&self) -> Vec<StructMember> {
         self.definition().borrow().members.clone()
     }
+    pub fn member(&self, index: usize) -> StructMember {
+        self.definition().borrow().members[index].clone()
+    }
     pub fn visible_members(&self) -> Vec<(String, Vec<usize>)> {
         self.members()
             .iter()
@@ -111,9 +114,22 @@ impl StructType {
             .collect()
     }
     pub fn member_path(&self, name: &str) -> Option<Vec<usize>> {
-        self.visible_members()
-            .into_iter()
-            .find_map(|(member, path)| (member == name).then_some(path))
+        let definition = self.definition();
+        let definition = definition.borrow();
+        for (index, member) in definition.members.iter().enumerate() {
+            if member.anonymous {
+                let Type::Struct(child) = member.ty.unqualified() else {
+                    unreachable!()
+                };
+                if let Some(mut path) = child.member_path(name) {
+                    path.insert(0, index);
+                    return Some(path);
+                }
+            } else if member.name == name {
+                return Some(vec![index]);
+            }
+        }
+        None
     }
 }
 impl PartialEq for StructType {

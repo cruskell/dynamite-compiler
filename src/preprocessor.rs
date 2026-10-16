@@ -168,6 +168,15 @@ fn compiler_macros(command: &mut Command) {
     }
 }
 
+/// Create a preprocessing command with Dynamite's capability macros.
+/// Add input, include, macro, and dependency arguments before running it.
+pub fn clang_command(clang: &str) -> Command {
+    let mut command = Command::new(clang);
+    command.args(["-E", "-fno-blocks"]);
+    compiler_macros(&mut command);
+    command
+}
+
 struct IncludeDirectory(std::path::PathBuf);
 
 impl IncludeDirectory {
@@ -304,6 +313,33 @@ pub fn preprocess_with_options(
     path: Option<&Path>,
     options: &PreprocessorOptions,
 ) -> Result<Preprocessed, String> {
+    preprocess_input(code, path, options, None)
+}
+
+pub(crate) fn preprocess_file(
+    path: &Path,
+    clang: &str,
+    arguments: &[String],
+) -> Result<Preprocessed, String> {
+    let code = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    preprocess_input(
+        &code,
+        Some(path),
+        &PreprocessorOptions {
+            system_headers: true,
+            ..Default::default()
+        },
+        Some((clang, arguments)),
+    )
+}
+
+fn preprocess_input(
+    code: &str,
+    path: Option<&Path>,
+    options: &PreprocessorOptions,
+    file_input: Option<(&str, &[String])>,
+) -> Result<Preprocessed, String> {
     let absolute_path = path
         .map(|path| {
             if path.is_absolute() {
@@ -319,7 +355,8 @@ pub fn preprocess_with_options(
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| "<stdin>".to_string());
     let source = Source::new(name.clone(), code.to_string());
-    if !code.contains('#')
+    if file_input.is_none()
+        && !code.contains('#')
         && !code.contains("__")
         && options.definitions.is_empty()
         && options.undefinitions.is_empty()
@@ -345,9 +382,8 @@ pub fn preprocess_with_options(
     } else {
         Some(IncludeDirectory::new()?)
     };
-    let mut command = Command::new("clang");
-    command.args(["-E", "-x", "c", "-fno-blocks", "-"]);
-    compiler_macros(&mut command);
+    let mut command = clang_command(file_input.map_or("clang", |(clang, _)| clang));
+    command.args(["-x", "c"]);
     if let Some(includes) = &includes {
         command.arg("-nostdinc").arg("-I").arg(&includes.0);
     }
@@ -356,7 +392,9 @@ pub fn preprocess_with_options(
         .and_then(Path::parent)
         .filter(|path| !path.as_os_str().is_empty())
     {
-        command.current_dir(parent).arg("-iquote").arg(parent);
+        if file_input.is_none() {
+            command.current_dir(parent).arg("-iquote").arg(parent);
+        }
     }
     for directory in &options.include_directories {
         let directory = if directory.is_absolute() {
@@ -374,27 +412,38 @@ pub fn preprocess_with_options(
     for name in &options.undefinitions {
         command.arg("-U").arg(name);
     }
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("preprocessing requires clang in PATH: {error}"))?;
-    let input = format!(
-        "#line 1 \"{}\"\n{}",
-        name.replace('\\', "\\\\").replace('"', "\\\""),
-        code
-    );
-    let mut stdin = child.stdin.take().unwrap();
-    let output = std::thread::scope(|scope| {
-        let writer = scope.spawn(move || stdin.write_all(input.as_bytes()));
-        let output = child.wait_with_output();
-        let written = writer.join().unwrap();
-        output.and_then(|output| written.map(|_| output))
-    })
+    let output = if let Some((_, arguments)) = file_input {
+        command
+            .args(arguments)
+            .arg(absolute_path.as_ref().unwrap())
+            .output()
+    } else {
+        command.arg("-");
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("preprocessing requires clang in PATH: {error}"))?;
+        let input = format!(
+            "#line 1 \"{}\"\n{}",
+            name.replace('\\', "\\\\").replace('"', "\\\""),
+            code
+        );
+        let mut stdin = child.stdin.take().unwrap();
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(move || stdin.write_all(input.as_bytes()));
+            let output = child.wait_with_output();
+            let written = writer.join().unwrap();
+            output.and_then(|output| written.map(|_| output))
+        })
+    }
     .map_err(|error| format!("failed to preprocess source: {error}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    if file_input.is_some() {
+        let _ = std::io::stderr().write_all(&output.stderr);
     }
     let expanded = String::from_utf8(output.stdout)
         .map_err(|error| format!("preprocessor returned invalid UTF-8: {error}"))?;
@@ -431,7 +480,7 @@ pub fn preprocess_with_options(
                 current_source = *source_ids.entry(filename.clone()).or_insert_with(|| {
                     let index = result.sources.len();
                     let filename_path = Path::new(&filename);
-                    let resolved = if filename_path.is_absolute() {
+                    let resolved = if filename_path.is_absolute() || file_input.is_some() {
                         filename_path.to_path_buf()
                     } else {
                         absolute_path
