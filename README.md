@@ -70,6 +70,39 @@ and backend time-trace/report requests continue to use the Clang executable.
 C parsing and semantic checks always run through Dynamite.
 
 The ordinary build retains its subprocess backend and needs no LLVM SDK.
+On Linux x86_64, standalone `-M`/`-MM` dependency scans use Dynamite's Rust
+preprocessor by default for supported host options. It scans directives and
+includes without expanding unrelated function bodies. Stateful macros such as
+`__COUNTER__` and `_Pragma` still execute when they can affect the dependency
+result. Independent inputs share immutable header scans and directive tokens;
+macro definitions, include guards, counters, and dependency lists reset per input.
+Parameter references are indexed when a macro is defined, expanded arguments are
+memoized within an invocation, and header/dependency membership uses hash tables.
+
+The same implementation can preprocess C compilation and `-E` without any
+Clang/LLVM SDK calls:
+
+```sh
+DYNAMITE_PREPROCESSOR=native make -j4 CC=/absolute/path/to/target/release/dynamite-cc
+```
+
+This opt-in currently supports native Linux x86_64, GNU/C89 through C17,
+object/function/variadic macros, stringification, token pasting, conditional
+expressions, quoted/system includes, `include_next`, `pragma once`, and
+`-I`/`-isystem`/`-iquote`/`-idirafter`/`-D`/`-U`/`-include`/`-imacros`.
+Its compiler headers are embedded in Dynamite; OS libc headers remain external.
+Unsupported native options return an error. It is not a complete replacement
+for every Clang/GNU preprocessing extension; cross targets, sysroots, macro
+dumps, and date/time predefined macros are outside its current scope.
+`DYNAMITE_PREPROCESSOR=clang` selects Clang for all preprocessing, including
+standalone dependency scans. Ordinary C compilation continues to use Clang
+preprocessing by default: the native path builds Redis and Git, but full native
+preprocessing currently regresses Git's total build time.
+
+This change removes Clang from the selected preprocessing stages. LLVM
+IR-to-object lowering, assembly, and linking still use the existing external
+toolchain; libc/libm/pthread dependencies of compiled programs are unchanged.
+
 Single-input `-c`/`-S` CLI processes retain AST and token storage until exit to
 avoid individual deallocations. Multi-input and library compilation release it.
 Library type constructors now use `Rc` for recursive children and parameter
@@ -78,7 +111,7 @@ lists, and token spellings use `SmolStr`; `.into()` converts owned values.
 The driver calls Dynamite's frontend directly, then uses Clang to lower LLVM IR
 and link. It removes the Python adapter and extra Dynamite process from each
 translation unit. File preprocessing also generates `-MD`/`-MMD` dependency
-files in the same Clang invocation, without a second dependency scan. Clang
+files in the same preprocessing invocation, without a second dependency scan. Clang
 never compiles C as a fallback when Dynamite rejects a source file.
 
 Independent C files can be compiled concurrently in a single invocation:

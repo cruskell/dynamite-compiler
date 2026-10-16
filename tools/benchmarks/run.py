@@ -65,6 +65,7 @@ def main():
                                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                               for name, path in compilers.items()},
         "jobs": args.jobs, "runs": args.runs, "clang_time_traces": not args.no_trace,
+        "dynamite_preprocessor": os.environ.get("DYNAMITE_PREPROCESSOR", "auto"),
         "sources": {name: {"path": str(path), "commit": output(["git", "rev-parse", "HEAD"], path),
                            "status": output(["git", "status", "--porcelain"], path)}
                     for name, path in sources.items()},

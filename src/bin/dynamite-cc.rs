@@ -492,6 +492,66 @@ fn run(arguments: &[String]) -> Result<i32, String> {
             .into()
     });
     if args.preprocess_only {
+        let preprocessor = std::env::var("DYNAMITE_PREPROCESSOR").unwrap_or_default();
+        let native_backend_option = |arg: &String| {
+            arg.starts_with("-O")
+                || arg.starts_with("-W")
+                || arg.starts_with("-g")
+                || matches!(arg.as_str(), "-pthread" | "-pedantic")
+        };
+        let native_options = args.backend.iter().all(native_backend_option)
+            && !args
+                .preprocessing
+                .iter()
+                .any(|arg| arg.starts_with("--sysroot") || arg.starts_with("-isysroot"));
+        let native_dependencies = cfg!(all(target_os = "linux", target_arch = "x86_64"))
+            && preprocessor != "clang"
+            && native_options
+            && !args.inputs.is_empty()
+            && args.inputs.iter().all(|input| input.name != "-")
+            && args
+                .forwarded
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "-M" | "-MM"));
+        if preprocessor == "native" || native_dependencies {
+            if args.inputs.is_empty() {
+                return Err("native preprocessing requires a source file".into());
+            }
+            let _timer = Timer::new(if native_dependencies {
+                "dependency_scan"
+            } else {
+                "preprocess_only"
+            });
+            if let Some(option) = args.backend.iter().find(|arg| !native_backend_option(arg)) {
+                return Err(format!("unsupported native preprocessing option: {option}"));
+            }
+            let mut preprocessing = args.preprocessing.clone();
+            for flag in ["-M", "-MM", "-P", "-MP"] {
+                if args.forwarded.iter().any(|arg| arg == flag) {
+                    preprocessing.push(flag.into());
+                }
+            }
+            if let Some(file) = &args.dependency_file {
+                preprocessing.extend(["-MF".into(), file.clone()]);
+            }
+            preprocessing.extend(args.dependency_targets.clone());
+            let paths = args
+                .inputs
+                .iter()
+                .map(|input| PathBuf::from(&input.name))
+                .collect::<Vec<_>>();
+            let output =
+                dynamite_compiler::preprocessor::preprocess_files_native(&paths, &preprocessing)?;
+            if let Some(path) = &args.output {
+                fs::write(path, output).map_err(|e| e.to_string())?;
+            } else {
+                use std::io::Write;
+                std::io::stdout()
+                    .write_all(output.as_bytes())
+                    .map_err(|e| e.to_string())?;
+            }
+            return Ok(0);
+        }
         let mut command = dynamite_compiler::preprocessor::clang_command(&clang);
         return status(command.args(&args.forwarded));
     }
