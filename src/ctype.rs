@@ -517,7 +517,24 @@ impl Type {
     }
 
     /// Normalize an owned type after validation, reusing its child storage.
+    #[inline]
     pub(crate) fn lower_for_codegen(&mut self) {
+        // Scalar annotations need no recursive normalization.
+        match self {
+            Self::Qualified(..)
+            | Self::Aligned(..)
+            | Self::Vector(..)
+            | Self::Ptr(..)
+            | Self::Arr(..)
+            | Self::Vla(..)
+            | Self::Func(..)
+            | Self::VariadicFunc(..)
+            | Self::Enum(..) => self.lower_compound_for_codegen(),
+            _ => {}
+        }
+    }
+
+    fn lower_compound_for_codegen(&mut self) {
         if matches!(self, Self::Qualified(..)) {
             let Self::Qualified(child, _) = std::mem::take(self) else {
                 unreachable!()

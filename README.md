@@ -129,6 +129,10 @@ lists, and token spellings use `SmolStr`; `.into()` converts owned values.
 `vec![...].into()`, borrow bytes with `.as_slice()`, or consume it with
 `.into_vec()`. Clones share literal bytes until mutation. `Token.packing` is
 `Option<u8>` for the supported pragma pack limits (1, 2, 4, 8, and 16).
+Arithmetic node constructors infer scalar results into the existing `Node.cty`
+field, avoiding repeated subtree walks. Library callers that mutate arithmetic
+operands must call `refresh_arithmetic_type()` after refreshing changed children.
+Nodes built directly without an inferred type still resolve from their operands.
 
 The driver calls Dynamite's frontend directly, then uses the selected external
 backend to lower LLVM IR and link. It removes the Python adapter and extra Dynamite process from each

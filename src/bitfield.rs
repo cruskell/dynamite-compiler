@@ -235,26 +235,31 @@ fn write(mut target: Node, value: Node, offset: &mut usize) -> Node {
 
 /// Lower bit-field access to scalar expressions shared by all output backends.
 pub fn lower(node: &mut Node, offset: &mut usize) {
+    lower_with_type_changes(node, offset);
+}
+
+// Bit-field reads can change promotions, so refresh types along rewritten paths.
+fn lower_with_type_changes(node: &mut Node, offset: &mut usize) -> bool {
     if node.nt == NodeType::Addr && node.lhs.as_ref().is_some_and(|lhs| lhs.bit_field.is_some()) {
         // Only internal compound-assignment address captures reach this path.
         *node = *node.lhs.take().unwrap().lhs.unwrap();
-        lower(node, offset);
-        return;
+        lower_with_type_changes(node, offset);
+        return true;
     }
     if node.nt == NodeType::Assign && node.lhs.as_ref().is_some_and(|lhs| lhs.bit_field.is_some()) {
         let mut target = *node.lhs.take().unwrap();
-        lower(target.lhs.as_mut().unwrap(), offset);
+        lower_with_type_changes(target.lhs.as_mut().unwrap(), offset);
         let mut value = *node.rhs.take().unwrap();
-        lower(&mut value, offset);
+        lower_with_type_changes(&mut value, offset);
         *node = write(target, value, offset);
-        return;
+        return true;
     }
     if matches!(node.nt, NodeType::SuffixIncr | NodeType::SuffixDecr)
         && node.lhs.as_ref().is_some_and(|lhs| lhs.bit_field.is_some())
     {
         let source = node.clone();
         let mut target = *node.lhs.take().unwrap();
-        lower(target.lhs.as_mut().unwrap(), offset);
+        lower_with_type_changes(target.lhs.as_mut().unwrap(), offset);
         let pointer = temporary(
             target.lhs.as_ref().unwrap().resolve_type().unwrap(),
             offset,
@@ -283,8 +288,9 @@ pub fn lower(node: &mut Node, offset: &mut usize) {
             offset,
         );
         *node = sequence(vec![save_pointer, save_value, update, previous], &source);
-        return;
+        return true;
     }
+    let mut changed = false;
     for child in [
         &mut node.lhs,
         &mut node.rhs,
@@ -297,12 +303,17 @@ pub fn lower(node: &mut Node, offset: &mut usize) {
     .into_iter()
     .flatten()
     {
-        lower(child, offset);
+        changed |= lower_with_type_changes(child, offset);
     }
     for child in node.children.iter_mut().chain(&mut node.args) {
-        lower(child, offset);
+        changed |= lower_with_type_changes(child, offset);
     }
     if node.bit_field.is_some() {
         *node = read(std::mem::take(node), offset);
+        return true;
     }
+    if changed {
+        node.refresh_arithmetic_type();
+    }
+    changed
 }

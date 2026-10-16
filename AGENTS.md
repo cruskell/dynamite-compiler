@@ -39,6 +39,9 @@ They do not imply full C compatibility or permanently freeze the architecture.
 - Evolve incrementally: implement the smallest coherent change, review its
   effects across backends, and document limitations. Do not infer unsupported
   language guarantees or project goals from the C-like syntax alone.
+- When improving performance, always consider more efficient algorithms and
+  data structures, including worst-case complexity and repeated work. Measure
+  representative workloads and preserve semantics when choosing a design.
 
 ## Project Structure
 

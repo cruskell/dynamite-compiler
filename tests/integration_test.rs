@@ -827,6 +827,36 @@ fn it_supports_floating_point(code: &str, output_option: &str) {
     assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
+#[test_matrix(["asm", "llvm"])]
+fn arithmetic_type_annotations_preserve_long_expression_values(output_option: &str) {
+    let output_option = output_option.to_owned();
+    // The recursive backends need a larger stack for deep ASTs in debug builds.
+    std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let expression = std::iter::repeat_n("x", 512).collect::<Vec<_>>().join("+");
+            let code = format!(
+                "long f(long x){{return {expression};}}int main(void){{return f(7)!=3584;}}"
+            );
+            assert_eq!(
+                compile_and_run(&code, &output_option).status.code(),
+                Some(0)
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test_matrix([
+    "int main(void){unsigned long u=4294967296UL;int x=-1;double y=.5;return ((u+x)*2+y!=8589934590.5);}",
+    "int f(int n){int a[2][n];int (*p)[n]=a;unsigned long x=(p+1-p)+4294967295U;return x!=4294967296UL;}int main(void){return f(3);}",
+    "struct S{unsigned x:3;};int main(void){struct S s={2};double x=(s.x+1)*.5;return x!=1.5;}"
+], ["asm", "llvm"])]
+fn arithmetic_types_follow_promotions_and_lowering(code: &str, output_option: &str) {
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
+}
+
 #[test_matrix([
     "int main(){double n=0.0/0.0;return (n!=n && !(n<n) && !(n==n) && !(n<=n))-1;}",
     "int main(){double z=-0.0;return (_Bool)z;}",
