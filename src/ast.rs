@@ -96,9 +96,10 @@ impl Declarator {
                 } else {
                     Type::Func(types, Box::new(base))
                 };
-                let function_type = ty.clone();
+                // A direct name keeps this signature; nested declarators supply their own parameters.
+                let direct = matches!(inner.as_ref(), Self::Name(_));
                 let (name, ty, nested, nested_scope, nested_stars) = inner.resolve(ty);
-                let (parameters, scope, stars) = if ty == function_type {
+                let (parameters, scope, stars) = if direct {
                     (parameters, scope, stars)
                 } else {
                     (nested, nested_scope, nested_stars)

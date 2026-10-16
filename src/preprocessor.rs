@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs,
     io::Write,
@@ -277,6 +278,7 @@ impl Source {
 }
 
 struct Origin {
+    /// Start of a contiguous run with unchanged source and line numbering.
     start: usize,
     source: usize,
     line: usize,
@@ -297,16 +299,29 @@ impl Preprocessed {
         };
         let source = &self.sources[origin.source];
         let text = source.text();
+        let offset = pos.min(self.code.len());
+        // A trailing newline belongs to the last mapped line unless an EOF origin exists.
+        let offset = if offset == self.code.len() && self.code.ends_with('\n') {
+            offset.saturating_sub(1).max(origin.start)
+        } else {
+            offset
+        };
+        let prefix = &self.code.as_bytes()[origin.start..offset];
+        let line = origin.line + prefix.iter().filter(|byte| **byte == b'\n').count();
         let start = text
             .lines
-            .get(origin.line.saturating_sub(1))
+            .get(line.saturating_sub(1))
             .copied()
             .unwrap_or(text.code.len());
         let end = text.code[start..]
             .find('\n')
             .map(|len| start + len)
             .unwrap_or(text.code.len());
-        let mut column = pos.saturating_sub(origin.start).min(end - start);
+        let line_start = prefix
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(origin.start, |offset| origin.start + offset + 1);
+        let mut column = pos.saturating_sub(line_start).min(end - start);
         while !text.code.is_char_boundary(start + column) {
             column -= 1;
         }
@@ -397,17 +412,18 @@ fn preprocess_input(
         && options.definitions.is_empty()
         && options.undefinitions.is_empty()
     {
-        let origins = source
-            .text()
-            .lines
-            .iter()
-            .enumerate()
-            .map(|(i, start)| Origin {
-                start: *start,
+        let mut origins = vec![Origin {
+            start: 0,
+            source: 0,
+            line: 1,
+        }];
+        if code.ends_with('\n') {
+            origins.push(Origin {
+                start: code.len(),
                 source: 0,
-                line: i + 1,
-            })
-            .collect();
+                line: source.text().lines.len(),
+            });
+        }
         return Ok(Preprocessed {
             code: code.to_string(),
             sources: vec![source],
@@ -495,6 +511,7 @@ fn preprocess_input(
     let mut source_ids = HashMap::from([(name, 0)]);
     let mut current_source = 0;
     let mut current_line = 1;
+    let mut new_origin = true;
     for line in expanded.split_inclusive('\n') {
         if let Some(marker) = line.strip_prefix("# ") {
             let Some((number, rest)) = marker.split_once(' ') else {
@@ -513,13 +530,21 @@ fn preprocess_input(
                     }
                     escaped = ch == '\\' && !escaped;
                 }
-                let bytes = crate::tokenizer::decode_string_literal(&rest[..end])
-                    .ok_or("invalid preprocessor file marker")?;
-                let filename =
-                    String::from_utf8(bytes).map_err(|_| "invalid preprocessor filename")?;
-                current_source = *source_ids.entry(filename.clone()).or_insert_with(|| {
+                let spelling = &rest[..end];
+                let filename = if spelling.contains('\\') {
+                    let bytes = crate::tokenizer::decode_string_literal(spelling)
+                        .ok_or("invalid preprocessor file marker")?;
+                    Cow::Owned(
+                        String::from_utf8(bytes).map_err(|_| "invalid preprocessor filename")?,
+                    )
+                } else {
+                    Cow::Borrowed(spelling)
+                };
+                current_source = if let Some(index) = source_ids.get(filename.as_ref()) {
+                    *index
+                } else {
                     let index = result.sources.len();
-                    let filename_path = Path::new(&filename);
+                    let filename_path = Path::new(filename.as_ref());
                     let resolved = if filename_path.is_absolute() || file_input.is_some() {
                         filename_path.to_path_buf()
                     } else {
@@ -529,6 +554,8 @@ fn preprocess_input(
                             .unwrap_or(Path::new("."))
                             .join(filename_path)
                     };
+                    let filename = filename.into_owned();
+                    source_ids.insert(filename.clone(), index);
                     let source = if file_input.is_some() {
                         // File compilation needs included text only when rendering diagnostics.
                         Source::deferred(filename, resolved)
@@ -537,16 +564,20 @@ fn preprocess_input(
                     };
                     result.sources.push(source);
                     index
-                });
+                };
                 current_line = number;
+                new_origin = true;
                 continue;
             }
         }
-        result.origins.push(Origin {
-            start: result.code.len(),
-            source: current_source,
-            line: current_line,
-        });
+        if new_origin {
+            result.origins.push(Origin {
+                start: result.code.len(),
+                source: current_source,
+                line: current_line,
+            });
+            new_origin = false;
+        }
         result.code.push_str(line);
         current_line += 1;
     }
@@ -582,6 +613,70 @@ mod tests {
         let (line, _, text) = expanded.line_from_position(position);
         assert_eq!(line, 3);
         assert_eq!(text, "int main() { return VALUE; }");
+    }
+
+    #[test]
+    fn plain_source_locations_preserve_lines_columns_and_eof() {
+        for code in [
+            "int first;\n\n// café\nint last;",
+            "int first;\n\n// café\nint last;\n",
+        ] {
+            let expanded = preprocess(code, None).unwrap();
+            let printer = ErrorPrinter::new(code);
+            for position in 0..=code.len() {
+                let mut boundary = position;
+                while !code.is_char_boundary(boundary) {
+                    boundary -= 1;
+                }
+                assert_eq!(
+                    expanded.line_from_position(position),
+                    printer.line_from_position(boundary)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_origins_preserve_nested_include_lines_and_eof() {
+        let directory = IncludeDirectory::new().unwrap();
+        fs::write(directory.0.join("child.h"), "\n\nint child;\n").unwrap();
+        fs::write(
+            directory.0.join("values.h"),
+            format!(
+                "{}#include \"child.h\"\n\nint after_header;\n",
+                "int repeated;\n".repeat(400)
+            ),
+        )
+        .unwrap();
+        let main = directory.0.join("main.c");
+        fs::write(&main, "#include \"values.h\"\n\n\nint after_main;\n").unwrap();
+        let expanded = preprocess_file(&main, "clang", &[]).unwrap();
+        for (name, row, file) in [
+            ("int repeated;", 1, "values.h"),
+            ("int child;", 3, "child.h"),
+            ("int after_header;", 403, "values.h"),
+            ("int after_main;", 4, "main.c"),
+        ] {
+            let position = expanded.code.find(name).unwrap();
+            assert_eq!(expanded.line_from_position(position), (row, 0, name));
+            assert!(expanded.location(position).0.name.ends_with(file));
+        }
+        assert_eq!(
+            expanded.line_from_position(expanded.code.len()),
+            (4, "int after_main;".len(), "int after_main;")
+        );
+        assert!(expanded.origins.len() < 20);
+    }
+
+    #[test]
+    fn escaped_marker_filenames_preserve_source_identity() {
+        let directory = IncludeDirectory::new().unwrap();
+        let main = directory.0.join("quoted\"back\\café.c");
+        fs::write(&main, "#define VALUE 7\n\nint value=VALUE;\n\nint last;\n").unwrap();
+        let expanded = preprocess_file(&main, "clang", &[]).unwrap();
+        let position = expanded.code.find("int last;").unwrap();
+        assert_eq!(expanded.line_from_position(position), (5, 0, "int last;"));
+        assert_eq!(expanded.location(position).0.name, main.to_string_lossy());
     }
 
     #[test]

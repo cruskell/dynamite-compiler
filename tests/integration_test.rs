@@ -473,6 +473,26 @@ fn it_supports_function_pointers(case: (&str, i32), output_option: &str) {
     assert_eq!(output.status.code(), Some(case.1), "{:?}", output);
 }
 
+#[test_matrix(["asm", "llvm"], ["-O0", "-O2"])]
+fn nested_function_declarators_keep_the_named_functions_parameters(
+    output_option: &str,
+    optimization: &str,
+) {
+    let code = r#"
+int values[3]={7,11,13};
+int (*array_result(double x))[3]{return &values;}
+int (*(*choose(int index))(double))[3]{return index==2?array_result:0;}
+int (*(*choose(int index))(double))[3];
+int main(){return (*choose(2)(3.5))[1]-11;}
+"#;
+    assert_eq!(
+        compile_and_run_with_c_flags(code, output_option, None, &[optimization])
+            .status
+            .code(),
+        Some(0)
+    );
+}
+
 #[test_matrix([
     ("struct S { char a; int b; char c; }; int main() { struct S s = {1, 2, 3}; return sizeof(s) + s.a + s.b + s.c; }", 18),
     ("struct S { int a; int b; }; struct S s = {7}; int main() { return s.a + s.b; }", 7),
