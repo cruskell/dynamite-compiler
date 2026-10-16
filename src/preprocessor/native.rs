@@ -1556,14 +1556,11 @@ fn preprocess_cached(
     arguments: &[String],
     headers: &mut HashMap<PathBuf, Header>,
 ) -> Result<String, String> {
-    if !cfg!(any(
-        all(target_arch = "x86_64", target_os = "linux"),
-        all(
-            target_os = "macos",
-            any(target_arch = "aarch64", target_arch = "x86_64")
-        )
+    if !cfg!(all(
+        any(target_os = "linux", target_os = "macos"),
+        any(target_arch = "aarch64", target_arch = "x86_64")
     )) {
-        return Err("native preprocessing supports Linux x86_64 and macOS ARM64/x86_64".into());
+        return Err("native preprocessing supports Linux/macOS ARM64/x86_64".into());
     }
     let bundled = if options.system_headers {
         Some(super::IncludeDirectory::native()?)
@@ -1627,7 +1624,9 @@ fn preprocess_cached(
                 sdk = Some(PathBuf::from(value("-isysroot")?))
             }
             _ if arg.starts_with("-iframework") => {
-                frameworks.push(PathBuf::from(value("-iframework")?))
+                let root = PathBuf::from(value("-iframework")?);
+                system_includes.push(root.clone());
+                frameworks.push(root)
             }
             _ if arg.starts_with("-F") => frameworks.push(PathBuf::from(value("-F")?)),
             _ if arg.starts_with("-isystem") => {
@@ -1680,7 +1679,11 @@ fn preprocess_cached(
         } else {
             system_paths.extend([
                 PathBuf::from("/usr/local/include"),
-                PathBuf::from("/usr/include/x86_64-linux-gnu"),
+                PathBuf::from(if cfg!(target_arch = "aarch64") {
+                    "/usr/include/aarch64-linux-gnu"
+                } else {
+                    "/usr/include/x86_64-linux-gnu"
+                }),
                 PathBuf::from("/usr/include"),
             ]);
         }

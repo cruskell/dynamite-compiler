@@ -1,0 +1,2005 @@
+{
+  "metadata": {
+    "candidate_commit": "dc3084b42502df3c8cde7346896fd6249b1a5da2",
+    "baseline_commit": "15d0267c35e107370d4fe9a47e87fa70f5854209",
+    "host": "Darwin 25.5.0 arm64",
+    "rust": "rustc 1.86.0 (05f9846f8 2025-03-31)",
+    "clang": "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.5.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin",
+    "llvm": "Homebrew LLVM version 20.1.5\n  Optimized build.\n  Default target: arm64-apple-darwin25.5.0\n  Host CPU: apple-m2\n\n  Registered Targets:\n    aarch64     - AArch64 (little endian)\n    aarch64_32  - AArch64 (little endian ILP32)\n    aarch64_be  - AArch64 (big endian)\n    amdgcn      - AMD GCN GPUs\n    arm         - ARM\n    arm64       - ARM64 (little endian)\n    arm64_32    - ARM64 (little endian ILP32)\n    armeb       - ARM (big endian)\n    avr         - Atmel AVR Microcontroller\n    bpf         - BPF (host endian)\n    bpfeb       - BPF (big endian)\n    bpfel       - BPF (little endian)\n    hexagon     - Hexagon\n    lanai       - Lanai\n    loongarch32 - 32-bit LoongArch\n    loongarch64 - 64-bit LoongArch\n    mips        - MIPS (32-bit big endian)\n    mips64      - MIPS (64-bit big endian)\n    mips64el    - MIPS (64-bit little endian)\n    mipsel      - MIPS (32-bit little endian)\n    msp430      - MSP430 [experimental]\n    nvptx       - NVIDIA PTX 32-bit\n    nvptx64     - NVIDIA PTX 64-bit\n    ppc32       - PowerPC 32\n    ppc32le     - PowerPC 32 LE\n    ppc64       - PowerPC 64\n    ppc64le     - PowerPC 64 LE\n    r600        - AMD GPUs HD2XXX-HD6XXX\n    riscv32     - 32-bit RISC-V\n    riscv64     - 64-bit RISC-V\n    sparc       - Sparc\n    sparcel     - Sparc LE\n    sparcv9     - Sparc V9\n    spirv       - SPIR-V Logical\n    spirv32     - SPIR-V 32-bit\n    spirv64     - SPIR-V 64-bit\n    systemz     - SystemZ\n    thumb       - Thumb\n    thumbeb     - Thumb (big endian)\n    ve          - VE\n    wasm32      - WebAssembly 32-bit\n    wasm64      - WebAssembly 64-bit\n    x86         - 32-bit X86: Pentium-Pro and above\n    x86-64      - 64-bit X86: EM64T and AMD64\n    xcore       - XCore",
+    "sdk": "26.5",
+    "deployment_target": "11.0",
+    "flags": "-O2 -fno-omit-frame-pointer",
+    "jobs": 4,
+    "runs": 4,
+    "cache_policy": "Clean build artifacts; warm filesystem cache; alternating compiler order; no compiler caches or concurrent regression tests. Other host workloads were not controlled.",
+    "binaries": {
+      "driver-baseline": "d1fff53431e6d40972ad1e1d3b11dabc8cab8b75949a2b1a6bbcf1c375c58426",
+      "driver-final": "46e24ec9a5e93e35698df0d3339520660c2250d4cd02c5a0155ce4e6f50314ab"
+    },
+    "sources": {
+      "git": {
+        "tag": "v2.56.0",
+        "commit": "a018953688f1b10bddf91bff8747068f5f4746a4"
+      },
+      "redis": {
+        "tag": "8.10.2",
+        "commit": "498ecd0d6d007db11ddb3aea9428552598a78622"
+      }
+    },
+    "binary_code_commit": "200792e"
+  },
+  "status": "Non-regression is not established. Measurement stopped because host-load variation prevented a reliable wall-clock comparison; the mixed native/Clang path showed a slower Git median.",
+  "planned_rounds": 7,
+  "completed_balanced_rounds": 4,
+  "summary": {
+    "git": {
+      "baseline": {
+        "runs": 4,
+        "median_seconds": 45.79,
+        "range_seconds": [
+          24.28,
+          51.59
+        ],
+        "median_cpu_seconds": 158.28500000000003
+      },
+      "native_pp": {
+        "runs": 4,
+        "median_seconds": 67.43,
+        "range_seconds": [
+          42.26,
+          68.98
+        ],
+        "median_cpu_seconds": 185.25
+      },
+      "native_all": {
+        "runs": 4,
+        "median_seconds": 44.45,
+        "range_seconds": [
+          27.05,
+          60.42
+        ],
+        "median_cpu_seconds": 156.03
+      }
+    },
+    "redis": {
+      "baseline": {
+        "runs": 4,
+        "median_seconds": 29.59,
+        "range_seconds": [
+          20.58,
+          42.45
+        ],
+        "median_cpu_seconds": 80.395
+      },
+      "native_pp": {
+        "runs": 4,
+        "median_seconds": 21.405,
+        "range_seconds": [
+          14.97,
+          30.4
+        ],
+        "median_cpu_seconds": 68.71000000000001
+      },
+      "native_all": {
+        "runs": 4,
+        "median_seconds": 22.485,
+        "range_seconds": [
+          19.29,
+          30.56
+        ],
+        "median_cpu_seconds": 73.44
+      }
+    }
+  },
+  "all_completed_samples": [
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 1,
+      "seconds": 24.28,
+      "cpu_seconds": 83.93,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 1,
+      "seconds": 68.98,
+      "cpu_seconds": 177.27,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_all",
+      "iteration": 1,
+      "seconds": 47.52,
+      "cpu_seconds": 162.41,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "baseline",
+      "iteration": 1,
+      "seconds": 20.58,
+      "cpu_seconds": 61.53,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_pp",
+      "iteration": 1,
+      "seconds": 14.97,
+      "cpu_seconds": 53.94,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_all",
+      "iteration": 1,
+      "seconds": 21.56,
+      "cpu_seconds": 68.82000000000001,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 2,
+      "seconds": 42.26,
+      "cpu_seconds": 148.99,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_all",
+      "iteration": 2,
+      "seconds": 41.38,
+      "cpu_seconds": 149.65,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 2,
+      "seconds": 43.44,
+      "cpu_seconds": 151.29000000000002,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_pp",
+      "iteration": 2,
+      "seconds": 30.4,
+      "cpu_seconds": 79.58,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_all",
+      "iteration": 2,
+      "seconds": 30.56,
+      "cpu_seconds": 88.36,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "baseline",
+      "iteration": 2,
+      "seconds": 32.72,
+      "cpu_seconds": 83.4,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_all",
+      "iteration": 3,
+      "seconds": 60.42,
+      "cpu_seconds": 201.62,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 3,
+      "seconds": 51.59,
+      "cpu_seconds": 173.22,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 3,
+      "seconds": 67.41,
+      "cpu_seconds": 193.23,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_all",
+      "iteration": 3,
+      "seconds": 23.41,
+      "cpu_seconds": 77.88,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "baseline",
+      "iteration": 3,
+      "seconds": 26.46,
+      "cpu_seconds": 78.13,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_pp",
+      "iteration": 3,
+      "seconds": 18.22,
+      "cpu_seconds": 64.85,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_all",
+      "iteration": 4,
+      "seconds": 27.05,
+      "cpu_seconds": 92.58,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 4,
+      "seconds": 67.45,
+      "cpu_seconds": 195.53,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 4,
+      "seconds": 48.14,
+      "cpu_seconds": 165.28,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_all",
+      "iteration": 4,
+      "seconds": 19.29,
+      "cpu_seconds": 69.0,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_pp",
+      "iteration": 4,
+      "seconds": 24.59,
+      "cpu_seconds": 72.57000000000001,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "baseline",
+      "iteration": 4,
+      "seconds": 42.45,
+      "cpu_seconds": 82.66,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 5,
+      "seconds": 94.78,
+      "cpu_seconds": 215.51000000000002,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 5,
+      "seconds": 70.61,
+      "cpu_seconds": 195.67000000000002,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    }
+  ],
+  "translation_unit_sample": [
+    {
+      "source": [
+        "daemon.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000447084,
+        "preprocess.clang": 0.05655225,
+        "preprocess.map": 0.001171208,
+        "preprocess": 0.0588925,
+        "tokenize": 0.003432209,
+        "parse.declarations": 0.013085875,
+        "parse.validate": 0.001351291,
+        "parse.lower": 0.00161425,
+        "parse.inline": 0.000322917,
+        "parse": 0.016590791,
+        "generate": 0.00381575,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 1.25e-07,
+        "frontend_total": 0.082903292,
+        "write_ir": 0.0005815,
+        "lower": 0.14928
+      }
+    },
+    {
+      "source": [
+        "daemon.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.6708e-05,
+        "preprocess.native": 0.034890292,
+        "preprocess.map": 0.000727,
+        "preprocess": 0.035759958,
+        "tokenize": 0.003028042,
+        "parse.declarations": 0.011506125,
+        "parse.validate": 0.00139425,
+        "parse.lower": 0.001349542,
+        "parse.inline": 0.000381833,
+        "parse": 0.014662875,
+        "generate": 0.003666041,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.057156958,
+        "write_ir": 0.000254459,
+        "lower": 0.176540834
+      }
+    },
+    {
+      "source": [
+        "bundle.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000214958,
+        "preprocess.native": 0.043776875,
+        "preprocess.map": 0.000873167,
+        "preprocess": 0.045038875,
+        "tokenize": 0.003625125,
+        "parse.declarations": 0.015859875,
+        "parse.validate": 0.002710083,
+        "parse.lower": 0.003820459,
+        "parse.inline": 0.000914708,
+        "parse": 0.023350958,
+        "generate": 0.001981667,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.0740415,
+        "write_ir": 0.000237875,
+        "lower": 0.067676833
+      }
+    },
+    {
+      "source": [
+        "bundle.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.5959e-05,
+        "preprocess.clang": 0.042933208,
+        "preprocess.map": 0.0008985,
+        "preprocess": 0.044049875,
+        "tokenize": 0.003423834,
+        "parse.declarations": 0.016472417,
+        "parse.validate": 0.002205875,
+        "parse.lower": 0.002027125,
+        "parse.inline": 0.000626875,
+        "parse": 0.021371834,
+        "generate": 0.002122125,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.071020833,
+        "write_ir": 0.000220583,
+        "lower": 0.0642505
+      }
+    },
+    {
+      "source": [
+        "connect.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000535834,
+        "preprocess.clang": 0.042599791,
+        "preprocess.map": 0.00090225,
+        "preprocess": 0.044246875,
+        "tokenize": 0.003725292,
+        "parse.declarations": 0.013088625,
+        "parse.validate": 0.001653542,
+        "parse.lower": 0.001609333,
+        "parse.inline": 0.000326417,
+        "parse": 0.0167205,
+        "generate": 0.002768916,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.067511292,
+        "write_ir": 0.000295042,
+        "lower": 0.137730666
+      }
+    },
+    {
+      "source": [
+        "connect.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.8792e-05,
+        "preprocess.native": 0.038943333,
+        "preprocess.map": 0.001030334,
+        "preprocess": 0.040132709,
+        "tokenize": 0.003243416,
+        "parse.declarations": 0.012603833,
+        "parse.validate": 0.001702625,
+        "parse.lower": 0.001824459,
+        "parse.inline": 0.000376792,
+        "parse": 0.016544917,
+        "generate": 0.002751208,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.062720833,
+        "write_ir": 0.000253125,
+        "lower": 0.130698334
+      }
+    },
+    {
+      "source": [
+        "diffcore-rename.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000283833,
+        "preprocess.native": 0.040869334,
+        "preprocess.map": 0.000805917,
+        "preprocess": 0.042084541,
+        "tokenize": 0.003004125,
+        "parse.declarations": 0.012943416,
+        "parse.validate": 0.002185709,
+        "parse.lower": 0.001935209,
+        "parse.inline": 0.000521959,
+        "parse": 0.0176185,
+        "generate": 0.0031135,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.065868625,
+        "write_ir": 0.000227292,
+        "lower": 0.127734416
+      }
+    },
+    {
+      "source": [
+        "diffcore-rename.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 4.0167e-05,
+        "preprocess.clang": 0.040277584,
+        "preprocess.map": 0.000823,
+        "preprocess": 0.04133625,
+        "tokenize": 0.00318,
+        "parse.declarations": 0.013399959,
+        "parse.validate": 0.002192292,
+        "parse.lower": 0.001957292,
+        "parse.inline": 0.000708458,
+        "parse": 0.018293042,
+        "generate": 0.003023625,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.06588375,
+        "write_ir": 0.000564334,
+        "lower": 0.601664334
+      }
+    },
+    {
+      "source": [
+        "gettext.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000171458,
+        "preprocess.clang": 0.055810666,
+        "preprocess.map": 0.000639583,
+        "preprocess": 0.056800375,
+        "tokenize": 0.002169833,
+        "parse.declarations": 0.011472708,
+        "parse.validate": 0.000777875,
+        "parse.lower": 0.000716375,
+        "parse.inline": 8.8625e-05,
+        "parse": 0.013093417,
+        "generate": 0.000399166,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.072520542,
+        "write_ir": 0.000241042,
+        "lower": 0.037475792
+      }
+    },
+    {
+      "source": [
+        "gettext.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 8.6583e-05,
+        "preprocess.native": 0.054049208,
+        "preprocess.map": 0.00057525,
+        "preprocess": 0.054858959,
+        "tokenize": 0.002010833,
+        "parse.declarations": 0.007550458,
+        "parse.validate": 0.000574958,
+        "parse.lower": 0.000644541,
+        "parse.inline": 0.000139416,
+        "parse": 0.008946666,
+        "generate": 0.000555,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.066428667,
+        "write_ir": 0.00040525,
+        "lower": 0.032594417
+      }
+    },
+    {
+      "source": [
+        "list-objects-filter.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000223834,
+        "preprocess.native": 0.051603125,
+        "preprocess.map": 0.001122833,
+        "preprocess": 0.053070166,
+        "tokenize": 0.00679775,
+        "parse.declarations": 0.039034791,
+        "parse.validate": 0.006418084,
+        "parse.lower": 0.005690458,
+        "parse.inline": 0.001953291,
+        "parse": 0.053229042,
+        "generate": 0.003564,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.11673525,
+        "write_ir": 0.0003845,
+        "lower": 0.094552834
+      }
+    },
+    {
+      "source": [
+        "list-objects-filter.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 4.3625e-05,
+        "preprocess.clang": 0.263368083,
+        "preprocess.map": 0.001494042,
+        "preprocess": 0.265225333,
+        "tokenize": 0.006449125,
+        "parse.declarations": 0.0317335,
+        "parse.validate": 0.004916042,
+        "parse.lower": 0.003999459,
+        "parse.inline": 0.003097083,
+        "parse": 0.043889416,
+        "generate": 0.007957917,
+        "drop_ast": 2.5e-07,
+        "drop_tokens": 1.67e-07,
+        "frontend_total": 0.323851792,
+        "write_ir": 0.000337167,
+        "lower": 0.218720875
+      }
+    },
+    {
+      "source": [
+        "negotiator/skipping.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000206583,
+        "preprocess.clang": 0.279464792,
+        "preprocess.map": 0.001209209,
+        "preprocess": 0.281246292,
+        "tokenize": 0.006776292,
+        "parse.declarations": 0.033967584,
+        "parse.validate": 0.002578875,
+        "parse.lower": 0.002816916,
+        "parse.inline": 0.001114917,
+        "parse": 0.04061825,
+        "generate": 0.002377834,
+        "drop_ast": 2.08e-07,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.331121375,
+        "write_ir": 0.000666125,
+        "lower": 0.095841334
+      }
+    },
+    {
+      "source": [
+        "negotiator/skipping.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000421208,
+        "preprocess.native": 0.120946167,
+        "preprocess.map": 0.0011725,
+        "preprocess": 0.12271225,
+        "tokenize": 0.003243459,
+        "parse.declarations": 0.017755042,
+        "parse.validate": 0.001447,
+        "parse.lower": 0.001548292,
+        "parse.inline": 0.000455416,
+        "parse": 0.021369333,
+        "generate": 0.001697,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.149076541,
+        "write_ir": 0.000287333,
+        "lower": 0.082162333
+      }
+    },
+    {
+      "source": [
+        "oidtree.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.002969458,
+        "preprocess.native": 0.215545625,
+        "preprocess.map": 0.002412875,
+        "preprocess": 0.221130833,
+        "tokenize": 0.003823542,
+        "parse.declarations": 0.023535708,
+        "parse.validate": 0.0035715,
+        "parse.lower": 0.002843167,
+        "parse.inline": 0.000391958,
+        "parse": 0.030471708,
+        "generate": 0.005141833,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 8.4e-08,
+        "frontend_total": 0.260720666,
+        "write_ir": 0.000465458,
+        "lower": 0.482137875
+      }
+    },
+    {
+      "source": [
+        "oidtree.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 9.2417e-05,
+        "preprocess.clang": 0.765374,
+        "preprocess.map": 0.001101541,
+        "preprocess": 0.76692525,
+        "tokenize": 0.003154209,
+        "parse.declarations": 0.018636542,
+        "parse.validate": 0.001269625,
+        "parse.lower": 0.001311084,
+        "parse.inline": 0.000214792,
+        "parse": 0.021494083,
+        "generate": 0.0025785,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.794229291,
+        "write_ir": 0.000361291,
+        "lower": 0.076365417
+      }
+    },
+    {
+      "source": [
+        "pathspec.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000467958,
+        "preprocess.clang": 0.153349542,
+        "preprocess.map": 0.005143167,
+        "preprocess": 0.159284583,
+        "tokenize": 0.013837083,
+        "parse.declarations": 0.047657709,
+        "parse.validate": 0.009109916,
+        "parse.lower": 0.014109959,
+        "parse.inline": 0.000672625,
+        "parse": 0.071644583,
+        "generate": 0.004926375,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.249781792,
+        "write_ir": 0.000358958,
+        "lower": 0.187218542
+      }
+    },
+    {
+      "source": [
+        "pathspec.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 8.2459e-05,
+        "preprocess.native": 0.066376,
+        "preprocess.map": 0.001365125,
+        "preprocess": 0.067988875,
+        "tokenize": 0.004197791,
+        "parse.declarations": 0.021671417,
+        "parse.validate": 0.002480709,
+        "parse.lower": 0.002292458,
+        "parse.inline": 0.000477625,
+        "parse": 0.026976,
+        "generate": 0.004132209,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.103352792,
+        "write_ir": 0.000274,
+        "lower": 0.172748083
+      }
+    },
+    {
+      "source": [
+        "reflog.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000254875,
+        "preprocess.native": 0.072885666,
+        "preprocess.map": 0.001637459,
+        "preprocess": 0.07491875,
+        "tokenize": 0.005879375,
+        "parse.declarations": 0.02656075,
+        "parse.validate": 0.003540667,
+        "parse.lower": 0.003167375,
+        "parse.inline": 0.0007005,
+        "parse": 0.034024208,
+        "generate": 0.00268225,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 8.4e-08,
+        "frontend_total": 0.117567209,
+        "write_ir": 0.000281541,
+        "lower": 0.095911917
+      }
+    },
+    {
+      "source": [
+        "reflog.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 5.6833e-05,
+        "preprocess.clang": 0.076583042,
+        "preprocess.map": 0.00157375,
+        "preprocess": 0.078486333,
+        "tokenize": 0.005915083,
+        "parse.declarations": 0.027451125,
+        "parse.validate": 0.003025833,
+        "parse.lower": 0.003127041,
+        "parse.inline": 0.000745125,
+        "parse": 0.034400667,
+        "generate": 0.003255834,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.122132833,
+        "write_ir": 0.000308084,
+        "lower": 0.094582791
+      }
+    },
+    {
+      "source": [
+        "reftable/table.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000259125,
+        "preprocess.clang": 0.0650655,
+        "preprocess.map": 0.000880959,
+        "preprocess": 0.066488583,
+        "tokenize": 0.002285916,
+        "parse.declarations": 0.009743125,
+        "parse.validate": 0.000822166,
+        "parse.lower": 0.001061292,
+        "parse.inline": 0.000214167,
+        "parse": 0.011881375,
+        "generate": 0.002034917,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 1.25e-07,
+        "frontend_total": 0.082746375,
+        "write_ir": 0.000211333,
+        "lower": 0.085688209
+      }
+    },
+    {
+      "source": [
+        "reftable/table.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 4.8e-05,
+        "preprocess.native": 0.047498709,
+        "preprocess.map": 0.000777875,
+        "preprocess": 0.048452792,
+        "tokenize": 0.002123375,
+        "parse.declarations": 0.009740042,
+        "parse.validate": 0.000846125,
+        "parse.lower": 0.001032916,
+        "parse.inline": 0.000190167,
+        "parse": 0.011846833,
+        "generate": 0.002007084,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 8.4e-08,
+        "frontend_total": 0.064477667,
+        "write_ir": 0.00022125,
+        "lower": 0.085037667
+      }
+    },
+    {
+      "source": [
+        "sequencer.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.001383792,
+        "preprocess.native": 0.078481041,
+        "preprocess.map": 0.002473542,
+        "preprocess": 0.082799292,
+        "tokenize": 0.009399958,
+        "parse.declarations": 0.044342458,
+        "parse.validate": 0.008199166,
+        "parse.lower": 0.007768584,
+        "parse.inline": 0.002994583,
+        "parse": 0.063361167,
+        "generate": 0.022212,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.177828,
+        "write_ir": 0.000707583,
+        "lower": 0.833671916
+      }
+    },
+    {
+      "source": [
+        "sequencer.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 9.6e-05,
+        "preprocess.clang": 0.066723291,
+        "preprocess.map": 0.001862292,
+        "preprocess": 0.069214125,
+        "tokenize": 0.01073225,
+        "parse.declarations": 0.04477125,
+        "parse.validate": 0.008331041,
+        "parse.lower": 0.007102083,
+        "parse.inline": 0.002773917,
+        "parse": 0.063035333,
+        "generate": 0.021387458,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.164431458,
+        "write_ir": 0.000748709,
+        "lower": 0.883293333
+      }
+    },
+    {
+      "source": [
+        "tempfile.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000216625,
+        "preprocess.clang": 0.047778375,
+        "preprocess.map": 0.000763458,
+        "preprocess": 0.048953709,
+        "tokenize": 0.00228425,
+        "parse.declarations": 0.008841875,
+        "parse.validate": 0.000853,
+        "parse.lower": 0.000943833,
+        "parse.inline": 0.000170917,
+        "parse": 0.010842291,
+        "generate": 0.001302916,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 1.67e-07,
+        "frontend_total": 0.063433666,
+        "write_ir": 0.00021825,
+        "lower": 0.052748875
+      }
+    },
+    {
+      "source": [
+        "tempfile.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.7542e-05,
+        "preprocess.native": 0.041205709,
+        "preprocess.map": 0.000651292,
+        "preprocess": 0.041989166,
+        "tokenize": 0.002121792,
+        "parse.declarations": 0.008793916,
+        "parse.validate": 0.00079875,
+        "parse.lower": 0.000929375,
+        "parse.inline": 0.000165292,
+        "parse": 0.010723667,
+        "generate": 0.001277209,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.05615275,
+        "write_ir": 0.00020825,
+        "lower": 0.052683708
+      }
+    },
+    {
+      "source": [
+        "tree-diff.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.00019775,
+        "preprocess.native": 0.044040291,
+        "preprocess.map": 0.000902167,
+        "preprocess": 0.045308583,
+        "tokenize": 0.002723167,
+        "parse.declarations": 0.012148875,
+        "parse.validate": 0.001111875,
+        "parse.lower": 0.001327166,
+        "parse.inline": 0.000242959,
+        "parse": 0.014866041,
+        "generate": 0.002014542,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.06495825,
+        "write_ir": 0.000204,
+        "lower": 0.081666
+      }
+    },
+    {
+      "source": [
+        "tree-diff.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 4.1291e-05,
+        "preprocess.clang": 0.04985875,
+        "preprocess.map": 0.000924,
+        "preprocess": 0.05103375,
+        "tokenize": 0.002890417,
+        "parse.declarations": 0.01244325,
+        "parse.validate": 0.001212208,
+        "parse.lower": 0.001398,
+        "parse.inline": 0.000271958,
+        "parse": 0.015357833,
+        "generate": 0.002083292,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.071412,
+        "write_ir": 0.000239875,
+        "lower": 0.081391
+      }
+    },
+    {
+      "source": [
+        "xdiff-interface.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000182708,
+        "preprocess.clang": 0.054275125,
+        "preprocess.map": 0.001066333,
+        "preprocess": 0.055738125,
+        "tokenize": 0.003870917,
+        "parse.declarations": 0.015326416,
+        "parse.validate": 0.001914458,
+        "parse.lower": 0.00193875,
+        "parse.inline": 0.000429083,
+        "parse": 0.019644208,
+        "generate": 0.001656208,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.080987333,
+        "write_ir": 0.000226167,
+        "lower": 0.066065084
+      }
+    },
+    {
+      "source": [
+        "xdiff-interface.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.7167e-05,
+        "preprocess.native": 0.053067625,
+        "preprocess.map": 0.00107975,
+        "preprocess": 0.054276083,
+        "tokenize": 0.003909792,
+        "parse.declarations": 0.016051,
+        "parse.validate": 0.002168667,
+        "parse.lower": 0.002063084,
+        "parse.inline": 0.000520125,
+        "parse": 0.020847125,
+        "generate": 0.001608541,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.080690375,
+        "write_ir": 0.000263292,
+        "lower": 0.083427209
+      }
+    },
+    {
+      "source": [
+        "compat/qsort_s.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000295709,
+        "preprocess.native": 0.040423625,
+        "preprocess.map": 0.00056525,
+        "preprocess": 0.041380958,
+        "tokenize": 0.001787166,
+        "parse.declarations": 0.007112541,
+        "parse.validate": 0.000564333,
+        "parse.lower": 0.000621125,
+        "parse.inline": 8.1375e-05,
+        "parse": 0.008416125,
+        "generate": 0.000414375,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.052050417,
+        "write_ir": 0.000215,
+        "lower": 0.03277225
+      }
+    },
+    {
+      "source": [
+        "compat/qsort_s.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.7166e-05,
+        "preprocess.clang": 0.046787166,
+        "preprocess.map": 0.000697959,
+        "preprocess": 0.047690666,
+        "tokenize": 0.001973416,
+        "parse.declarations": 0.006944083,
+        "parse.validate": 0.00050975,
+        "parse.lower": 0.0006505,
+        "parse.inline": 9.1e-05,
+        "parse": 0.008230125,
+        "generate": 0.0004685,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.0584115,
+        "write_ir": 0.000241542,
+        "lower": 0.031393959
+      }
+    },
+    {
+      "source": [
+        "builtin/apply.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000131625,
+        "preprocess.clang": 0.050726083,
+        "preprocess.map": 0.000866083,
+        "preprocess": 0.051898541,
+        "tokenize": 0.002825709,
+        "parse.declarations": 0.011183292,
+        "parse.validate": 0.000902375,
+        "parse.lower": 0.001102167,
+        "parse.inline": 0.00017325,
+        "parse": 0.013397,
+        "generate": 0.00040425,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.068578167,
+        "write_ir": 0.000213709,
+        "lower": 0.026840666
+      }
+    },
+    {
+      "source": [
+        "builtin/apply.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.4667e-05,
+        "preprocess.native": 0.044504708,
+        "preprocess.map": 0.00077975,
+        "preprocess": 0.045393583,
+        "tokenize": 0.002554833,
+        "parse.declarations": 0.011017958,
+        "parse.validate": 0.000899375,
+        "parse.lower": 0.001080708,
+        "parse.inline": 0.000167458,
+        "parse": 0.013195834,
+        "generate": 0.00048775,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.061674791,
+        "write_ir": 0.000185375,
+        "lower": 0.027123583
+      }
+    },
+    {
+      "source": [
+        "builtin/commit-tree.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000230041,
+        "preprocess.native": 0.051095667,
+        "preprocess.map": 0.00097675,
+        "preprocess": 0.05239375,
+        "tokenize": 0.003931875,
+        "parse.declarations": 0.016601125,
+        "parse.validate": 0.001917083,
+        "parse.lower": 0.001908417,
+        "parse.inline": 0.000394792,
+        "parse": 0.020856375,
+        "generate": 0.001137,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.07836725,
+        "write_ir": 0.000217042,
+        "lower": 0.043965875
+      }
+    },
+    {
+      "source": [
+        "builtin/commit-tree.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.5792e-05,
+        "preprocess.clang": 0.05300875,
+        "preprocess.map": 0.001018708,
+        "preprocess": 0.054239541,
+        "tokenize": 0.004177041,
+        "parse.declarations": 0.01680725,
+        "parse.validate": 0.002008875,
+        "parse.lower": 0.001906042,
+        "parse.inline": 0.000378125,
+        "parse": 0.021138917,
+        "generate": 0.001041583,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.080655416,
+        "write_ir": 0.000375625,
+        "lower": 0.040873083
+      }
+    },
+    {
+      "source": [
+        "builtin/fmt-merge-msg.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.00025475,
+        "preprocess.clang": 0.049462708,
+        "preprocess.map": 0.000876458,
+        "preprocess": 0.050786083,
+        "tokenize": 0.002766167,
+        "parse.declarations": 0.012181208,
+        "parse.validate": 0.000912958,
+        "parse.lower": 0.001111625,
+        "parse.inline": 0.000161416,
+        "parse": 0.014404792,
+        "generate": 0.000783666,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 8.4e-08,
+        "frontend_total": 0.0687935,
+        "write_ir": 0.000234959,
+        "lower": 0.037483125
+      }
+    },
+    {
+      "source": [
+        "builtin/fmt-merge-msg.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.9375e-05,
+        "preprocess.native": 0.045245583,
+        "preprocess.map": 0.000752334,
+        "preprocess": 0.046118958,
+        "tokenize": 0.002544541,
+        "parse.declarations": 0.011734333,
+        "parse.validate": 0.0009475,
+        "parse.lower": 0.001109166,
+        "parse.inline": 0.000158,
+        "parse": 0.013987875,
+        "generate": 0.000745458,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.063440583,
+        "write_ir": 0.000211166,
+        "lower": 0.041076333
+      }
+    },
+    {
+      "source": [
+        "builtin/mailinfo.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.00026525,
+        "preprocess.native": 0.046881083,
+        "preprocess.map": 0.000727459,
+        "preprocess": 0.047967208,
+        "tokenize": 0.00253975,
+        "parse.declarations": 0.012184459,
+        "parse.validate": 0.000896,
+        "parse.lower": 0.001067,
+        "parse.inline": 0.000164542,
+        "parse": 0.014345542,
+        "generate": 0.001008042,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.065902458,
+        "write_ir": 0.000199625,
+        "lower": 0.042565792
+      }
+    },
+    {
+      "source": [
+        "builtin/mailinfo.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.9458e-05,
+        "preprocess.clang": 0.051277292,
+        "preprocess.map": 0.000855125,
+        "preprocess": 0.05236075,
+        "tokenize": 0.00269775,
+        "parse.declarations": 0.0129395,
+        "parse.validate": 0.0009385,
+        "parse.lower": 0.001137458,
+        "parse.inline": 0.000173916,
+        "parse": 0.015226458,
+        "generate": 0.0009925,
+        "drop_ast": 8.4e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.071329917,
+        "write_ir": 0.000444916,
+        "lower": 0.040160417
+      }
+    },
+    {
+      "source": [
+        "builtin/prune.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000167208,
+        "preprocess.clang": 0.058568541,
+        "preprocess.map": 0.001245292,
+        "preprocess": 0.060184625,
+        "tokenize": 0.004786792,
+        "parse.declarations": 0.0219355,
+        "parse.validate": 0.002426709,
+        "parse.lower": 0.002463375,
+        "parse.inline": 0.00047225,
+        "parse": 0.027334459,
+        "generate": 0.00119375,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.093552833,
+        "write_ir": 0.000230291,
+        "lower": 0.046182375
+      }
+    },
+    {
+      "source": [
+        "builtin/prune.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.9834e-05,
+        "preprocess.native": 0.056760542,
+        "preprocess.map": 0.001212375,
+        "preprocess": 0.058098375,
+        "tokenize": 0.004679375,
+        "parse.declarations": 0.021861333,
+        "parse.validate": 0.002166625,
+        "parse.lower": 0.002310125,
+        "parse.inline": 0.0004705,
+        "parse": 0.026844,
+        "generate": 0.001184375,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 1.67e-07,
+        "frontend_total": 0.090853625,
+        "write_ir": 0.000219208,
+        "lower": 0.04576625
+      }
+    },
+    {
+      "source": [
+        "builtin/revert.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.001300625,
+        "preprocess.native": 0.056526958,
+        "preprocess.map": 0.001021,
+        "preprocess": 0.058943125,
+        "tokenize": 0.004100375,
+        "parse.declarations": 0.021603667,
+        "parse.validate": 0.002192334,
+        "parse.lower": 0.00222675,
+        "parse.inline": 0.000470792,
+        "parse": 0.026525375,
+        "generate": 0.002115917,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.091735167,
+        "write_ir": 0.00019475,
+        "lower": 0.062103292
+      }
+    },
+    {
+      "source": [
+        "builtin/revert.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.8792e-05,
+        "preprocess.clang": 0.050049917,
+        "preprocess.map": 0.001037834,
+        "preprocess": 0.051320584,
+        "tokenize": 0.004177916,
+        "parse.declarations": 0.0220475,
+        "parse.validate": 0.00198575,
+        "parse.lower": 0.002125167,
+        "parse.inline": 0.000447792,
+        "parse": 0.026640208,
+        "generate": 0.002132166,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.084325542,
+        "write_ir": 0.000226542,
+        "lower": 0.062454333
+      }
+    },
+    {
+      "source": [
+        "builtin/url-parse.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000275875,
+        "preprocess.clang": 0.045165292,
+        "preprocess.map": 0.000779791,
+        "preprocess": 0.046386791,
+        "tokenize": 0.002472708,
+        "parse.declarations": 0.009545459,
+        "parse.validate": 0.000682834,
+        "parse.lower": 0.000893667,
+        "parse.inline": 0.000111,
+        "parse": 0.011261125,
+        "generate": 0.000520083,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 8.4e-08,
+        "frontend_total": 0.060686875,
+        "write_ir": 0.000190167,
+        "lower": 0.031811208
+      }
+    },
+    {
+      "source": [
+        "builtin/url-parse.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.1417e-05,
+        "preprocess.native": 0.042594959,
+        "preprocess.map": 0.000680291,
+        "preprocess": 0.043379459,
+        "tokenize": 0.002506833,
+        "parse.declarations": 0.01092,
+        "parse.validate": 0.000957875,
+        "parse.lower": 0.000936125,
+        "parse.inline": 0.00012425,
+        "parse": 0.013011041,
+        "generate": 0.000529,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 8.4e-08,
+        "frontend_total": 0.05947225,
+        "write_ir": 0.000185208,
+        "lower": 0.038649458
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-advise.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000138833,
+        "preprocess.native": 0.043080584,
+        "preprocess.map": 0.000738667,
+        "preprocess": 0.044031375,
+        "tokenize": 0.002521583,
+        "parse.declarations": 0.010997375,
+        "parse.validate": 0.000943875,
+        "parse.lower": 0.000988459,
+        "parse.inline": 0.000141416,
+        "parse": 0.013129417,
+        "generate": 0.000334208,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.060074083,
+        "write_ir": 0.000221958,
+        "lower": 0.028225834
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-advise.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.5042e-05,
+        "preprocess.clang": 0.049253583,
+        "preprocess.map": 0.000911875,
+        "preprocess": 0.050385917,
+        "tokenize": 0.002870625,
+        "parse.declarations": 0.011596875,
+        "parse.validate": 0.000921791,
+        "parse.lower": 0.001041,
+        "parse.inline": 0.000151,
+        "parse": 0.013751,
+        "generate": 0.000360292,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.067417042,
+        "write_ir": 0.000220708,
+        "lower": 0.026688791
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-find-pack.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000167584,
+        "preprocess.clang": 0.056697458,
+        "preprocess.map": 0.001093375,
+        "preprocess": 0.058155667,
+        "tokenize": 0.004200459,
+        "parse.declarations": 0.017417958,
+        "parse.validate": 0.002030833,
+        "parse.lower": 0.002045416,
+        "parse.inline": 0.000418875,
+        "parse": 0.021953042,
+        "generate": 0.000733625,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.085100583,
+        "write_ir": 0.000273042,
+        "lower": 0.0367425
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-find-pack.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 4.6791e-05,
+        "preprocess.native": 0.052224125,
+        "preprocess.map": 0.001042,
+        "preprocess": 0.053391417,
+        "tokenize": 0.004063542,
+        "parse.declarations": 0.016639625,
+        "parse.validate": 0.002311,
+        "parse.lower": 0.002295791,
+        "parse.inline": 0.000437833,
+        "parse": 0.021727292,
+        "generate": 0.00074025,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 8.4e-08,
+        "frontend_total": 0.079970042,
+        "write_ir": 0.000214708,
+        "lower": 0.037814167
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-partial-clone.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000671625,
+        "preprocess.native": 0.048634,
+        "preprocess.map": 0.000901375,
+        "preprocess": 0.050292708,
+        "tokenize": 0.003696625,
+        "parse.declarations": 0.014378459,
+        "parse.validate": 0.001876959,
+        "parse.lower": 0.00187025,
+        "parse.inline": 0.000430416,
+        "parse": 0.018595708,
+        "generate": 0.000472917,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.073104333,
+        "write_ir": 0.000224542,
+        "lower": 0.029185709
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-partial-clone.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.8041e-05,
+        "preprocess.clang": 0.050786917,
+        "preprocess.map": 0.000966583,
+        "preprocess": 0.051970917,
+        "tokenize": 0.003765833,
+        "parse.declarations": 0.014331625,
+        "parse.validate": 0.001572625,
+        "parse.lower": 0.001657417,
+        "parse.inline": 0.000342208,
+        "parse": 0.017937666,
+        "generate": 0.000458,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.074181709,
+        "write_ir": 0.000212458,
+        "lower": 0.027584292
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-sha1.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000206125,
+        "preprocess.clang": 0.046564667,
+        "preprocess.map": 0.000715375,
+        "preprocess": 0.047662583,
+        "tokenize": 0.002079209,
+        "parse.declarations": 0.007719333,
+        "parse.validate": 0.000558375,
+        "parse.lower": 0.000686167,
+        "parse.inline": 9.0959e-05,
+        "parse": 0.009086625,
+        "generate": 0.000246917,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.059125375,
+        "write_ir": 0.00019625,
+        "lower": 0.025158208
+      }
+    },
+    {
+      "source": [
+        "t/helper/test-sha1.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.1917e-05,
+        "preprocess.native": 0.03721675,
+        "preprocess.map": 0.000536708,
+        "preprocess": 0.037852625,
+        "tokenize": 0.001732958,
+        "parse.declarations": 0.007433208,
+        "parse.validate": 0.000672459,
+        "parse.lower": 0.000671416,
+        "parse.inline": 9.2e-05,
+        "parse": 0.008903167,
+        "generate": 0.000246625,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 1.25e-07,
+        "frontend_total": 0.048774334,
+        "write_ir": 0.000163542,
+        "lower": 0.028374
+      }
+    },
+    {
+      "source": [
+        "t/unit-tests/u-dir.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 0.000166167,
+        "preprocess.native": 0.04507125,
+        "preprocess.map": 0.000698209,
+        "preprocess": 0.046014875,
+        "tokenize": 0.002551,
+        "parse.declarations": 0.0096545,
+        "parse.validate": 0.000841583,
+        "parse.lower": 0.000936208,
+        "parse.inline": 0.000157375,
+        "parse": 0.011627292,
+        "generate": 0.001288542,
+        "drop_ast": 4.1e-08,
+        "drop_tokens": 8.3e-08,
+        "frontend_total": 0.061525625,
+        "write_ir": 0.00020275,
+        "lower": 0.038892958
+      }
+    },
+    {
+      "source": [
+        "t/unit-tests/u-dir.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 3.8708e-05,
+        "preprocess.clang": 0.048736166,
+        "preprocess.map": 0.000808,
+        "preprocess": 0.04976375,
+        "tokenize": 0.002530542,
+        "parse.declarations": 0.010037792,
+        "parse.validate": 0.000852833,
+        "parse.lower": 0.001022917,
+        "parse.inline": 0.000161459,
+        "parse": 0.01211175,
+        "generate": 0.001294417,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 1.25e-07,
+        "frontend_total": 0.065747583,
+        "write_ir": 0.000219583,
+        "lower": 0.036442208
+      }
+    },
+    {
+      "source": [
+        "t/unit-tests/u-strcmp-offset.c"
+      ],
+      "variant": "baseline",
+      "stages": {
+        "preprocess.read": 0.000200083,
+        "preprocess.clang": 0.048841167,
+        "preprocess.map": 0.000832792,
+        "preprocess": 0.050043666,
+        "tokenize": 0.002428791,
+        "parse.declarations": 0.008952167,
+        "parse.validate": 0.000705625,
+        "parse.lower": 0.000894083,
+        "parse.inline": 0.000123417,
+        "parse": 0.010709166,
+        "generate": 0.000433333,
+        "drop_ast": 4.2e-08,
+        "drop_tokens": 4.2e-08,
+        "frontend_total": 0.063674417,
+        "write_ir": 0.0002395,
+        "lower": 0.031911625
+      }
+    },
+    {
+      "source": [
+        "t/unit-tests/u-strcmp-offset.c"
+      ],
+      "variant": "native_pp",
+      "stages": {
+        "preprocess.read": 3.825e-05,
+        "preprocess.native": 0.043031292,
+        "preprocess.map": 0.000660166,
+        "preprocess": 0.043805291,
+        "tokenize": 0.002263333,
+        "parse.declarations": 0.009239333,
+        "parse.validate": 0.000731417,
+        "parse.lower": 0.00085225,
+        "parse.inline": 0.000124916,
+        "parse": 0.010983709,
+        "generate": 0.000419417,
+        "drop_ast": 8.3e-08,
+        "drop_tokens": 4.1e-08,
+        "frontend_total": 0.057521625,
+        "write_ir": 0.000236791,
+        "lower": 0.031549334
+      }
+    }
+  ],
+  "rebase_note": "Measurements precede #199. PR #198 was rebased onto main including #199 and #200; this data does not validate performance of its current head."
+}

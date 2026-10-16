@@ -1,0 +1,536 @@
+{
+  "metadata": {
+    "baseline_commit": "de9de2422dc03c81267d4bbc2518409c4e8c955d",
+    "candidate_commit": "096a261365b721cb737b792783ace622c178c96f",
+    "host": "Darwin 25.5.0 arm64",
+    "rust": "rustc 1.86.0 (05f9846f8 2025-03-31)",
+    "clang": "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.5.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin",
+    "llvm": "Homebrew LLVM version 20.1.5\n  Optimized build.\n  Default target: arm64-apple-darwin25.5.0\n  Host CPU: apple-m2\n\n  Registered Targets:\n    aarch64     - AArch64 (little endian)\n    aarch64_32  - AArch64 (little endian ILP32)\n    aarch64_be  - AArch64 (big endian)\n    amdgcn      - AMD GCN GPUs\n    arm         - ARM\n    arm64       - ARM64 (little endian)\n    arm64_32    - ARM64 (little endian ILP32)\n    armeb       - ARM (big endian)\n    avr         - Atmel AVR Microcontroller\n    bpf         - BPF (host endian)\n    bpfeb       - BPF (big endian)\n    bpfel       - BPF (little endian)\n    hexagon     - Hexagon\n    lanai       - Lanai\n    loongarch32 - 32-bit LoongArch\n    loongarch64 - 64-bit LoongArch\n    mips        - MIPS (32-bit big endian)\n    mips64      - MIPS (64-bit big endian)\n    mips64el    - MIPS (64-bit little endian)\n    mipsel      - MIPS (32-bit little endian)\n    msp430      - MSP430 [experimental]\n    nvptx       - NVIDIA PTX 32-bit\n    nvptx64     - NVIDIA PTX 64-bit\n    ppc32       - PowerPC 32\n    ppc32le     - PowerPC 32 LE\n    ppc64       - PowerPC 64\n    ppc64le     - PowerPC 64 LE\n    r600        - AMD GPUs HD2XXX-HD6XXX\n    riscv32     - 32-bit RISC-V\n    riscv64     - 64-bit RISC-V\n    sparc       - Sparc\n    sparcel     - Sparc LE\n    sparcv9     - Sparc V9\n    spirv       - SPIR-V Logical\n    spirv32     - SPIR-V 32-bit\n    spirv64     - SPIR-V 64-bit\n    systemz     - SystemZ\n    thumb       - Thumb\n    thumbeb     - Thumb (big endian)\n    ve          - VE\n    wasm32      - WebAssembly 32-bit\n    wasm64      - WebAssembly 64-bit\n    x86         - 32-bit X86: Pentium-Pro and above\n    x86-64      - 64-bit X86: EM64T and AMD64\n    xcore       - XCore",
+    "sdk": "26.5",
+    "deployment_target": "11.0",
+    "flags": "-O2 -fno-omit-frame-pointer",
+    "jobs": 4,
+    "runs": 3,
+    "cache_policy": "Clean build artifacts; warm filesystem cache; three cyclic variant orders; no compiler caches or concurrent tests/compilation tasks. Three warm-up translation units per variant are excluded.",
+    "binaries": {
+      "driver-baseline": "01654dbdb928d885ff43568eec922b0834a319b8732b3ee8a0fdc51ba293459d",
+      "driver-final": "affb4f6ab09ced77f6ccb437d5b7de14362abc13ad3b82f8f280dae3c10fbdfc"
+    },
+    "sources": {
+      "git": {
+        "tag": "v2.56.0",
+        "commit": "a018953688f1b10bddf91bff8747068f5f4746a4",
+        "status": ""
+      },
+      "redis": {
+        "tag": "8.10.2",
+        "commit": "498ecd0d6d007db11ddb3aea9428552598a78622",
+        "status": ""
+      }
+    }
+  },
+  "summary": {
+    "git": {
+      "baseline": {
+        "runs": 3,
+        "median_seconds": 26.78,
+        "range_seconds": [
+          22.65,
+          36.34
+        ],
+        "median_cpu_seconds": 97.28999999999999,
+        "paired_median_ratio": 1.0,
+        "paired_ratios": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "paired_ratio_bootstrap_percentile_interval_95": [
+          1.0,
+          1.0
+        ]
+      },
+      "native_pp": {
+        "runs": 3,
+        "median_seconds": 22.54,
+        "range_seconds": [
+          21.68,
+          31.99
+        ],
+        "median_cpu_seconds": 82.19999999999999,
+        "paired_median_ratio": 0.880297193175564,
+        "paired_ratios": [
+          0.9571743929359824,
+          0.8416728902165794,
+          0.880297193175564
+        ],
+        "paired_ratio_bootstrap_percentile_interval_95": [
+          0.8416728902165794,
+          0.9571743929359824
+        ]
+      },
+      "native_all": {
+        "runs": 3,
+        "median_seconds": 24.27,
+        "range_seconds": [
+          22.81,
+          32.79
+        ],
+        "median_cpu_seconds": 90.03,
+        "paired_median_ratio": 0.9062733383121732,
+        "paired_ratios": [
+          1.007064017660044,
+          0.9062733383121732,
+          0.9023115024766097
+        ],
+        "paired_ratio_bootstrap_percentile_interval_95": [
+          0.9023115024766097,
+          1.007064017660044
+        ]
+      }
+    },
+    "redis": {
+      "baseline": {
+        "runs": 3,
+        "median_seconds": 16.04,
+        "range_seconds": [
+          12.55,
+          17.03
+        ],
+        "median_cpu_seconds": 48.900000000000006,
+        "paired_median_ratio": 1.0,
+        "paired_ratios": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "paired_ratio_bootstrap_percentile_interval_95": [
+          1.0,
+          1.0
+        ]
+      },
+      "native_pp": {
+        "runs": 3,
+        "median_seconds": 12.08,
+        "range_seconds": [
+          9.44,
+          13.56
+        ],
+        "median_cpu_seconds": 43.699999999999996,
+        "paired_median_ratio": 0.7521912350597608,
+        "paired_ratios": [
+          0.7521912350597608,
+          0.7093364650616558,
+          0.8453865336658355
+        ],
+        "paired_ratio_bootstrap_percentile_interval_95": [
+          0.7093364650616558,
+          0.8453865336658355
+        ]
+      },
+      "native_all": {
+        "runs": 3,
+        "median_seconds": 13.65,
+        "range_seconds": [
+          9.76,
+          14.06
+        ],
+        "median_cpu_seconds": 49.5,
+        "paired_median_ratio": 0.8015267175572519,
+        "paired_ratios": [
+          0.7776892430278883,
+          0.8015267175572519,
+          0.8765586034912719
+        ],
+        "paired_ratio_bootstrap_percentile_interval_95": [
+          0.7776892430278883,
+          0.8765586034912719
+        ]
+      }
+    }
+  },
+  "samples": [
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 1,
+      "seconds": 22.65,
+      "cpu_seconds": 80.72,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 1,
+      "seconds": 21.68,
+      "cpu_seconds": 79.3,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_all",
+      "iteration": 1,
+      "seconds": 22.81,
+      "cpu_seconds": 83.88,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "baseline",
+      "iteration": 1,
+      "seconds": 12.55,
+      "cpu_seconds": 35.07,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_pp",
+      "iteration": 1,
+      "seconds": 9.44,
+      "cpu_seconds": 33.56,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_all",
+      "iteration": 1,
+      "seconds": 9.76,
+      "cpu_seconds": 34.97,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 2,
+      "seconds": 22.54,
+      "cpu_seconds": 82.19999999999999,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_all",
+      "iteration": 2,
+      "seconds": 24.27,
+      "cpu_seconds": 90.03,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 2,
+      "seconds": 26.78,
+      "cpu_seconds": 97.28999999999999,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_pp",
+      "iteration": 2,
+      "seconds": 12.08,
+      "cpu_seconds": 43.699999999999996,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_all",
+      "iteration": 2,
+      "seconds": 13.65,
+      "cpu_seconds": 49.5,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "baseline",
+      "iteration": 2,
+      "seconds": 17.03,
+      "cpu_seconds": 52.62,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_all",
+      "iteration": 3,
+      "seconds": 32.79,
+      "cpu_seconds": 122.13,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "baseline",
+      "iteration": 3,
+      "seconds": 36.34,
+      "cpu_seconds": 129.65,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "git",
+      "variant": "native_pp",
+      "iteration": 3,
+      "seconds": 31.99,
+      "cpu_seconds": 116.87,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "COMPUTE_HEADER_DEPENDENCIES=no",
+        "CFLAGS=-O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_all",
+      "iteration": 3,
+      "seconds": 14.06,
+      "cpu_seconds": 50.33,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "baseline",
+      "iteration": 3,
+      "seconds": 16.04,
+      "cpu_seconds": 48.900000000000006,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    },
+    {
+      "project": "redis",
+      "variant": "native_pp",
+      "iteration": 3,
+      "seconds": 13.56,
+      "cpu_seconds": 48.900000000000006,
+      "exit_code": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/private/tmp/dynamite-macos-native/performance-post-201/active-cc",
+        "MALLOC=libc",
+        "C11_ATOMIC=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2 -fno-omit-frame-pointer",
+        "OPTIMIZATION=-O2",
+        "ENABLE_LTO=",
+        "DEBUG=",
+        "DEBUG_FLAGS=",
+        "CFLAGS=-O2 -fno-omit-frame-pointer",
+        "SHOBJ_CFLAGS=-Wall -dynamic -fno-common -std=c99 -O2 -fno-omit-frame-pointer"
+      ]
+    }
+  ],
+  "runtime_smoke": {
+    "git": "passed",
+    "redis": "passed"
+  },
+  "clang_rejection_probe_invocations": 0,
+  "orders": [
+    [
+      "baseline",
+      "native_pp",
+      "native_all"
+    ],
+    [
+      "native_pp",
+      "native_all",
+      "baseline"
+    ],
+    [
+      "native_all",
+      "baseline",
+      "native_pp"
+    ]
+  ]
+}

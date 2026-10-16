@@ -277,15 +277,21 @@ pub(super) fn define(pp: &mut Preprocessor) -> Result<(), String> {
     if cfg!(target_arch = "aarch64") {
         for (name, value) in [
             ("__aarch64__", "1"),
-            ("__arm64__", "1"),
-            ("__arm64", "1"),
-            ("__ARM64_ARCH_8__", "1"),
             ("__ARM_ARCH", "8"),
             ("__ARM_ARCH_ISA_A64", "1"),
             ("__ARM_64BIT_STATE", "1"),
             ("__ARM_PCS_AAPCS64", "1"),
             ("__ARM_SIZEOF_MINIMAL_ENUM", "4"),
             ("__ARM_SIZEOF_WCHAR_T", "4"),
+        ] {
+            pp.define(&format!("{name} {value}"))?;
+        }
+    }
+    if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+        for (name, value) in [
+            ("__arm64__", "1"),
+            ("__arm64", "1"),
+            ("__ARM64_ARCH_8__", "1"),
             ("__SIZEOF_LONG_DOUBLE__", "8"),
             ("__LDBL_MANT_DIG__", "53"),
             ("__LDBL_DIG__", "15"),
@@ -298,6 +304,40 @@ pub(super) fn define(pp: &mut Preprocessor) -> Result<(), String> {
             ("__LDBL_MAX__", "1.7976931348623157e+308L"),
             ("__LDBL_EPSILON__", "2.2204460492503131e-16L"),
             ("__LDBL_DENORM_MIN__", "4.9406564584124654e-324L"),
+        ] {
+            pp.define(&format!("{name} {value}"))?;
+        }
+    }
+    if cfg!(all(target_arch = "aarch64", target_os = "linux")) {
+        for (name, value) in [
+            ("__AARCH64EL__", "1"),
+            ("__WCHAR_UNSIGNED__", "1"),
+            ("__WCHAR_TYPE__", "unsigned int"),
+            ("__WCHAR_MAX__", "4294967295U"),
+            ("__SIZEOF_LONG_DOUBLE__", "16"),
+            ("__LDBL_MANT_DIG__", "113"),
+            ("__LDBL_DIG__", "33"),
+            ("__LDBL_DECIMAL_DIG__", "36"),
+            ("__LDBL_MIN_EXP__", "(-16381)"),
+            ("__LDBL_MAX_EXP__", "16384"),
+            ("__LDBL_MIN_10_EXP__", "(-4931)"),
+            ("__LDBL_MAX_10_EXP__", "4932"),
+            (
+                "__LDBL_MIN__",
+                "3.36210314311209350626267781732175260e-4932L",
+            ),
+            (
+                "__LDBL_MAX__",
+                "1.18973149535723176508575932662800702e+4932L",
+            ),
+            (
+                "__LDBL_EPSILON__",
+                "1.92592994438723585305597794258492732e-34L",
+            ),
+            (
+                "__LDBL_DENORM_MIN__",
+                "6.47517511943802511092443895822764655e-4966L",
+            ),
         ] {
             pp.define(&format!("{name} {value}"))?;
         }

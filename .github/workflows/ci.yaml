@@ -24,7 +24,7 @@ jobs:
       - name: Generate LLVM IR without Clang or an LLVM SDK
         run: |
           printf '#include <stddef.h>\n#define VALUE 42\nint main(void) { return VALUE + sizeof(char) - 1; }\n' > /tmp/sdk-free.c
-          DYNAMITE_PREPROCESSOR=native target/debug/dynamite_compiler -o llvm /tmp/sdk-free.c > /tmp/sdk-free.ll
+          target/debug/dynamite_compiler -o llvm /tmp/sdk-free.c > /tmp/sdk-free.ll
           grep -q '@main(' /tmp/sdk-free.ll
       - name: Install external LLVM tools without Clang
         run: apt-get update && apt-get install -y llvm-15 lld-15
@@ -36,7 +36,5 @@ jobs:
         run: cargo test llvm_tools_backend -- --ignored
       - name: Install Clang for assembly and IR execution tests
         run: apt-get install -y --no-install-recommends clang-15 make
-      - name: Run all tests with default preprocessing
-        run: PATH="/usr/lib/llvm-15/bin:$PATH" cargo test --verbose
       - name: Run all tests with native preprocessing
-        run: PATH="/usr/lib/llvm-15/bin:$PATH" DYNAMITE_PREPROCESSOR=native cargo test --verbose
+        run: PATH="/usr/lib/llvm-15/bin:$PATH" cargo test --verbose

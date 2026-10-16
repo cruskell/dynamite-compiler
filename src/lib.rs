@@ -52,7 +52,7 @@ pub fn generate_with_options(
     generate_preprocessed(&source, output_option, is_debug)
 }
 
-/// Generate a file using host system headers and explicit Clang preprocessing arguments.
+/// Generate a file using host system headers and explicit preprocessing arguments.
 /// Included-source text for diagnostics is loaded on demand during file compilation.
 /// Dependency arguments are handled in the same preprocessing pass. As with
 /// `generate`, source-language diagnostics use the existing panic-based interface.
@@ -60,12 +60,11 @@ pub fn generate_file(
     path: &std::path::Path,
     output_option: &str,
     is_debug: bool,
-    clang: &str,
     preprocessing_arguments: &[String],
 ) -> Result<String, String> {
     let source = {
         let _timer = timing::Timer::new("preprocess");
-        preprocessor::preprocess_file(path, clang, preprocessing_arguments)?
+        preprocessor::preprocess_file(path, preprocessing_arguments)?
     };
     Ok(generate_preprocessed(&source, output_option, is_debug))
 }
@@ -77,12 +76,11 @@ pub fn generate_file_once(
     path: &std::path::Path,
     output_option: &str,
     is_debug: bool,
-    clang: &str,
     preprocessing_arguments: &[String],
 ) -> Result<String, String> {
     let source = {
         let _timer = timing::Timer::new("preprocess");
-        preprocessor::preprocess_file(path, clang, preprocessing_arguments)?
+        preprocessor::preprocess_file(path, preprocessing_arguments)?
     };
     Ok(generate_preprocessed_inner(
         &source,

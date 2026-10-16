@@ -7899,11 +7899,7 @@ fn driver_stage_timings_are_optional_and_preserve_parallel_results() {
         if enabled {
             for stage in [
                 "preprocess",
-                if std::env::var("DYNAMITE_PREPROCESSOR").as_deref() == Ok("native") {
-                    "preprocess.native"
-                } else {
-                    "preprocess.clang"
-                },
+                "preprocess.native",
                 "tokenize",
                 "parse",
                 "parse.declarations",
@@ -7973,7 +7969,6 @@ fn native_dependency_scan_does_not_require_clang() {
     let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
         .current_dir(&files.0)
         .env("DYNAMITE_CLANG", "/missing-clang")
-        .env_remove("DYNAMITE_PREPROCESSOR")
         .args(["-MM", "source.c"])
         .output()
         .unwrap();
@@ -7986,7 +7981,10 @@ fn native_dependency_scan_does_not_require_clang() {
 }
 
 #[test]
-#[cfg(any(all(target_os = "linux", target_arch = "x86_64"), target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 fn native_dependency_batch_resets_macros_and_once_state() {
     let files = DriverFixture::new();
     files.write("one.h", "#define VALUE 1\n");
@@ -7998,7 +7996,6 @@ fn native_dependency_batch_resets_macros_and_once_state() {
     let output = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
         .current_dir(&files.0)
         .env("DYNAMITE_CLANG", "/missing-clang")
-        .env("DYNAMITE_PREPROCESSOR", "native")
         .args(["-MM", "first.c", "second.c"])
         .output()
         .unwrap();
@@ -8017,7 +8014,6 @@ fn native_dependency_batch_resets_macros_and_once_state() {
     let output = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
         .current_dir(&files.0)
         .env("DYNAMITE_CLANG", "/missing-clang")
-        .env("DYNAMITE_PREPROCESSOR", "native")
         .args(["-MM", "first.c", "second.c", "-MF", "all.d"])
         .output()
         .unwrap();
@@ -8027,7 +8023,10 @@ fn native_dependency_batch_resets_macros_and_once_state() {
 }
 
 #[test_matrix(["asm","llvm"])]
-#[cfg(any(all(target_os = "linux", target_arch = "x86_64"), target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 fn native_preprocessing_generates_executable_code_without_clang(format: &str) {
     let files = DriverFixture::new();
     files.write(
@@ -8038,7 +8037,6 @@ fn native_preprocessing_generates_executable_code_without_clang(format: &str) {
     let result = Command::new(env!("CARGO_BIN_EXE_dynamite_compiler"))
         .current_dir(&files.0)
         .env("PATH", "/no-external-compiler")
-        .env("DYNAMITE_PREPROCESSOR", "native")
         .args(["-o", format, "source.c"])
         .output()
         .unwrap();
@@ -8266,7 +8264,6 @@ int main(void){
         let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
             .current_dir(&files.0)
             .env("DYNAMITE_BACKEND", "llvm")
-            .env("DYNAMITE_PREPROCESSOR", "native")
             .env("DYNAMITE_CLANG", files.0.join("missing-clang"))
             .args([
                 "--jobs",
@@ -8302,7 +8299,6 @@ fn llvm_tools_backend_preserves_shared_libraries_and_object_linking() {
         let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
             .current_dir(&files.0)
             .env("DYNAMITE_BACKEND", "llvm")
-            .env("DYNAMITE_PREPROCESSOR", "native")
             .env("DYNAMITE_CLANG", files.0.join("missing-clang"))
             .args(arguments)
             .output()
@@ -8337,7 +8333,10 @@ fn llvm_tools_backend_preserves_shared_libraries_and_object_linking() {
     );
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[cfg(any(
+    all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+    target_os = "macos"
+))]
 #[test]
 fn llvm_tools_backend_rejects_unsupported_options_without_clang_fallback() {
     let files = DriverFixture::new();
@@ -8352,7 +8351,6 @@ fn llvm_tools_backend_rejects_unsupported_options_without_clang_fallback() {
         let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
             .current_dir(&files.0)
             .env("DYNAMITE_BACKEND", "llvm")
-            .env("DYNAMITE_PREPROCESSOR", "native")
             .env("DYNAMITE_CLANG", files.0.join("missing-clang"))
             .args([option, "-c", "main.c"])
             .output()
@@ -8369,8 +8367,13 @@ fn llvm_tools_backend_rejects_unsupported_options_without_clang_fallback() {
 fn native_macos_preprocessing_uses_sdk_and_host_data_model() {
     let files = DriverFixture::new();
     files.write(
+        "Frameworks/Local.framework/Headers/values.h",
+        "#define LOCAL_VALUE 42\n",
+    );
+    files.write(
         "source.c",
         r#"
+#include <Local/values.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <pthread.h>
@@ -8383,19 +8386,175 @@ fn native_macos_preprocessing_uses_sdk_and_host_data_model() {
 #endif
 _Static_assert(sizeof(long double)==__SIZEOF_LONG_DOUBLE__, "long double ABI");
 _Static_assert(sizeof(uint64_t)==8, "stdint ABI");
+_Static_assert(LOCAL_VALUE==42, "framework search");
 int main(void){return 0;}
 "#,
     );
     let result = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"))
         .current_dir(&files.0)
-        .env("DYNAMITE_PREPROCESSOR", "native")
         .env("DYNAMITE_CLANG", "/missing-clang")
-        .args(["-E", "source.c", "-o", "output.i"])
+        .args(["-E", "-F", "Frameworks", "source.c", "-o", "output.i"])
         .output()
         .unwrap();
     assert!(result.status.success(), "{result:?}");
     let contents = fs::read_to_string(files.0.join("output.i")).unwrap();
     assert!(!contents.contains("_PTHREAD_SWIFT_IMPORTER_NULLABILITY_COMPAT"));
     files.success(&["-x", "c", "output.i", "-o", "program"]);
+    assert_eq!(files.executable_status("program"), Some(0));
+}
+
+#[cfg(target_os = "macos")]
+fn macos_llvm_command(files: &DriverFixture) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dynamite-cc"));
+    command
+        .current_dir(&files.0)
+        .env("DYNAMITE_BACKEND", "llvm")
+        .env("DYNAMITE_CLANG", files.0.join("missing-clang"))
+        .env(
+            "SDKROOT",
+            dynamite_compiler::toolchain::macos_sdk_root().unwrap(),
+        )
+        .env("PATH", "/no-external-compiler");
+    command
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires absolute DYNAMITE_LLC/DYNAMITE_OPT paths and the macOS SDK"]
+fn macos_llvm_tools_compile_sdk_framework_threads_and_tls_without_clang() {
+    let files = DriverFixture::new();
+    files.write(
+        "worker.c",
+        "_Thread_local int local;void *worker(void *p){local=42;return (void *)(long)local;}",
+    );
+    files.write(
+        "main.c",
+        r#"
+#include <pthread.h>
+#include <math.h>
+#include <CoreFoundation/CFString.h>
+extern _Thread_local int local;
+void *worker(void *);
+int main(void){
+    pthread_t thread;void *result;volatile double n=1764.0;
+    CFStringRef text=CFStringCreateWithCString(0,"answer",kCFStringEncodingUTF8);
+    int length=CFStringGetLength(text);CFRelease(text);
+    if(pthread_create(&thread,0,worker,0) || pthread_join(thread,&result))return 1;
+    return (long)result!=42 || local!=0 || sqrt(n)!=42.0 || length!=6;
+}
+"#,
+    );
+    for optimization in ["-O0", "-O2"] {
+        let output = macos_llvm_command(&files)
+            .args([
+                "--jobs",
+                "2",
+                optimization,
+                "-MMD",
+                "main.c",
+                "worker.c",
+                "-pthread",
+                "-lm",
+                "-framework",
+                "CoreFoundation",
+                "-o",
+                "program",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{optimization}: {output:?}");
+        assert_eq!(files.executable_status("program"), Some(0));
+        let dependencies = fs::read_to_string(files.0.join("program-0.d")).unwrap();
+        assert!(dependencies.contains("main.c"));
+        assert!(
+            !dependencies.contains("CoreFoundation.framework"),
+            "{dependencies}"
+        );
+    }
+    let output = macos_llvm_command(&files)
+        .args(["-E", "worker.c"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires absolute DYNAMITE_LLC/DYNAMITE_OPT paths and the macOS SDK"]
+fn macos_llvm_tools_link_dylibs_archives_and_bundles_without_clang() {
+    let files = DriverFixture::new();
+    files.write("library.c", "int value(void){return 42;}");
+    let output = macos_llvm_command(&files)
+        .args([
+            "-O2",
+            "-dynamiclib",
+            "library.c",
+            "-install_name",
+            "@rpath/libvalue.dylib",
+            "-o",
+            "libvalue.dylib",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    files.write("helper.c", "int helper(void){return 7;}");
+    let output = macos_llvm_command(&files)
+        .args(["-c", "helper.c", "-o", "helper.o"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        Command::new("/usr/bin/ar")
+            .current_dir(&files.0)
+            .args(["rcs", "libhelper.a", "helper.o"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    files.write(
+        "plugin.c",
+        "int host_value(void);int plugin(void){return host_value()+1;}",
+    );
+    let output = macos_llvm_command(&files)
+        .args([
+            "-bundle",
+            "-undefined",
+            "dynamic_lookup",
+            "plugin.c",
+            "-o",
+            "plugin.bundle",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    files.write(
+        "main.c",
+        r#"
+#include <dlfcn.h>
+int value(void);int helper(void);int host_value(void){return 41;}
+int main(void){
+    void *handle=dlopen("./plugin.bundle",RTLD_NOW);if(!handle)return 1;
+    int (*plugin)(void)=(int (*)(void))dlsym(handle,"plugin");
+    if(!plugin || plugin()!=42)return 2;
+    dlclose(handle);return value()+helper()!=49;
+}
+"#,
+    );
+    let rpath = format!("-Wl,-rpath,{}", files.0.display());
+    let output = macos_llvm_command(&files)
+        .args([
+            "-O2",
+            "main.c",
+            "libhelper.a",
+            "-L.",
+            "-lvalue",
+            "-rdynamic",
+            &rpath,
+            "-o",
+            "program",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
     assert_eq!(files.executable_status("program"), Some(0));
 }

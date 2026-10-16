@@ -102,5 +102,4 @@ and is an optional Linux profiling tool, not part of the compiler runtime.
 For the experimental LLVM tools backend, set `DYNAMITE_BACKEND=llvm` and select
 matching `DYNAMITE_LLC`, `DYNAMITE_OPT`, and `DYNAMITE_LLD` executables. Use
 `--no-trace`, since Clang time-trace options are unsupported on that path.
-Select `DYNAMITE_PREPROCESSOR=native` to measure a build without invoking Clang.
-Keep preprocessing mode identical when comparing code-generation backends.
+Preprocessing always uses Dynamite's native implementation.
