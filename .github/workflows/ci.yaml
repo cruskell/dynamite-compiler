@@ -16,19 +16,6 @@ jobs:
   build-ubuntu:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cruskell/dynamite-compiler-dev:latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Build
-        run: cargo build --verbose
-      - name: Run tests
-        run: cargo test --verbose
-      - name: Run tests with native preprocessing
-        run: DYNAMITE_PREPROCESSOR=native cargo test --verbose
-
-  build-without-llvm-sdk:
-    runs-on: ubuntu-latest
-    container:
       image: rust:1.86.0-slim
     steps:
       - uses: actions/checkout@v7
@@ -47,3 +34,9 @@ jobs:
           DYNAMITE_OPT: opt-15
           DYNAMITE_LLD: ld.lld-15
         run: cargo test llvm_tools_backend -- --ignored
+      - name: Install Clang for assembly and IR execution tests
+        run: apt-get install -y --no-install-recommends clang-15 make
+      - name: Run all tests with default preprocessing
+        run: PATH="/usr/lib/llvm-15/bin:$PATH" cargo test --verbose
+      - name: Run all tests with native preprocessing
+        run: PATH="/usr/lib/llvm-15/bin:$PATH" DYNAMITE_PREPROCESSOR=native cargo test --verbose
