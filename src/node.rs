@@ -418,13 +418,13 @@ impl Node {
             if let Type::Qualified(child, _) = ty.as_ref() {
                 if let Type::Arr(element, size) = child.unqualified() {
                     return Cow::Owned(Type::Arr(
-                        Rc::new(Type::Qualified(element.clone(), ty.qualifiers())),
+                        Rc::new(Type::Qualified(Rc::clone(element), ty.qualifiers())),
                         *size,
                     ));
                 }
                 if let Type::Vla(element, offset) = child.unqualified() {
                     return Cow::Owned(Type::Vla(
-                        Rc::new(Type::Qualified(element.clone(), ty.qualifiers())),
+                        Rc::new(Type::Qualified(Rc::clone(element), ty.qualifiers())),
                         *offset,
                     ));
                 }
@@ -798,7 +798,7 @@ mod tests {
         );
         for ty in [
             Type::Ptr(Rc::new(function.clone())),
-            function.clone(),
+            function,
             Type::Arr(Rc::new(Type::I32), Some(2)),
         ] {
             let borrowed = matches!(ty, Type::Ptr(_));

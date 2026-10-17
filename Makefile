@@ -1,16 +1,20 @@
+.PHONY: lint ci
+
 docker_image := ghcr.io/cruskell/dynamite-compiler-dev:latest
 docker_platform := linux/amd64
 
 test_options := --target x86_64-apple-darwin
 src := ./tests/c/simple.c
 
-ci:
-	cargo fmt
-	cargo clippy
+ci: lint
 	cargo test --target x86_64-apple-darwin
 	cargo test --target aarch64-apple-darwin
 	make test-linux-amd64
 	make test-linux-aarch64
+
+lint:
+	cargo fmt --check
+	cargo clippy --all-targets --all-features -- -D warnings
 
 sh-linux:
 	docker run --platform $(docker_platform) --rm \

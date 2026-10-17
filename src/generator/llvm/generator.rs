@@ -799,9 +799,9 @@ impl<'a> IrGenerator<'a> {
             Self::gen_type(result)
         };
         let return_abi = if matches!(result, Type::Struct(_)) {
-            return_type.clone()
+            Cow::Borrowed(return_type.as_str())
         } else {
-            Self::abi_result_type(result)
+            Cow::Owned(Self::abi_result_type(result))
         };
         let mut parameters = vec![];
         if signature.indirect_result {
@@ -1070,9 +1070,9 @@ impl<'a> IrGenerator<'a> {
             Self::gen_type(&result)
         };
         let return_abi = if matches!(*result, Type::Struct(_)) {
-            return_type.clone()
+            Cow::Borrowed(return_type.as_str())
         } else {
-            Self::abi_result_type(&result)
+            Cow::Owned(Self::abi_result_type(&result))
         };
         let variadic_signature = if node.variadic {
             let fixed = Self::aggregate_signature(

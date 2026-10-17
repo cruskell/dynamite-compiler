@@ -1126,7 +1126,7 @@ impl<'a> AstBuilderImpl<'a> {
                         let qualifiers = ty.qualifiers();
                         let ty = match ty.unqualified() {
                             Type::Arr(child, _) | Type::Vla(child, _) => {
-                                let pointer = Type::Ptr(child.clone());
+                                let pointer = Type::Ptr(Rc::clone(child));
                                 if qualifiers == Qualifiers::default() {
                                     pointer
                                 } else {

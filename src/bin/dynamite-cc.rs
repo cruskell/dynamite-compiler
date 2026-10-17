@@ -5,6 +5,7 @@ mod llvm_tools;
 
 use dynamite_compiler::timing::Timer;
 use std::{
+    borrow::Cow,
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
@@ -408,9 +409,9 @@ fn compile(
     let mut preprocessing = args.preprocessing.clone();
     if let Some(system) = args.dependencies {
         let dependency_output = if args.mode == Mode::Link {
-            PathBuf::from(args.output.as_deref().unwrap_or("a.out"))
+            Cow::Owned(PathBuf::from(args.output.as_deref().unwrap_or("a.out")))
         } else {
-            output.clone()
+            Cow::Borrowed(&output)
         };
         let default_dependency_file = if args.mode == Mode::Link
             && args.inputs.iter().filter(|input| input.source).count() > 1

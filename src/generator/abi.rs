@@ -136,7 +136,7 @@ pub fn aggregate_parts(ty: &Type, arch: &Arch) -> Vec<Part> {
     if let Type::Arr(child, _) = ty.unqualified() {
         return vec![Part {
             offset: 0,
-            ty: Type::Ptr(child.clone()),
+            ty: Type::Ptr(Rc::clone(child)),
         }];
     }
     if matches!(ty.unqualified(), Type::Func(..) | Type::VariadicFunc(..)) {
@@ -251,7 +251,7 @@ pub fn signature(
     for (index, source) in types.iter().enumerate() {
         let source: &Type = std::borrow::Borrow::borrow(source);
         let effective = match source {
-            Type::Arr(child, _) => Cow::Owned(Type::Ptr(child.clone())),
+            Type::Arr(child, _) => Cow::Owned(Type::Ptr(Rc::clone(child))),
             Type::Func(..) | Type::VariadicFunc(..) => {
                 Cow::Owned(Type::Ptr(Rc::new(source.clone())))
             }

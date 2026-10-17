@@ -51,14 +51,14 @@ impl AstBuilderImpl<'_> {
                     );
                 }
                 if matches!(ty, Type::Ptr(_)) {
-                    Type::integer(64, false)
+                    &Type::integer(64, false)
                 } else {
-                    ty.clone()
+                    &ty
                 }
             } else {
-                ty.clone()
+                &ty
             };
-            value = self.atomic_value(value, &value_type);
+            value = self.atomic_value(value, value_type);
             args.push(value);
         }
         self.expect_reserved(",");

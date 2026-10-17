@@ -320,7 +320,7 @@ impl AstBuilderImpl<'_> {
         };
         if mac_arm {
             // Darwin's va_list is the cursor itself, rather than a state structure.
-            stack = field(state.clone(), 0, pointer());
+            stack = field(state, 0, pointer());
             let mut steps = vec![
                 binary(
                     NodeType::Assign,
@@ -329,7 +329,7 @@ impl AstBuilderImpl<'_> {
                 ),
                 binary(
                     NodeType::Assign,
-                    stack.clone(),
+                    stack,
                     binary(NodeType::Add, source.clone(), number(stack_size)),
                 ),
             ];

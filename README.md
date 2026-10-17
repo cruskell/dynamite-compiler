@@ -7,9 +7,19 @@ A compiler for a language with syntax similar to the C language, written in Rust
 
 ## Development checks
 
-Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
-`cargo test` for local validation. The regular GitHub Actions CI builds and tests
-using the published development image without rebuilding it.
+Run `make lint` (or `cargo fmt --check` and
+`cargo clippy --all-targets --all-features -- -D warnings`), followed by
+`cargo test` for local validation. GitHub Actions runs the same lint checks with
+Rust 1.86 before building and testing in a minimal Rust container; Rust's
+`rustfmt` and `clippy` components are required locally.
+
+Lint policy lives in `Cargo.toml`: Clippy correctness, suspicious-code and
+performance groups are errors, along with debug/unfinished-code macros,
+redundant clones, implicit reference-counted pointer clones and inefficient
+string conversions. Other Clippy warnings also fail the lint gate. Rust denies
+unused must-use results and unsafe operations without explicit unsafe blocks.
+`make ci` includes the lint gate and platform tests; formatting checks do not
+modify source files.
 
 The image workflow runs only when `dockerfiles/dev.Dockerfile`, `.dockerignore`,
 or `.github/workflows/publish.yaml` changes, or when started manually. Image
