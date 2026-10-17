@@ -337,7 +337,7 @@ impl Type {
     /// Apply array-to-pointer and function-to-pointer value conversions.
     pub fn decayed(&self) -> Self {
         match self.unqualified() {
-            Self::Arr(child, _) | Self::Vla(child, _) => Self::Ptr(child.clone()),
+            Self::Arr(child, _) | Self::Vla(child, _) => Self::Ptr(Rc::clone(child)),
             ty @ (Self::Func(..) | Self::VariadicFunc(..)) => Self::Ptr(Rc::new(ty.clone())),
             ty => ty.clone(),
         }
@@ -359,7 +359,7 @@ impl Type {
     pub(crate) fn decay_view(ty: Cow<'_, Self>) -> Cow<'_, Self> {
         match Self::unqualified_view(ty) {
             Cow::Borrowed(Self::Arr(child, _) | Self::Vla(child, _)) => {
-                Cow::Owned(Self::Ptr(child.clone()))
+                Cow::Owned(Self::Ptr(Rc::clone(child)))
             }
             Cow::Borrowed(ty @ (Self::Func(..) | Self::VariadicFunc(..))) => {
                 Cow::Owned(Self::Ptr(Rc::new(ty.clone())))

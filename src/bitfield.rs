@@ -209,7 +209,7 @@ fn write(mut target: Node, value: Node, offset: &mut usize) -> Node {
         value
     };
     let value = normalize(value, field, &ty);
-    let result = temporary(ty.clone(), offset, &source);
+    let result = temporary(ty, offset, &source);
     let save_value = binary(NodeType::Assign, result.clone(), value);
     let retained = binary(
         NodeType::BitAnd,
