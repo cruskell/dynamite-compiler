@@ -1,1 +1,12 @@
+mod abi;
+mod builtins;
+mod control_flow;
+mod declarations;
 mod driver;
+mod expressions;
+mod initializers;
+mod inline_assembly;
+mod preprocessing;
+mod smoke;
+mod types;
+mod variable_arrays;
