@@ -4,13 +4,14 @@ use std::collections::HashMap;
 pub struct GlobalVariable {
     pub ty: Type,
     pub alignment: usize,
-    pub thread_local: bool,
-    pub weak_import: bool,
-    pub hidden: bool,
-    pub common: bool,
+    pub data: Option<GlobalVariableData>,
+
     pub internal: bool,
     pub declaration_only: bool,
-    pub data: Option<GlobalVariableData>,
+    pub common: bool,
+    pub weak_import: bool,
+    pub hidden: bool,
+    pub thread_local: bool,
 }
 #[derive(Debug, PartialEq)]
 pub enum GlobalVariableData {

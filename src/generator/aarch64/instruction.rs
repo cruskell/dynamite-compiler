@@ -2,8 +2,56 @@ use crate::generator::Os;
 
 #[derive(Default)]
 pub enum InstOperator {
-    PRFM,
-    InlineAsm,
+    // Data movement and memory operations.
+    MOV,
+    SXTB,
+    SXTW,
+    LDR,
+    STR,
+    LDRU,
+    STP,
+    LDP,
+    ADRP,
+    LEA,
+    MOVSX,
+    MOVSXD,
+    MOVZX,
+
+    // Integer operations.
+    ADD,
+    SUB,
+    MUL,
+    MSUB,
+    SDIV,
+    UDIV,
+    CQO,
+    AND,
+    OR,
+    XOR,
+    MVN,
+    NOT,
+    SHL,
+    SHR,
+    SAR,
+    CLZ,
+    RBIT,
+
+    // Comparisons and control flow.
+    CMP,
+    CSET,
+    SETE,
+    SETNE,
+    SETL,
+    SETLE,
+    JMP,
+    JE,
+    JNE,
+    BL,
+    BLR,
+    RET,
+    SVC,
+
+    // Floating-point operations and conversions.
     FMOV,
     FADD,
     FSUB,
@@ -16,54 +64,14 @@ pub enum InstOperator {
     FCVTZS,
     FCVTZU,
 
-    CLZ,
-    RBIT,
-    MOV,
-    CSET,
-    SXTB,
-    SXTW,
-    MVN,
-    ADD,
-    SUB,
-    RET,
-    BL,
-    BLR,
-    SVC,
-    CQO,
-    JMP,
-    JE,
-    JNE,
-    MUL,
-    SDIV,
-    UDIV,
-    SHR,
-    LDRU,
-    SHL,
-    SAR,
-    NOT,
-    SETE,
-    SETNE,
-    SETL,
-    SETLE,
-    LEA,
-    MOVSX,
-    MOVSXD,
-    MOVZX,
-    CMP,
-    AND,
-    OR,
-    XOR,
+    // Atomic operations, prefetching and inline assembly.
     CLREX,
     LDAXR,
     STLXR,
     LDAR,
     STLR,
-    LDR,
-    STR,
-    ADRP,
-    STP,
-    LDP,
-    MSUB,
+    PRFM,
+    InlineAsm,
     #[default]
     NOP,
 }
@@ -145,8 +153,7 @@ impl InstOperator {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Register {
-    Float(usize, u8),
-
+    // General registers and their available subregisters.
     X0,
     W0,
     X1,
@@ -171,12 +178,16 @@ pub enum Register {
     X20,
     X29,
     X30,
+    SP,
+
+    Float(usize, u8),
+
+    // Legacy operand aliases.
     AL,
     CL,
     RIP,
     R8,
     R9,
-    SP,
 }
 use Register::*;
 
@@ -224,16 +235,18 @@ impl Display for Register {
 }
 
 pub enum InstOperand {
-    InlineAsmTemplate(String),
     Reg(Register),
     Num(usize),
-    Label(String),
     Str(&'static str),
+    Label(String),
+
     Ptr(Register, usize),
     PtrAdd(Register, String),
-    ElseFlag(usize),
+
     BeginFlag(usize),
+    ElseFlag(usize),
     EndFlag(usize),
+    InlineAsmTemplate(String),
 }
 
 impl Display for InstOperand {

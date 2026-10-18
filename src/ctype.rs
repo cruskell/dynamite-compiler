@@ -33,18 +33,19 @@ pub struct StructType {
 #[derive(Default)]
 pub struct StructDefinition {
     pub members: Vec<StructMember>,
+    pub complete: bool,
     pub is_union: bool,
     /// Function parameters use the first scalar member's calling convention.
     pub transparent_union: bool,
     pub has_bit_fields: bool,
     pub has_flexible_array: bool,
+
     pub size: usize,
     pub align: usize,
     /// Member-derived alignment before record-level alignment attributes.
     pub natural_align: usize,
     /// Packed storage marker: a pragma limit, or 1 for GNU packed records.
     pub packing: Option<usize>,
-    pub complete: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -58,12 +59,14 @@ pub struct BitField {
 #[derive(Clone, Debug)]
 pub struct StructMember {
     pub name: String,
-    pub anonymous: bool,
+    pub ty: Type,
+
+    pub offset: usize,
     /// Explicit member alignment before record packing is applied.
     pub requested_alignment: usize,
-    pub ty: Type,
-    pub offset: usize,
     pub bit_field: Option<BitField>,
+
+    pub anonymous: bool,
 }
 
 impl StructType {
@@ -147,38 +150,43 @@ impl fmt::Debug for StructType {
 /// Recursive type components are shared; lowering uses copy-on-write mutations.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
+    // Scalar types.
     Void,
-    Qualified(Rc<Type>, Qualifiers),
-    /// Object alignment supplied by a scalar typedef, independent of type identity.
-    Aligned(Rc<Type>, usize),
-    Struct(StructType),
-    Enum(EnumType),
+    Bool,
     I8,
     SignedChar,
     I32,
+    Integer {
+        bits: u8,
+        signed: bool,
+    },
     LongLong {
         signed: bool,
     },
     Integer128 {
         signed: bool,
     },
-    Integer {
-        bits: u8,
-        signed: bool,
-    },
-    Bool,
+    Enum(EnumType),
     Float16,
-    /// Vector element type and lane count; value operations are not yet supported.
-    Vector(Rc<Type>, usize),
     Float(u8),
     LongDouble(u8),
+
+    // Derived and aggregate types.
     Ptr(Rc<Type>),
     /// None denotes an omitted bound; Some(0) is a complete GNU zero-length array.
     Arr(Rc<Type>, Option<usize>),
     // The offset names the captured bound; runtime_size computes the language size.
     Vla(Rc<Type>, usize),
+    /// Vector element type and lane count; value operations are not yet supported.
+    Vector(Rc<Type>, usize),
+    Struct(StructType),
     Func(Rc<Vec<Type>>, Rc<Type>),
     VariadicFunc(Rc<Vec<Type>>, Rc<Type>),
+
+    // Type wrappers.
+    Qualified(Rc<Type>, Qualifiers),
+    /// Object alignment supplied by a scalar typedef, independent of type identity.
+    Aligned(Rc<Type>, usize),
 }
 
 impl Type {

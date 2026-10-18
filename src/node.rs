@@ -25,51 +25,46 @@ pub enum AtomicOperation {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
-    InlineAsm(bool, bool),
-    Prefetch(bool, u8),
-    Atomic(AtomicOperation),
-    VaStart,
-    VaEnd,
-    Assign,
-    Cast,
-    FloatAbs,
-    StackAlloc,
-    BitScan {
-        bits: u8,
-        leading: bool,
-    },
-    ZeroFill {
-        bytes: usize,
-    },
-    /// Copy storage once, retaining the destination address as the result.
-    CopyBytes {
-        bytes: usize,
-    },
+    // Values and conversions.
+    Num,
     LocalVar,
     GlobalVar,
+    Addr,
+    Deref,
+    Cast,
+
+    // Arithmetic, bitwise and logical expressions.
     Add,
-    AddOverflow,
-    SubOverflow,
     Sub,
     Mul,
     Div,
     Mod,
-    Eq,
-    Ne,
-    Lt,
-    Le,
     BitLeft,
     BitRight,
     BitAnd,
     BitXor,
     BitOr,
     BitNot,
+    Eq,
+    Ne,
+    Lt,
+    Le,
     LogicalAnd,
     LogicalOr,
-    Num,
+    Conditional,
+
+    // Assignments, calls and expression sequencing.
+    Assign,
+    SuffixIncr,
+    SuffixDecr,
+    CallFunc,
+    Sequence,
+
+    // Declarations and control flow.
+    DefVar,
+    Block,
     Return,
     If,
-    Conditional,
     While,
     DoWhile,
     For,
@@ -79,14 +74,28 @@ pub enum NodeType {
     Continue,
     Goto,
     Label,
-    Block,
-    Sequence,
-    CallFunc,
-    Addr,
-    Deref,
-    DefVar,
-    SuffixIncr,
-    SuffixDecr,
+
+    // Builtins and lowered operations.
+    AddOverflow,
+    SubOverflow,
+    FloatAbs,
+    BitScan {
+        bits: u8,
+        leading: bool,
+    },
+    VaStart,
+    VaEnd,
+    StackAlloc,
+    Prefetch(bool, u8),
+    Atomic(AtomicOperation),
+    InlineAsm(bool, bool),
+    ZeroFill {
+        bytes: usize,
+    },
+    /// Copy storage once, retaining the destination address as the result.
+    CopyBytes {
+        bytes: usize,
+    },
 }
 
 impl NodeType {
@@ -105,21 +114,12 @@ impl Default for NodeType {
 #[derive(Default, Clone)]
 pub struct Node {
     pub nt: NodeType,
-    pub bit_field: Option<BitField>,
-    /// Preserve lowered member identity for closest-subobject size queries.
-    pub member_access: bool,
-    pub compound_literal: bool,
-    pub volatile_access: bool,
-    pub registered: bool,
-    pub thread_local: bool,
+    pub token: Option<Token>,
     /// Stored object/call/cast type, or an inferred scalar arithmetic result.
     pub cty: Option<Type>,
-    pub token: Option<Token>,
+
     pub lhs: Option<Box<Node>>,
     pub rhs: Option<Box<Node>>,
-    // for number
-    pub value: Option<usize>,
-    pub extended_float: Option<Box<u128>>,
     // for "if", "for", "while" statement
     pub cond: Option<Box<Node>>,
     pub then: Option<Box<Node>>,
@@ -130,19 +130,34 @@ pub struct Node {
     pub upd: Option<Box<Node>>,
     // For blocks, local definitions, or inline assembly output destinations.
     pub children: Vec<Node>,
-    // flag of global variables
+
+    // for number
+    pub value: Option<usize>,
+    pub extended_float: Option<Box<u128>>,
+
+    // Global symbol name.
     pub global_name: String,
     /// String symbol name, or the validated source template for inline assembly.
     pub dest: String,
+
     // Function arguments or inline assembly inputs.
     pub args: Vec<Node>,
     pub parameter_types: Vec<Type>,
     pub variadic: bool,
-    pub vla_scope: Vec<usize>,
+
     // for declaration of local variables
     pub offset: Option<usize>,
     /// Storage alignment requested by the local object declaration.
     pub alignment: usize,
+    pub bit_field: Option<BitField>,
+    pub vla_scope: Vec<usize>,
+
+    /// Preserve lowered member identity for closest-subobject size queries.
+    pub member_access: bool,
+    pub compound_literal: bool,
+    pub volatile_access: bool,
+    pub registered: bool,
+    pub thread_local: bool,
 }
 
 impl Node {

@@ -30,20 +30,23 @@ enum LinkArgument {
 }
 
 struct Arguments {
+    mode: Mode,
+    preprocess_only: bool,
+    emit_llvm: bool,
+    jobs: usize,
+
     inputs: Vec<Input>,
+    output: Option<String>,
+
+    preprocessing: Vec<String>,
     backend: Vec<String>,
     linker: Vec<LinkArgument>,
-    preprocessing: Vec<String>,
     forwarded: Vec<String>,
-    output: Option<String>,
-    mode: Mode,
-    jobs: usize,
+
     dependencies: Option<bool>,
     dependency_file: Option<String>,
     dependency_targets: Vec<String>,
     phony_dependencies: bool,
-    preprocess_only: bool,
-    emit_llvm: bool,
 }
 
 struct TemporaryDirectory(PathBuf);

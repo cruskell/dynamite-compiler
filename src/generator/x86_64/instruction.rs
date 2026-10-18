@@ -1,14 +1,53 @@
 use crate::generator::Os;
 
 pub enum InstOperator {
-    PREFETCHNTA,
-    PREFETCHT0,
-    PREFETCHT1,
-    PREFETCHT2,
-    InlineAsm,
-    CMPXCHG,
-    MFENCE,
-    XCHG,
+    // Data movement and memory operations.
+    MOV,
+    MOVSX,
+    MOVSXD,
+    MOVZX,
+    LEA,
+    PUSH,
+    POP,
+    REPSTOSB,
+    REPMOVSB,
+
+    // Integer operations.
+    ADD,
+    SUB,
+    IMUL,
+    IDIV,
+    DIV,
+    CQO,
+    AND,
+    OR,
+    XOR,
+    NOT,
+    SHL,
+    SHR,
+    SAR,
+    BSF,
+    BSR,
+
+    // Comparisons and control flow.
+    CMP,
+    SETE,
+    SETNE,
+    SETL,
+    SETLE,
+    SETB,
+    SETBE,
+    SETNP,
+    SETP,
+    CMOVE,
+    JMP,
+    JE,
+    JNE,
+    JGE,
+    CALL,
+    RET,
+
+    // Floating-point operations and conversions.
     MOVD,
     MOVQ,
     ADDSS,
@@ -23,51 +62,20 @@ pub enum InstOperator {
     UCOMISD,
     CVTSS2SD,
     CVTSD2SS,
-    CVTSI2SD,
     CVTSI2SS,
-    CVTTSD2SI,
+    CVTSI2SD,
     CVTTSS2SI,
-    SETNP,
-    SETP,
+    CVTTSD2SI,
 
-    PUSH,
-    POP,
-    REPSTOSB,
-    REPMOVSB,
-    BSF,
-    BSR,
-    CMOVE,
-    MOV,
-    ADD,
-    SUB,
-    RET,
-    CALL,
-    CQO,
-    JMP,
-    JE,
-    JNE,
-    JGE,
-    IMUL,
-    IDIV,
-    DIV,
-    SHR,
-    SETB,
-    SETBE,
-    SHL,
-    SAR,
-    NOT,
-    SETE,
-    SETNE,
-    SETL,
-    SETLE,
-    LEA,
-    MOVSX,
-    MOVSXD,
-    MOVZX,
-    CMP,
-    AND,
-    OR,
-    XOR,
+    // Atomic operations, prefetching and inline assembly.
+    CMPXCHG,
+    XCHG,
+    MFENCE,
+    PREFETCHNTA,
+    PREFETCHT0,
+    PREFETCHT1,
+    PREFETCHT2,
+    InlineAsm,
 }
 
 use InstOperator::*;
@@ -151,31 +159,34 @@ impl InstOperator {
 
 #[derive(Copy, Clone, Debug)]
 pub enum Register {
-    Xmm(usize),
-    R11,
-    DL,
-
+    // General registers and their available subregisters.
     RAX,
     EAX,
+    AX,
+    AL,
     RBX,
     RCX,
     ECX,
     CX,
+    CL,
     RDX,
+    DL,
     RSI,
     RDI,
-    RBP,
-    RSP,
     EDI,
     DI,
     DIL,
-    AX,
-    AL,
-    CL,
-    RIP,
     R8,
     R9,
     R10,
+    R11,
+
+    // Stack, frame and instruction pointers.
+    RSP,
+    RBP,
+    RIP,
+
+    Xmm(usize),
 }
 use Register::*;
 
@@ -216,17 +227,19 @@ impl Display for Register {
 }
 
 pub enum InstOperand {
-    InlineAsmTemplate(String),
     Reg(Register),
     Num(usize),
-    Label(String),
     Str(&'static str),
+    Label(String),
+
     Ptr(Register, usize),
     PtrOffset(Register, usize, usize),
     PtrAdd(Register, String),
-    ElseFlag(usize),
+
     BeginFlag(usize),
+    ElseFlag(usize),
     EndFlag(usize),
+    InlineAsmTemplate(String),
 }
 
 impl Display for InstOperand {
