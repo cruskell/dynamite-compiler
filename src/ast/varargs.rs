@@ -7,8 +7,8 @@ fn number(value: usize) -> Node {
 fn cast(node: Node, ty: Type) -> Node {
     Node {
         nt: NodeType::Cast,
-        lhs: Some(Box::new(node)),
         cty: Some(ty),
+        lhs: Some(Box::new(node)),
         ..Node::default()
     }
 }
@@ -97,20 +97,20 @@ impl AstBuilderImpl<'_> {
             let size = ty.size_of();
             members.push(StructMember {
                 name: name.into(),
-                anonymous: false,
-                requested_alignment: 0,
                 ty,
                 offset,
+                requested_alignment: 0,
                 bit_field: None,
+                anonymous: false,
             });
             offset += size;
         }
         *owner.borrow_mut() = StructDefinition {
             members,
+            complete: true,
             size: offset.div_ceil(alignment) * alignment,
             align: alignment,
             natural_align: alignment,
-            complete: true,
             ..StructDefinition::default()
         };
         self.struct_definitions.push(owner);
@@ -133,7 +133,7 @@ impl AstBuilderImpl<'_> {
     fn va_address(&self, ap: Node, token: &Token) -> Node {
         let ty = ap.resolve_type().unwrap();
         let valid = if cfg!(target_arch = "x86_64") {
-            matches!(ty.unqualified(), Type::Arr(..) | Type::Ptr(_))
+            matches!(ty.unqualified(), Type::Ptr(_) | Type::Arr(..))
         } else if cfg!(target_os = "macos") {
             matches!(ty.unqualified(), Type::Ptr(_))
         } else {
@@ -171,14 +171,14 @@ impl AstBuilderImpl<'_> {
                 }
                 Node {
                     nt: NodeType::VaStart,
+                    token: Some(token),
+                    cty: Some(Type::Void),
                     lhs: Some(Box::new(ap)),
                     rhs: Some(Box::new(Node {
                         cty: self.return_type.clone(),
                         ..Node::default()
                     })),
                     parameter_types: parameters,
-                    cty: Some(Type::Void),
-                    token: Some(token),
                     ..Node::default()
                 }
             }
@@ -246,9 +246,9 @@ impl AstBuilderImpl<'_> {
                 self.expect_reserved(")");
                 Node {
                     nt: NodeType::VaEnd,
-                    lhs: Some(Box::new(ap)),
-                    cty: Some(Type::Void),
                     token: Some(token),
+                    cty: Some(Type::Void),
+                    lhs: Some(Box::new(ap)),
                     ..Node::default()
                 }
             }

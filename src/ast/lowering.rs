@@ -41,8 +41,8 @@ impl AstBuilderImpl<'_> {
             let operand = std::mem::take(node);
             *node = Node {
                 nt: NodeType::Cast,
-                cty: Some(target.clone()),
                 token: operand.token.clone(),
+                cty: Some(target.clone()),
                 lhs: Some(Box::new(operand)),
                 ..Node::default()
             };
@@ -88,8 +88,8 @@ impl AstBuilderImpl<'_> {
         }
         if matches!(
             node.nt,
-            NodeType::If
-                | NodeType::Conditional
+            NodeType::Conditional
+                | NodeType::If
                 | NodeType::While
                 | NodeType::DoWhile
                 | NodeType::For

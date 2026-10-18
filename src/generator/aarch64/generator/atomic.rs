@@ -17,12 +17,12 @@ impl AsmGenerator<'_> {
             Assembly::inst2(LDAXR, X10, Ptr(X8, ty.size_of())),
         ];
         lines.push(match operation {
-            AtomicRmwOperation::Exchange => Assembly::inst2(MOV, X11, X9),
             AtomicRmwOperation::Nand => vec![
                 Assembly::inst3(AND, X11, X10, X9),
                 Assembly::inst2(MVN, X11, X11),
             ]
             .into(),
+            AtomicRmwOperation::Exchange => Assembly::inst2(MOV, X11, X9),
             _ => Assembly::inst3(
                 match operation {
                     AtomicRmwOperation::Add => ADD,

@@ -16,8 +16,8 @@ impl AstBuilderImpl<'_> {
         let has_value = statements.last().is_some_and(|node| {
             !matches!(
                 node.nt,
-                NodeType::Block
-                    | NodeType::DefVar
+                NodeType::DefVar
+                    | NodeType::Block
                     | NodeType::Return
                     | NodeType::If
                     | NodeType::While
@@ -87,9 +87,9 @@ impl AstBuilderImpl<'_> {
     fn validate_statement_expression_jumps(&self, node: &Node, loops: usize, switches: usize) {
         let escaping = match node.nt {
             NodeType::Return | NodeType::Goto | NodeType::Label => true,
+            NodeType::Case => switches == 0,
             NodeType::Break => loops == 0 && switches == 0,
             NodeType::Continue => loops == 0,
-            NodeType::Case => switches == 0,
             _ => false,
         };
         if escaping {

@@ -133,17 +133,17 @@ impl Token {
 impl Token {
     pub fn print(&self) {
         match self.tt {
-            TokenType::Float => eprintln!("float: {}", self.s_value),
-            TokenType::Version => eprintln!("version: {}", self.s_value),
-            TokenType::Num => {
-                eprintln!("num: {}", self.i_value)
-            }
             TokenType::Reserved => {
                 eprintln!("rsv: {}", &self.s_value)
             }
             TokenType::Ident => {
                 eprintln!("idt: {}", &self.s_value)
             }
+            TokenType::Num => {
+                eprintln!("num: {}", self.i_value)
+            }
+            TokenType::Float => eprintln!("float: {}", self.s_value),
+            TokenType::Version => eprintln!("version: {}", self.s_value),
             TokenType::Str => {
                 eprintln!("str: {}", &self.s_value)
             }

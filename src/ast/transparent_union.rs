@@ -95,8 +95,8 @@ impl AstBuilderImpl<'_> {
         if null && matches!(member.ty.unqualified(), Type::Ptr(_)) {
             value = Node {
                 nt: NodeType::Cast,
-                cty: Some(member.ty.clone()),
                 token: Some(token.clone()),
+                cty: Some(member.ty.clone()),
                 lhs: Some(Box::new(value)),
                 ..Node::default()
             };

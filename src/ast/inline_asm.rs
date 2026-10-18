@@ -86,8 +86,8 @@ impl AstBuilderImpl<'_> {
                     if matches!(input_type, Type::Ptr(_)) {
                         input = Node {
                             nt: NodeType::Cast,
-                            cty: Some(input_type),
                             token: input.token.clone(),
+                            cty: Some(input_type),
                             lhs: Some(Box::new(input)),
                             ..Node::default()
                         };
@@ -151,12 +151,12 @@ impl AstBuilderImpl<'_> {
         let volatile = volatile || destinations.is_empty();
         children.push(Node {
             nt: NodeType::InlineAsm(volatile, memory),
-            dest: template,
-            children: destinations,
-            args: inputs,
-            value: Some(read_write),
             token: Some(token.clone()),
             cty: Some(Type::Void),
+            children: destinations,
+            value: Some(read_write),
+            dest: template,
+            args: inputs,
             ..Node::default()
         });
         Node {

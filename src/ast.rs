@@ -370,30 +370,30 @@ impl<'a> AstBuilderImpl<'a> {
             error_logger,
             tokens,
             cur: 0,
-            offset_size: 0,
-            loop_stack: vec![],
-            labels: HashMap::new(),
-            defined_labels: HashSet::new(),
-            switch_stack: vec![],
-            switch_types: vec![],
-            return_type: None,
+            scope_stack: vec![reserved_functions()],
+            struct_definitions: vec![],
+            next_enum_id: 0,
+            declaration_attributes_state: None,
+            parameter_depth: 0,
             current_function: None,
-            mutable_static: None,
+            return_type: None,
             return_pointer: None,
+            mutable_static: None,
             variadic_parameters: None,
             variadic_last: None,
+            offset_size: 0,
+            next_deferred_local: usize::MAX / 2,
             pending_bounds: vec![],
-            parameter_depth: 0,
-            declaration_attributes_state: None,
             dynamic_objects: vec![],
             vla_active: vec![],
-            jump_depths: vec![],
+            loop_stack: vec![],
             continue_depths: HashMap::new(),
+            switch_stack: vec![],
+            switch_types: vec![],
             switch_vla_depths: vec![],
-            next_enum_id: 0,
-            next_deferred_local: usize::MAX / 2,
-            struct_definitions: vec![],
-            scope_stack: vec![reserved_functions()],
+            labels: HashMap::new(),
+            defined_labels: HashSet::new(),
+            jump_depths: vec![],
             functions: HashMap::new(),
             global_variables: HashMap::new(),
             string_literals: Vec::new(),
@@ -456,7 +456,7 @@ impl<'a> AstBuilderImpl<'a> {
         self.declaration_attributes(false, None, true);
         if matches!(
             self.tokens[self.cur].tt,
-            TokenType::Ident | TokenType::Reserved
+            TokenType::Reserved | TokenType::Ident
         ) && matches!(
             self.tokens[self.cur].s_value.as_str(),
             "asm" | "__asm" | "__asm__"
@@ -483,12 +483,14 @@ impl<'a> AstBuilderImpl<'a> {
                 .labels
                 .entry(token.s_value.to_string())
                 .or_insert(token.pos);
+            let vla_scope = self.vla_active.clone();
+            let lhs = Some(Box::new(self.stmt()));
             return Node {
                 nt: NodeType::Label,
-                vla_scope: self.vla_active.clone(),
-                value: Some(id),
                 token: Some(token),
-                lhs: Some(Box::new(self.stmt())),
+                lhs,
+                value: Some(id),
+                vla_scope,
                 ..Node::default()
             };
         }
@@ -505,10 +507,10 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(";");
             return Node {
                 nt: NodeType::Goto,
+                token: Some(token.clone()),
+                value: Some(id),
                 args: self.dynamic_objects.clone(),
                 vla_scope: self.vla_active.clone(),
-                value: Some(id),
-                token: Some(token.clone()),
                 ..Node::default()
             };
         }
@@ -551,8 +553,8 @@ impl<'a> AstBuilderImpl<'a> {
             self.switch_vla_depths.pop();
             self.jump_depths.pop();
             return Node {
-                token: Some(t.clone()),
                 nt: NodeType::Switch,
+                token: Some(t.clone()),
                 cond: Some(Box::new(cond)),
                 then: Some(Box::new(body)),
                 children: cases,
@@ -789,15 +791,15 @@ impl<'a> AstBuilderImpl<'a> {
                 unreachable!()
             });
             Node {
-                token: Some(t.clone()),
                 nt: NodeType::Continue,
+                token: Some(t.clone()),
                 value: Some(target),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_reserved("break") {
             Node {
-                token: Some(t.clone()),
                 nt: NodeType::Break,
+                token: Some(t.clone()),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_reserved("return") {
@@ -827,10 +829,10 @@ impl<'a> AstBuilderImpl<'a> {
                 }
             }
             Node {
-                token: Some(t.clone()),
                 nt: NodeType::Return,
-                offset: self.return_pointer,
+                token: Some(t.clone()),
                 lhs: operand.map(Box::new),
+                offset: self.return_pointer,
                 ..Node::default()
             }
         } else {
@@ -844,8 +846,8 @@ impl<'a> AstBuilderImpl<'a> {
         let (token, mut children, cleanup) = self.consume_block_parts()?;
         children.extend(cleanup);
         Some(Node {
-            token: Some(token),
             nt: NodeType::Block,
+            token: Some(token),
             children,
             ..Node::default()
         })
@@ -1117,15 +1119,15 @@ impl<'a> AstBuilderImpl<'a> {
             children.push(Self::runtime_size(&ty));
             Node {
                 nt: NodeType::Sequence,
-                children,
                 token: Some(token.clone()),
+                children,
                 ..Node::default()
             }
         } else {
             Node {
                 token: Some(token.clone()),
-                value: Some(ty.size_of()),
                 cty: Some(Type::integer(64, false)),
+                value: Some(ty.size_of()),
                 ..Node::default()
             }
         }
@@ -1164,8 +1166,8 @@ impl<'a> AstBuilderImpl<'a> {
                         Node {
                             nt: NodeType::Sequence,
                             token: Some(token.clone()),
-                            compound_literal: true,
                             children,
+                            compound_literal: true,
                             ..Node::default()
                         }
                     } else {
@@ -1183,19 +1185,19 @@ impl<'a> AstBuilderImpl<'a> {
                             GlobalVariable {
                                 ty: ty.clone(),
                                 alignment: 0,
-                                thread_local: false,
                                 data: Some(data),
                                 internal: true,
+                                declaration_only: false,
+                                common: false,
                                 weak_import: false,
                                 hidden: false,
-                                common: false,
-                                declaration_only: false,
+                                thread_local: false,
                             },
                         );
                         Node {
                             nt: NodeType::GlobalVar,
-                            cty: Some(ty),
                             token: Some(token.clone()),
+                            cty: Some(ty),
                             global_name: name.s_value.to_string(),
                             ..Node::default()
                         }
@@ -1214,13 +1216,13 @@ impl<'a> AstBuilderImpl<'a> {
                 if !(ty.is_arithmetic() || matches!(ty, Type::Void | Type::Ptr(_)))
                     || (!matches!(
                         source.unqualified(),
-                        Type::I8
-                            | Type::Enum(_)
+                        Type::Bool
+                            | Type::I8
                             | Type::SignedChar
-                            | Type::LongLong { .. }
                             | Type::I32
                             | Type::Integer { .. }
-                            | Type::Bool
+                            | Type::LongLong { .. }
+                            | Type::Enum(_)
                             | Type::Float(_)
                             | Type::LongDouble(_)
                             | Type::Ptr(_)
@@ -1310,8 +1312,8 @@ impl<'a> AstBuilderImpl<'a> {
             self.expect_reserved(")");
             return Node {
                 token: Some(token.clone()),
-                value: Some(ty.align_of()),
                 cty: Some(Type::integer(64, false)),
+                value: Some(ty.align_of()),
                 ..Node::default()
             };
         }
@@ -1324,9 +1326,9 @@ impl<'a> AstBuilderImpl<'a> {
                 .filter(|ty| ty.float_bits().is_some())
             {
                 let minus_one = Node {
+                    token: Some(t.clone()),
                     cty: Some(ty.clone()),
                     value: Some(ty.float_constant(-1.0)),
-                    token: Some(t.clone()),
                     ..Node::default()
                 };
                 return Node::new_with_op(Some(t.clone()), NodeType::Mul, operand, minus_one);
@@ -1373,10 +1375,11 @@ impl<'a> AstBuilderImpl<'a> {
             return Node::new_with_op_and_lhs(Some(t.clone()), NodeType::BitNot, self.unary());
         }
         if let Some(t) = self.attempt_reserved("!") {
+            let lhs = Some(Box::new(self.unary()));
             return Node {
-                token: Some(t.clone()),
                 nt: NodeType::Eq,
-                lhs: Some(Box::new(self.unary())),
+                token: Some(t.clone()),
+                lhs,
                 rhs: Some(Box::new(Node::new_with_num(None, 0))),
                 ..Node::default()
             };
@@ -1513,24 +1516,28 @@ impl<'a> AstBuilderImpl<'a> {
                 crate::token::StringEncoding::Wide => Type::wide_character(),
             };
             let count = t.encoded_string().len() / t.string_encoding.unit_size();
+            let dest = self.new_string_literal(&t);
             Node {
-                token: Some(t.clone()),
                 nt: NodeType::GlobalVar,
+                token: Some(t.clone()),
                 cty: Some(Type::Arr(Rc::new(element_type), Some(count))),
-                dest: self.new_string_literal(&t),
+                dest,
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt(TokenType::Float) {
+            let value = Some(t.i_value);
+            let extended_float = t.extended_float.clone();
+            let cty = Some(if t.s_value == "l" {
+                self.long_double_type(&t)
+            } else {
+                Type::Float(if t.s_value == "f" { 32 } else { 64 })
+            });
             Node {
                 nt: NodeType::Num,
-                value: Some(t.i_value),
-                extended_float: t.extended_float.clone(),
-                cty: Some(if t.s_value == "l" {
-                    self.long_double_type(&t)
-                } else {
-                    Type::Float(if t.s_value == "f" { 32 } else { 64 })
-                }),
                 token: Some(t),
+                cty,
+                value,
+                extended_float,
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt(TokenType::Num) {
@@ -1552,10 +1559,10 @@ impl<'a> AstBuilderImpl<'a> {
                 t.i_value
             };
             Node {
-                token: Some(t),
                 nt: NodeType::Num,
-                value: Some(value),
+                token: Some(t),
                 cty: Some(ty),
+                value: Some(value),
                 ..Node::default()
             }
         } else if let Some(t) = self.attempt_ident() {
@@ -1683,8 +1690,8 @@ impl<'a> AstBuilderImpl<'a> {
                 return Node {
                     nt: NodeType::StackAlloc,
                     token: Some(t),
-                    lhs: Some(Box::new(size)),
                     cty: Some(Type::Ptr(Rc::new(Type::Void))),
+                    lhs: Some(Box::new(size)),
                     ..Node::default()
                 };
             }
@@ -1714,23 +1721,40 @@ impl<'a> AstBuilderImpl<'a> {
                 .is_some_and(|object| object.thread_local);
             if let Some(ident) = self.resolve_name(&t.s_value) {
                 match ident {
+                    Identifier::TypeDef(..) | Identifier::EnumTag { .. } => {
+                        self.error_logger
+                            .print_error_position(t.pos, "type name is not an expression");
+                        unreachable!()
+                    }
+                    Identifier::Constant(value, ty) => Node {
+                        cty: Some(ty.clone()),
+                        ..Node::new_with_num(Some(t.clone()), *value as usize)
+                    },
+                    Identifier::Local(ty, offset, registered, alignment) => Node {
+                        nt: NodeType::LocalVar,
+                        token: Some(t.clone()),
+                        cty: Some(ty.clone()),
+                        offset: Some(*offset),
+                        alignment: *alignment,
+                        registered: *registered,
+                        ..Node::default()
+                    },
                     Identifier::Dynamic(ty, offset, registered) => {
                         let mut node = Self::dynamic_node(ty.clone(), *offset, t.clone());
                         node.registered = *registered;
                         node
                     }
-                    Identifier::Local(ty, offset, registered, alignment) => Node {
-                        registered: *registered,
-                        alignment: *alignment,
+                    Identifier::Static(ty) => Node {
+                        nt: NodeType::GlobalVar,
                         token: Some(t.clone()),
-                        nt: NodeType::LocalVar,
                         cty: Some(ty.clone()),
-                        offset: Some(*offset),
+                        global_name: t.s_value.to_string(),
+                        thread_local,
                         ..Node::default()
                     },
                     Identifier::StaticObject(ty, name) => Node {
-                        token: Some(t.clone()),
                         nt: NodeType::GlobalVar,
+                        token: Some(t.clone()),
                         cty: Some(ty.clone()),
                         global_name: name.clone(),
                         thread_local: self
@@ -1739,23 +1763,6 @@ impl<'a> AstBuilderImpl<'a> {
                             .is_some_and(|object| object.thread_local),
                         ..Node::default()
                     },
-                    Identifier::Static(ty) => Node {
-                        token: Some(t.clone()),
-                        nt: NodeType::GlobalVar,
-                        cty: Some(ty.clone()),
-                        global_name: t.s_value.to_string(),
-                        thread_local,
-                        ..Node::default()
-                    },
-                    Identifier::Constant(value, ty) => Node {
-                        cty: Some(ty.clone()),
-                        ..Node::new_with_num(Some(t.clone()), *value as usize)
-                    },
-                    Identifier::TypeDef(..) | Identifier::EnumTag { .. } => {
-                        self.error_logger
-                            .print_error_position(t.pos, "type name is not an expression");
-                        unreachable!()
-                    }
                 }
             } else {
                 self.error_logger
@@ -1816,6 +1823,7 @@ impl<'a> AstBuilderImpl<'a> {
             target.clone(),
         );
         let one = Node {
+            token: Some(token.clone()),
             cty: Some(if ty.float_bits().is_some() {
                 ty.clone()
             } else {
@@ -1826,7 +1834,6 @@ impl<'a> AstBuilderImpl<'a> {
             } else {
                 1
             }),
-            token: Some(token.clone()),
             ..Node::default()
         };
         let value = Node::new_with_op(
@@ -1920,15 +1927,15 @@ impl<'a> AstBuilderImpl<'a> {
                 };
                 let callee = if direct { None } else { Some(Box::new(node)) };
                 node = Node {
-                    token: Some(t),
                     nt: NodeType::CallFunc,
-                    offset: result_offset,
-                    global_name: s_value,
+                    token: Some(t),
                     cty: Some(return_type),
+                    lhs: callee,
+                    global_name: s_value,
                     args,
                     parameter_types,
                     variadic,
-                    lhs: callee,
+                    offset: result_offset,
                     ..Node::default()
                 }
             } else if let Some(token) = self
@@ -1973,8 +1980,8 @@ impl<'a> AstBuilderImpl<'a> {
                 node = Node::new_with_op(Some(b_token.clone()), NodeType::Add, node, self.expr());
                 self.expect_reserved("]");
                 node = Node {
-                    token: Some(b_token.clone()),
                     nt: NodeType::Deref,
+                    token: Some(b_token.clone()),
                     lhs: Some(Box::new(node)),
                     ..Node::default()
                 }
@@ -2147,29 +2154,29 @@ mod tests {
             Token {
                 tt: TokenType::Ident,
                 pos: 0,
-                i_value: 0,
                 s_value: "x".to_string().into(),
+                i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
-                i_value: 0,
                 s_value: "=".to_string().into(),
+                i_value: 0,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Num,
                 pos: 0,
-                i_value: 42,
                 s_value: String::new().into(),
+                i_value: 42,
                 ..Token::default()
             },
             Token {
                 tt: TokenType::Reserved,
                 pos: 0,
-                i_value: 0,
                 s_value: ";".to_string().into(),
+                i_value: 0,
                 ..Token::default()
             },
         ];

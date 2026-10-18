@@ -84,11 +84,11 @@ impl AstBuilderImpl<'_> {
             Identifier::Local(ty.clone(), self.offset_size, false, alignment),
         );
         Node {
-            token: Some(t),
             nt: NodeType::LocalVar,
-            alignment,
+            token: Some(t),
             cty: Some(ty),
             offset: Some(self.offset_size),
+            alignment,
             ..Node::default()
         }
     }
@@ -483,8 +483,8 @@ impl AstBuilderImpl<'_> {
                 self.functions
                     .entry(token.s_value.to_string())
                     .or_insert_with(|| Func {
-                        cty: ty.clone(),
                         token: Some(token.clone()),
+                        cty: ty.clone(),
                         ..Func::default()
                     });
                 let internal = internal
@@ -523,15 +523,15 @@ impl AstBuilderImpl<'_> {
                 if !definition {
                     if function.body.is_none() {
                         *function = Func {
-                            gnu_inline,
-                            noinline,
-                            weak_import,
-                            hidden,
-                            external_definition,
-                            cty: ty,
                             token: Some(token),
+                            cty: ty,
                             offset_size: self.offset_size,
                             internal,
+                            external_definition,
+                            weak_import,
+                            hidden,
+                            gnu_inline,
+                            noinline,
                             ..Func::default()
                         };
                     }
@@ -610,25 +610,26 @@ impl AstBuilderImpl<'_> {
                         return;
                     }
                 }
-                self.functions.insert(
-                    token.s_value.to_string(),
+                self.functions.insert(token.s_value.to_string(), {
+                    let inline_definition = inline && body.is_some();
+                    let mutable_static = self.mutable_static.take();
                     Func {
-                        inline_definition: inline && body.is_some(),
-                        gnu_inline,
-                        noinline,
+                        token: Some(token),
+                        cty: ty,
+                        args,
+                        body,
+                        mutable_static,
+                        offset_size: self.offset_size,
+                        return_pointer: self.return_pointer,
+                        internal,
+                        external_definition,
                         weak_import,
                         hidden,
-                        external_definition,
-                        mutable_static: self.mutable_static.take(),
-                        body,
-                        cty: ty,
-                        token: Some(token),
-                        args,
-                        offset_size: self.offset_size,
-                        internal,
-                        return_pointer: self.return_pointer,
-                    },
-                );
+                        inline_definition,
+                        gnu_inline,
+                        noinline,
+                    }
+                });
                 return;
             }
             if let Some(previous) = self.global_variables.get(token.s_value.as_str()) {
@@ -648,13 +649,13 @@ impl AstBuilderImpl<'_> {
                 .or_insert_with(|| GlobalVariable {
                     ty: ty.clone(),
                     alignment,
-                    thread_local,
+                    data: None,
+                    internal,
+                    declaration_only: external,
+                    common: attributes.common,
                     weak_import: attributes.weak_import,
                     hidden: attributes.hidden,
-                    common: attributes.common,
-                    declaration_only: external,
-                    internal,
-                    data: None,
+                    thread_local,
                 });
             let data = if self.attempt_reserved("=").is_some() {
                 Some(self.global_initializer(&ty))
@@ -841,8 +842,8 @@ impl AstBuilderImpl<'_> {
                     self.functions.insert(
                         name.clone(),
                         Func {
-                            cty: ty.clone(),
                             token: Some(token.clone()),
+                            cty: ty.clone(),
                             ..Func::default()
                         },
                     );
@@ -887,13 +888,13 @@ impl AstBuilderImpl<'_> {
                 .or_insert_with(|| GlobalVariable {
                     ty: ty.clone(),
                     alignment: requested_alignment,
-                    thread_local,
+                    data: None,
                     internal: !external,
+                    declaration_only: external,
+                    common: false,
                     weak_import: false,
                     hidden: false,
-                    common: false,
-                    declaration_only: external,
-                    data: None,
+                    thread_local,
                 });
             let data = if self.attempt_reserved("=").is_some() {
                 if external {

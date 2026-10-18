@@ -11,17 +11,6 @@ use crate::{
 impl AstBuilderImpl<'_> {
     pub(super) fn validate_type_layout(&self, ty: &Type, token: &Token) {
         match ty {
-            Type::Qualified(child, q) => {
-                if q.restricted
-                    && !matches!(child.unqualified(), Type::Ptr(pointee) if pointee.function_signature_ref().is_none())
-                {
-                    self.error_logger.print_error_position(
-                        token.pos,
-                        "restrict requires a pointer to an object or void",
-                    );
-                }
-                self.validate_type_layout(child, token);
-            }
             Type::Ptr(child) => self.validate_type_layout(child, token),
             Type::Arr(child, _) | Type::Vla(child, _) => {
                 if child.size_of() % child.align_of() != 0 {
@@ -94,6 +83,17 @@ impl AstBuilderImpl<'_> {
                     self.validate_type_layout(ty, token);
                 }
             }
+            Type::Qualified(child, q) => {
+                if q.restricted
+                    && !matches!(child.unqualified(), Type::Ptr(pointee) if pointee.function_signature_ref().is_none())
+                {
+                    self.error_logger.print_error_position(
+                        token.pos,
+                        "restrict requires a pointer to an object or void",
+                    );
+                }
+                self.validate_type_layout(child, token);
+            }
             _ => {}
         }
         if ty.checked_size_of().is_none() {
@@ -121,6 +121,12 @@ impl AstBuilderImpl<'_> {
         let ty = ty.unqualified();
         match (ty, data) {
             (_, GlobalVariableData::Zero) => {}
+            (Type::Integer128 { .. }, _) => {
+                self.error_logger.print_error_position(
+                    token.pos,
+                    "128-bit integer value initialization is not supported",
+                );
+            }
             (Type::Float16, _) => {
                 self.error_logger.print_error_position(
                     token.pos,
@@ -133,12 +139,18 @@ impl AstBuilderImpl<'_> {
                     "extended long double value initialization is not supported",
                 );
             }
-            (Type::Integer128 { .. }, _) => {
-                self.error_logger.print_error_position(
-                    token.pos,
-                    "128-bit integer value initialization is not supported",
-                );
+            (Type::Arr(child, size), GlobalVariableData::Arr(elements)) => {
+                if size.is_some_and(|size| elements.len() > size) {
+                    self.error_logger
+                        .print_error_position(token.pos, "too many array initializer elements");
+                }
+                for element in elements {
+                    self.validate_global_initializer(child, element, token);
+                }
             }
+            (Type::Arr(..), _) => self
+                .error_logger
+                .print_error_position(token.pos, "array initializer requires braces"),
             (Type::Struct(ty), GlobalVariableData::Union { index, value }) => {
                 self.validate_global_initializer(&ty.member(*index).ty, value, token);
             }
@@ -164,18 +176,6 @@ impl AstBuilderImpl<'_> {
                 self.error_logger
                     .print_error_position(token.pos, "global struct initializer requires braces");
             }
-            (Type::Arr(child, size), GlobalVariableData::Arr(elements)) => {
-                if size.is_some_and(|size| elements.len() > size) {
-                    self.error_logger
-                        .print_error_position(token.pos, "too many array initializer elements");
-                }
-                for element in elements {
-                    self.validate_global_initializer(child, element, token);
-                }
-            }
-            (Type::Arr(..), _) => self
-                .error_logger
-                .print_error_position(token.pos, "array initializer requires braces"),
             (_, GlobalVariableData::Arr(elements)) => {
                 if elements.len() != 1 {
                     self.error_logger
@@ -402,11 +402,11 @@ impl AstBuilderImpl<'_> {
         if matches!(
             node.nt,
             NodeType::Mod
-                | NodeType::BitAnd
-                | NodeType::BitOr
-                | NodeType::BitXor
                 | NodeType::BitLeft
                 | NodeType::BitRight
+                | NodeType::BitAnd
+                | NodeType::BitXor
+                | NodeType::BitOr
                 | NodeType::BitNot
         ) {
             for operand in [&node.lhs, &node.rhs].into_iter().flatten() {
@@ -457,24 +457,24 @@ impl AstBuilderImpl<'_> {
         }
         if matches!(
             node.nt,
-            NodeType::Assign
-                | NodeType::Add
+            NodeType::Add
                 | NodeType::Sub
                 | NodeType::Mul
                 | NodeType::Div
                 | NodeType::Mod
+                | NodeType::BitLeft
+                | NodeType::BitRight
+                | NodeType::BitAnd
+                | NodeType::BitXor
+                | NodeType::BitOr
+                | NodeType::BitNot
                 | NodeType::Eq
                 | NodeType::Ne
                 | NodeType::Lt
                 | NodeType::Le
-                | NodeType::BitLeft
-                | NodeType::BitRight
-                | NodeType::BitAnd
-                | NodeType::BitOr
-                | NodeType::BitXor
-                | NodeType::BitNot
                 | NodeType::LogicalAnd
                 | NodeType::LogicalOr
+                | NodeType::Assign
         ) {
             for operand in [&node.lhs, &node.rhs].into_iter().flatten() {
                 no_value(operand);

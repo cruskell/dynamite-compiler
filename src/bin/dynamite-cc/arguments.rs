@@ -16,20 +16,20 @@ fn argument_value(args: &[String], index: &mut usize) -> Result<String, String> 
 impl Arguments {
     pub(super) fn parse(args: &[String]) -> Result<Self, String> {
         let mut result = Self {
+            mode: Mode::Link,
+            preprocess_only: false,
+            emit_llvm: false,
+            jobs: 1,
             inputs: vec![],
+            output: None,
+            preprocessing: vec![],
             backend: vec![],
             linker: vec![],
-            preprocessing: vec![],
             forwarded: vec![],
-            output: None,
-            mode: Mode::Link,
-            jobs: 1,
             dependencies: None,
             dependency_file: None,
             dependency_targets: vec![],
             phony_dependencies: false,
-            preprocess_only: false,
-            emit_llvm: false,
         };
         let preprocess_only = args
             .iter()

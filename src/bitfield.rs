@@ -26,9 +26,9 @@ fn temporary(ty: Type, offset: &mut usize, source: &Node) -> Node {
     *offset = (*offset + ty.size_of()).div_ceil(ty.align_of()) * ty.align_of();
     Node {
         nt: NodeType::LocalVar,
+        token: source.token.clone(),
         cty: Some(ty),
         offset: Some(*offset),
-        token: source.token.clone(),
         ..Node::default()
     }
 }

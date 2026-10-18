@@ -36,6 +36,22 @@ pub fn initializer_bytes(
     addresses: &mut HashMap<usize, (String, i64)>,
 ) {
     match ty.unqualified() {
+        Type::Arr(child, size) => {
+            let elements = if let Some(GlobalVariableData::Arr(v)) = data {
+                Some(v)
+            } else {
+                None
+            };
+            for index in 0..size.unwrap_or(0) {
+                initializer_bytes(
+                    child,
+                    elements.and_then(|v| v.get(index)),
+                    offset + index * child.size_of(),
+                    bytes,
+                    addresses,
+                );
+            }
+        }
         Type::Struct(st) => {
             let elements = if let Some(GlobalVariableData::Arr(v)) = data {
                 Some(v)
@@ -77,22 +93,6 @@ pub fn initializer_bytes(
                 } else {
                     initializer_bytes(&member.ty, data, offset + member.offset, bytes, addresses);
                 }
-            }
-        }
-        Type::Arr(child, size) => {
-            let elements = if let Some(GlobalVariableData::Arr(v)) = data {
-                Some(v)
-            } else {
-                None
-            };
-            for index in 0..size.unwrap_or(0) {
-                initializer_bytes(
-                    child,
-                    elements.and_then(|v| v.get(index)),
-                    offset + index * child.size_of(),
-                    bytes,
-                    addresses,
-                );
             }
         }
         _ => {

@@ -201,9 +201,9 @@ impl Type {
             (Self::Enum(value), other) | (other, Self::Enum(value)) => {
                 value.underlying.borrow().compatible(other)
             }
-            (Self::Vla(left, _), Self::Vla(right, _) | Self::Arr(right, _))
+            (Self::Ptr(left), Self::Ptr(right))
             | (Self::Arr(left, _), Self::Vla(right, _))
-            | (Self::Ptr(left), Self::Ptr(right)) => {
+            | (Self::Vla(left, _), Self::Arr(right, _) | Self::Vla(right, _)) => {
                 left.qualifiers() == right.qualifiers() && left.compatible(right)
             }
             (Self::Arr(left, count), Self::Arr(right, other_count)) => {
@@ -315,23 +315,23 @@ impl Type {
 
     pub fn has_flexible_array(&self) -> bool {
         match self.unqualified() {
-            Self::Struct(ty) => ty.definition().borrow().has_flexible_array,
             Self::Arr(child, _) => child.has_flexible_array(),
+            Self::Struct(ty) => ty.definition().borrow().has_flexible_array,
             _ => false,
         }
     }
 
     pub fn is_variable_array(&self) -> bool {
         match self.unqualified() {
-            Self::Vla(..) => true,
             Self::Arr(child, _) => child.is_variable_array(),
+            Self::Vla(..) => true,
             _ => false,
         }
     }
     pub fn is_variably_modified(&self) -> bool {
         match self.unqualified() {
+            Self::Ptr(child) | Self::Arr(child, _) => child.is_variably_modified(),
             Self::Vla(..) => true,
-            Self::Arr(child, _) | Self::Ptr(child) => child.is_variably_modified(),
             _ => false,
         }
     }
@@ -415,12 +415,12 @@ impl Type {
     }
     pub fn integer_info(&self) -> Option<(u8, bool)> {
         match self {
-            Self::Enum(value) => value.underlying.borrow().integer_info(),
+            Self::Bool => Some((8, false)),
             Self::I8 | Self::SignedChar => Some((8, true)),
-            Self::LongLong { signed } => Some((64, *signed)),
             Self::I32 => Some((32, true)),
             Self::Integer { bits, signed } => Some((*bits, *signed)),
-            Self::Bool => Some((8, false)),
+            Self::LongLong { signed } => Some((64, *signed)),
+            Self::Enum(value) => value.underlying.borrow().integer_info(),
             Self::Qualified(child, _) | Self::Aligned(child, _) => child.integer_info(),
             _ => None,
         }
@@ -496,7 +496,6 @@ impl Type {
     }
     pub fn qualifiers(&self) -> Qualifiers {
         match self {
-            Self::Aligned(child, _) => child.qualifiers(),
             Self::Qualified(child, q) => {
                 let inherited = child.qualifiers();
                 Qualifiers {
@@ -505,6 +504,7 @@ impl Type {
                     restricted: q.restricted || inherited.restricted,
                 }
             }
+            Self::Aligned(child, _) => child.qualifiers(),
             _ => Qualifiers::default(),
         }
     }
@@ -529,15 +529,15 @@ impl Type {
     pub(crate) fn lower_for_codegen(&mut self) {
         // Scalar annotations need no recursive normalization.
         match self {
-            Self::Qualified(..)
-            | Self::Aligned(..)
-            | Self::Vector(..)
+            Self::Enum(..)
             | Self::Ptr(..)
             | Self::Arr(..)
             | Self::Vla(..)
+            | Self::Vector(..)
             | Self::Func(..)
             | Self::VariadicFunc(..)
-            | Self::Enum(..) => self.lower_compound_for_codegen(),
+            | Self::Qualified(..)
+            | Self::Aligned(..) => self.lower_compound_for_codegen(),
             _ => {}
         }
     }
@@ -557,11 +557,11 @@ impl Type {
                 *self = underlying;
                 self.lower_for_codegen();
             }
-            Self::Aligned(child, _)
-            | Self::Vector(child, _)
-            | Self::Ptr(child)
+            Self::Ptr(child)
             | Self::Arr(child, _)
-            | Self::Vla(child, _) => Rc::make_mut(child).lower_for_codegen(),
+            | Self::Vla(child, _)
+            | Self::Vector(child, _)
+            | Self::Aligned(child, _) => Rc::make_mut(child).lower_for_codegen(),
             Self::Func(args, result) | Self::VariadicFunc(args, result) => {
                 for arg in Rc::make_mut(args) {
                     arg.lower_parameter_for_codegen();
@@ -588,9 +588,6 @@ impl Type {
     /// Reuse an owned signature's storage when constructing a call.
     pub(crate) fn into_function_signature(self) -> Option<(Vec<Type>, Type, bool)> {
         match self {
-            Self::Qualified(child, _) | Self::Aligned(child, _) => {
-                Rc::unwrap_or_clone(child).into_function_signature()
-            }
             Self::Func(args, result) => Some((
                 Rc::unwrap_or_clone(args),
                 Rc::unwrap_or_clone(result),
@@ -598,6 +595,9 @@ impl Type {
             )),
             Self::VariadicFunc(args, result) => {
                 Some((Rc::unwrap_or_clone(args), Rc::unwrap_or_clone(result), true))
+            }
+            Self::Qualified(child, _) | Self::Aligned(child, _) => {
+                Rc::unwrap_or_clone(child).into_function_signature()
             }
             _ => None,
         }
@@ -623,24 +623,24 @@ impl Type {
 
     pub fn size_of(&self) -> usize {
         match self {
-            Type::Qualified(child, _) | Type::Aligned(child, _) => child.size_of(),
-            Type::Enum(value) => value.underlying.borrow().size_of(),
             Type::Void => 0,
-            Type::Struct(ty) => ty.definition().borrow().size,
-            Type::I8 | Type::SignedChar => 1,
-            Type::LongLong { .. } => 8,
-            Type::I32 => 4,
-            Type::Float16 => 2,
-            Type::Vector(element, lanes) => element.size_of() * lanes,
-            Type::Integer128 { .. } => 16,
-            Type::Integer { bits, .. } => (*bits as usize) / 8,
             Type::Bool => 1,
+            Type::I8 | Type::SignedChar => 1,
+            Type::I32 => 4,
+            Type::Integer { bits, .. } => (*bits as usize) / 8,
+            Type::LongLong { .. } => 8,
+            Type::Integer128 { .. } => 16,
+            Type::Enum(value) => value.underlying.borrow().size_of(),
+            Type::Float16 => 2,
             Type::LongDouble(80) => 16,
             Type::Float(bits) | Type::LongDouble(bits) => usize::from(*bits) / 8,
             Type::Ptr(_) => 8,
             Type::Arr(t, s) => t.size_of() * s.unwrap_or(0),
             Type::Vla(..) => 8,
+            Type::Vector(element, lanes) => element.size_of() * lanes,
+            Type::Struct(ty) => ty.definition().borrow().size,
             Type::Func(..) | Type::VariadicFunc(..) => 1,
+            Type::Qualified(child, _) | Type::Aligned(child, _) => child.size_of(),
         }
     }
     pub(crate) fn contains_volatile_subobject(&self) -> bool {
@@ -660,8 +660,8 @@ impl Type {
 
     pub fn contains_vector(&self) -> bool {
         match self.unqualified() {
-            Self::Vector(..) => true,
             Self::Arr(child, _) | Self::Vla(child, _) => child.contains_vector(),
+            Self::Vector(..) => true,
             Self::Struct(record) => record
                 .definition()
                 .borrow()
@@ -703,10 +703,7 @@ impl Type {
 
     pub fn contains_typedef_alignment(&self) -> bool {
         match self {
-            Self::Aligned(child, alignment) => {
-                *alignment != child.natural_align_of() || child.contains_typedef_alignment()
-            }
-            Self::Qualified(child, _) | Self::Arr(child, _) | Self::Vla(child, _) => {
+            Self::Arr(child, _) | Self::Vla(child, _) | Self::Qualified(child, _) => {
                 child.contains_typedef_alignment()
             }
             Self::Struct(record) => record
@@ -715,12 +712,15 @@ impl Type {
                 .members
                 .iter()
                 .any(|member| member.ty.contains_typedef_alignment()),
+            Self::Aligned(child, alignment) => {
+                *alignment != child.natural_align_of() || child.contains_typedef_alignment()
+            }
             _ => false,
         }
     }
 
     pub fn natural_align_of(&self) -> usize {
-        if let Self::Aligned(child, _) | Self::Qualified(child, _) = self {
+        if let Self::Qualified(child, _) | Self::Aligned(child, _) = self {
             return child.natural_align_of();
         }
         if let Self::Struct(ty) = self.unqualified() {
@@ -735,11 +735,11 @@ impl Type {
 
     pub fn align_of(&self) -> usize {
         match self {
-            Self::Aligned(_, alignment) => *alignment,
-            Self::Qualified(child, _) => child.align_of(),
             Self::Void => 1,
-            Self::Struct(ty) => ty.definition().borrow().align.max(1),
             Self::Arr(child, _) | Self::Vla(child, _) => child.align_of(),
+            Self::Struct(ty) => ty.definition().borrow().align.max(1),
+            Self::Qualified(child, _) => child.align_of(),
+            Self::Aligned(_, alignment) => *alignment,
             _ => self.size_of(),
         }
     }

@@ -72,17 +72,21 @@ impl AstBuilderImpl<'_> {
         for name in referenced {
             let local = format!(".inline.{name}");
             let function = self.functions.get_mut(&name).unwrap();
-            let local_function = Func {
-                body: function.body.take(),
-                internal: true,
-                noinline: function.noinline,
-                external_definition: true,
-                cty: function.cty.clone(),
-                args: std::mem::take(&mut function.args),
-                offset_size: function.offset_size,
-                return_pointer: function.return_pointer,
-                token: function.token.clone(),
-                ..Func::default()
+            let local_function = {
+                let body = function.body.take();
+                let args = std::mem::take(&mut function.args);
+                Func {
+                    token: function.token.clone(),
+                    cty: function.cty.clone(),
+                    args,
+                    body,
+                    offset_size: function.offset_size,
+                    return_pointer: function.return_pointer,
+                    internal: true,
+                    external_definition: true,
+                    noinline: function.noinline,
+                    ..Func::default()
+                }
             };
             self.functions.insert(local.clone(), local_function);
             names.insert(name, local);
