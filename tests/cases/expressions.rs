@@ -324,10 +324,18 @@ fn anonymous_aggregate_members(output_option: &str) {
 #[test_matrix([
     "struct Duplicate{int x;union{int x;};};int main(){return 0;}",
     "struct Nested{struct{int x;};union{int x;};};int main(){return 0;}",
+    "struct Deep{union{struct{int x;};};int x;};int main(){return 0;}",
+    "struct Deep{int x;union{struct{int x;};};};int main(){return 0;}",
     "struct Qualified{struct{int x;};};int main(){const struct Qualified s={{1}};s.x=2;return 0;}",
 ])]
 fn rejects_invalid_anonymous_aggregate_members(code: &str) {
     assert_frontend_error(code);
+}
+
+#[test_matrix(["asm", "llvm"])]
+fn named_members_keep_nested_names_in_their_own_scope(output_option: &str) {
+    let code = "struct S{struct{int value;} named;union{struct{int value;};};};struct S g={.named={3},.value=7};int main(){struct S s={.named={5},.value=9};return g.named.value!=3 || g.value!=7 || s.named.value!=5 || s.value!=9;}";
+    assert_eq!(compile_and_run(code, output_option).status.code(), Some(0));
 }
 
 #[test_matrix(["asm", "llvm"])]

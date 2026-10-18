@@ -155,7 +155,9 @@ impl AstBuilderImpl<'_> {
                 self.validate_global_initializer(&ty.member(*index).ty, value, token);
             }
             (Type::Struct(ty), GlobalVariableData::Arr(elements)) => {
-                let members = ty.members();
+                let definition = ty.definition();
+                let definition = definition.borrow();
+                let members = &definition.members;
                 let capacity = if ty.definition().borrow().is_union {
                     1
                 } else {

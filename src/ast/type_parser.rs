@@ -596,6 +596,7 @@ impl AstBuilderImpl<'_> {
                     .print_error_position(token.pos, "struct tag is already defined");
             }
             let mut members: Vec<StructMember> = vec![];
+            let mut member_names = std::collections::BTreeSet::new();
             let mut size = 0usize;
             let mut bit_address = 0usize;
             let mut has_bit_fields = false;
@@ -753,35 +754,20 @@ impl AstBuilderImpl<'_> {
                     };
                     if name.is_some() || matches!(member_type.unqualified(), Type::Struct(_)) {
                         let anonymous = name.is_none();
-                        let visible = if anonymous {
-                            let Type::Struct(child) = member_type.unqualified() else {
-                                unreachable!()
-                            };
-                            child
-                                .visible_members()
-                                .into_iter()
-                                .map(|(name, _)| name)
-                                .collect::<Vec<_>>()
-                        } else {
-                            vec![name.as_ref().unwrap().s_value.to_string()]
-                        };
-                        for existing in &members {
-                            let existing_names = if existing.anonymous {
-                                let Type::Struct(child) = existing.ty.unqualified() else {
-                                    unreachable!()
-                                };
-                                child
-                                    .visible_members()
-                                    .into_iter()
-                                    .map(|(name, _)| name)
-                                    .collect::<Vec<_>>()
-                            } else {
-                                vec![existing.name.clone()]
-                            };
-                            if visible.iter().any(|name| existing_names.contains(name)) {
+                        // Index visible names once; avoid rescanning all preceding members.
+                        let mut insert_name = |name: &str| {
+                            if !member_names.insert(name.to_owned()) {
                                 self.error_logger
                                     .print_error_position(position.pos, "duplicate struct member");
                             }
+                        };
+                        if anonymous {
+                            let Type::Struct(child) = member_type.unqualified() else {
+                                unreachable!()
+                            };
+                            child.for_each_visible_member(&mut |name, _| insert_name(name));
+                        } else {
+                            insert_name(&name.as_ref().unwrap().s_value);
                         }
                         members.push(StructMember {
                             name: name.map_or_else(

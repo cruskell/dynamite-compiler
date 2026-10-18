@@ -93,7 +93,9 @@ impl IrGenerator<'_> {
                 record.definition().borrow().packing.is_some()
                     || ty.contains_typedef_alignment()
                     || record
-                        .members()
+                        .definition()
+                        .borrow()
+                        .members
                         .iter()
                         .any(|member| Self::contains_packed_record(&member.ty))
             }
@@ -303,7 +305,9 @@ impl IrGenerator<'_> {
                 if let Some(GlobalVariableData::Arr(elements)) = data {
                     let mut fields = vec![];
                     let mut offset = 0usize;
-                    for (index, member) in struct_type.members().iter().enumerate() {
+                    for (index, member) in
+                        struct_type.definition().borrow().members.iter().enumerate()
+                    {
                         let aligned_offset =
                             offset.div_ceil(member.ty.align_of()) * member.ty.align_of();
                         if member.offset > aligned_offset {

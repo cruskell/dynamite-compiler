@@ -34,7 +34,9 @@ impl AstBuilderImpl<'_> {
             );
             return;
         };
-        let members = record.members();
+        let definition = record.definition();
+        let definition = definition.borrow();
+        let members = &definition.members;
         let valid = record.definition().borrow().is_union
             && ty.is_complete_object()
             && members.first().is_some_and(|first| {
@@ -48,6 +50,7 @@ impl AstBuilderImpl<'_> {
                             && Self::transparent_mode(&member.ty) == mode
                     })
             });
+        drop(definition);
         if !valid {
             self.error_logger.print_error_position(token.pos, "transparent unions require scalar members with matching calling representations and layout");
         }

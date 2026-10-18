@@ -145,7 +145,9 @@ impl AstBuilderImpl<'_> {
                 Some(child.as_ref().clone())
             }
             Type::Struct(st) => st
-                .members()
+                .definition()
+                .borrow()
+                .members
                 .get(index)
                 .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, None)))
                 .map(|member| member.ty.clone()),
@@ -447,7 +449,9 @@ impl AstBuilderImpl<'_> {
                     .collect(),
             ),
             Type::Struct(ty) => Some(
-                ty.members()
+                ty.definition()
+                    .borrow()
+                    .members
                     .iter()
                     .filter(|member| !matches!(member.ty.unqualified(), Type::Arr(_, None)))
                     .map(|member| Self::member_node(node.clone(), member, token))
@@ -505,7 +509,9 @@ impl AstBuilderImpl<'_> {
                 vec![]
             } else {
                 record
-                    .members()
+                    .definition()
+                    .borrow()
+                    .members
                     .iter()
                     .filter(|member| member.bit_field.is_none())
                     .map(|member| (member.offset, member.offset + member.ty.size_of()))

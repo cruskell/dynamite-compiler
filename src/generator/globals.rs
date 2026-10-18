@@ -246,7 +246,9 @@ where
             let mut lines = vec![];
             let mut end = 0;
             for (i, member) in struct_type
-                .members()
+                .definition()
+                .borrow()
+                .members
                 .iter()
                 .take(if struct_type.definition().borrow().is_union {
                     1
