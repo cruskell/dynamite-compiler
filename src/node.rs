@@ -161,6 +161,33 @@ pub struct Node {
 }
 
 impl Node {
+    /// Direct children in structural order, not source-language evaluation order.
+    pub(crate) fn child_nodes(&self) -> impl Iterator<Item = &Self> {
+        [
+            &self.lhs, &self.rhs, &self.cond, &self.then, &self.els, &self.ini, &self.upd,
+        ]
+        .into_iter()
+        .filter_map(|child| child.as_deref())
+        .chain(&self.children)
+        .chain(&self.args)
+    }
+
+    pub(crate) fn child_nodes_mut(&mut self) -> impl Iterator<Item = &mut Self> {
+        [
+            &mut self.lhs,
+            &mut self.rhs,
+            &mut self.cond,
+            &mut self.then,
+            &mut self.els,
+            &mut self.ini,
+            &mut self.upd,
+        ]
+        .into_iter()
+        .filter_map(|child| child.as_deref_mut())
+        .chain(&mut self.children)
+        .chain(&mut self.args)
+    }
+
     /// Whether evaluating this expression can call, write, or read a volatile value.
     pub(crate) fn has_side_effects(&self) -> bool {
         Self::has_effects(self, true)
@@ -197,17 +224,8 @@ impl Node {
                 .as_deref()
                 .is_some_and(|child| Self::has_effects(child, false));
         }
-        [
-            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        .any(|child| Self::has_effects(child, true))
-            || node
-                .children
-                .iter()
-                .chain(&node.args)
-                .any(|child| Self::has_effects(child, true))
+        node.child_nodes()
+            .any(|child| Self::has_effects(child, true))
     }
 
     pub fn new_with_op(token: Option<Token>, nt: NodeType, lhs: Node, rhs: Node) -> Self {

@@ -291,21 +291,7 @@ fn lower_with_type_changes(node: &mut Node, offset: &mut usize) -> bool {
         return true;
     }
     let mut changed = false;
-    for child in [
-        &mut node.lhs,
-        &mut node.rhs,
-        &mut node.cond,
-        &mut node.then,
-        &mut node.els,
-        &mut node.ini,
-        &mut node.upd,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        changed |= lower_with_type_changes(child, offset);
-    }
-    for child in node.children.iter_mut().chain(&mut node.args) {
+    for child in node.child_nodes_mut() {
         changed |= lower_with_type_changes(child, offset);
     }
     if node.bit_field.is_some() {

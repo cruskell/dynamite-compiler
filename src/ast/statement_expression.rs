@@ -102,15 +102,7 @@ impl AstBuilderImpl<'_> {
                 NodeType::While | NodeType::DoWhile | NodeType::For
             ));
         let switches = switches + usize::from(node.nt == NodeType::Switch);
-        for child in [
-            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.validate_statement_expression_jumps(child, loops, switches);
-        }
-        for child in node.children.iter().chain(&node.args) {
+        for child in node.child_nodes() {
             self.validate_statement_expression_jumps(child, loops, switches);
         }
     }

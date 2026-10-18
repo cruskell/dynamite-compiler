@@ -6,21 +6,7 @@ fn visit_direct_calls(node: &mut Node, operation: &mut impl FnMut(&mut String)) 
     if node.nt == NodeType::CallFunc && node.lhs.is_none() {
         operation(&mut node.global_name);
     }
-    for child in [
-        &mut node.lhs,
-        &mut node.rhs,
-        &mut node.cond,
-        &mut node.then,
-        &mut node.els,
-        &mut node.ini,
-        &mut node.upd,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        visit_direct_calls(child, operation);
-    }
-    for child in node.children.iter_mut().chain(&mut node.args) {
+    for child in node.child_nodes_mut() {
         visit_direct_calls(child, operation);
     }
 }

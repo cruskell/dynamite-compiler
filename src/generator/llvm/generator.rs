@@ -518,15 +518,7 @@ impl<'a> IrGenerator<'a> {
                 ));
             }
         }
-        for child in [
-            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            Self::allocate_locals(child, options, lines);
-        }
-        for child in node.children.iter().chain(&node.args) {
+        for child in node.child_nodes() {
             Self::allocate_locals(child, options, lines);
         }
     }
