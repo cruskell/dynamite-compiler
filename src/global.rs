@@ -64,7 +64,7 @@ pub fn initializer_bytes(
             } else {
                 0
             };
-            for (index, member) in st.members().iter().enumerate() {
+            for (index, member) in st.definition().borrow().members.iter().enumerate() {
                 if union && index != selected {
                     continue;
                 }

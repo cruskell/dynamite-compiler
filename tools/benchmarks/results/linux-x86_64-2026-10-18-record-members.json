@@ -1,0 +1,312 @@
+{
+  "baseline_revision": "7804347c97ee021bfac6c7b1a3e6558ec8fb3f40",
+  "candidate": "record-member changes in this PR",
+  "rust": "1.86.0 release",
+  "cpu": "Intel Core i5-5575R @ 2.80GHz",
+  "platform": "Linux x86_64",
+  "clang": "Ubuntu Clang 15.0.7",
+  "cpu_affinity": 0,
+  "frontend_method": "one warmup, median of 9 samples; 5 iterations/sample for synthetic cases, 1 for application inputs; tokenize + parse + teardown, no IR generation",
+  "frontend_median_ms": {
+    "before": {
+      "wide-128": 0.4686,
+      "wide-512": 6.0518,
+      "wide-2048": 87.9828,
+      "initialized-512": 354.3899,
+      "temp/build-benchmark/measured-final/matched/redis-adlist.i": 3.8311,
+      "temp/build-benchmark/measured-final/matched/redis-server.i": 91.1684,
+      "temp/build-benchmark/measured-final/matched/git-abspath.i": 54.8864,
+      "temp/build-benchmark/measured-final/matched/git-revision.i": 121.0991
+    },
+    "after": {
+      "wide-128": 0.1581,
+      "wide-512": 0.4795,
+      "wide-2048": 1.8264,
+      "initialized-512": 290.354,
+      "temp/build-benchmark/measured-final/matched/redis-adlist.i": 3.7668,
+      "temp/build-benchmark/measured-final/matched/redis-server.i": 82.9814,
+      "temp/build-benchmark/measured-final/matched/git-abspath.i": 54.7838,
+      "temp/build-benchmark/measured-final/matched/git-revision.i": 116.2238
+    }
+  },
+  "sources": {
+    "redis": {
+      "commit": "498ecd0d6d007db11ddb3aea9428552598a78622"
+    },
+    "git": {
+      "commit": "a018953688f1b10bddf91bff8747068f5f4746a4"
+    }
+  },
+  "inputs": {
+    "redis-adlist.i": {
+      "bytes": 46370,
+      "sha256": "2f43aa433b2992ea436eb18fb0fd9636863ad69d8509d530c6209bcc97b7a9bb"
+    },
+    "redis-server.i": {
+      "bytes": 738169,
+      "sha256": "908c6aee6336ef9520bd74784696dd10bcf6a258d01a4f9451bd104c5f9ed5e2"
+    },
+    "git-abspath.i": {
+      "bytes": 788201,
+      "sha256": "1079d3658eb36eb665d846024b17c8109554ead11aa535b72f8a4192eb67aca1"
+    },
+    "git-revision.i": {
+      "bytes": 1138115,
+      "sha256": "e971d8edcf66d4865d92df8e4201cb792f791cd0560a718f0b0381659d965acd"
+    }
+  },
+  "cli": {
+    "redis-adlist": {
+      "commands": {
+        "before": [
+          "/tmp/dynamite-refactor-baseline-cebd/target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/redis-adlist.i"
+        ],
+        "after": [
+          "target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/redis-adlist.i"
+        ],
+        "clang": [
+          "/usr/bin/clang-15",
+          "-x",
+          "cpp-output",
+          "-std=gnu99",
+          "-O0",
+          "-g0",
+          "-S",
+          "-emit-llvm",
+          "temp/build-benchmark/measured-final/matched/redis-adlist.i",
+          "-o",
+          "/dev/null"
+        ]
+      },
+      "samples_ms": {
+        "before": [
+          11.379504576325417,
+          11.128880083560944,
+          11.210069991648197,
+          11.495542712509632,
+          11.11488789319992,
+          11.877103708684444,
+          11.242825537919998
+        ],
+        "after": [
+          11.25767920166254,
+          11.369181796908379,
+          11.128504760563374,
+          11.48307416588068,
+          11.0279880464077,
+          11.427920311689377,
+          10.966186411678791
+        ],
+        "clang": [
+          35.58290749788284,
+          34.48469564318657,
+          34.80815514922142,
+          36.514787934720516,
+          34.46935210376978,
+          35.39296332746744,
+          34.72982160747051
+        ]
+      },
+      "median_ms": {
+        "before": 11.242825537919998,
+        "after": 11.25767920166254,
+        "clang": 34.80815514922142
+      }
+    },
+    "redis-server": {
+      "commands": {
+        "before": [
+          "/tmp/dynamite-refactor-baseline-cebd/target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/redis-server.i"
+        ],
+        "after": [
+          "target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/redis-server.i"
+        ],
+        "clang": [
+          "/usr/bin/clang-15",
+          "-x",
+          "cpp-output",
+          "-std=gnu99",
+          "-O0",
+          "-g0",
+          "-S",
+          "-emit-llvm",
+          "temp/build-benchmark/measured-final/matched/redis-server.i",
+          "-o",
+          "/dev/null"
+        ]
+      },
+      "samples_ms": {
+        "before": [
+          179.61125168949366,
+          181.54531717300415,
+          177.9050836339593,
+          182.79555812478065,
+          181.85498286038637,
+          179.4761624187231,
+          179.7898393124342
+        ],
+        "after": [
+          174.01742562651634,
+          171.0890056565404,
+          168.32899022847414,
+          169.21698302030563,
+          171.60220257937908,
+          175.8977361023426,
+          172.56638407707214
+        ],
+        "clang": [
+          218.4906667098403,
+          215.1467353105545,
+          215.17056226730347,
+          217.70942024886608,
+          213.41602131724358,
+          213.53572886437178,
+          215.40017519146204
+        ]
+      },
+      "median_ms": {
+        "before": 179.7898393124342,
+        "after": 171.60220257937908,
+        "clang": 215.17056226730347
+      }
+    },
+    "git-abspath": {
+      "commands": {
+        "before": [
+          "/tmp/dynamite-refactor-baseline-cebd/target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/git-abspath.i"
+        ],
+        "after": [
+          "target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/git-abspath.i"
+        ],
+        "clang": [
+          "/usr/bin/clang-15",
+          "-x",
+          "cpp-output",
+          "-std=gnu99",
+          "-O0",
+          "-g0",
+          "-S",
+          "-emit-llvm",
+          "temp/build-benchmark/measured-final/matched/git-abspath.i",
+          "-o",
+          "/dev/null"
+        ]
+      },
+      "samples_ms": {
+        "before": [
+          99.99118931591511,
+          99.43537786602974,
+          98.16861525177956,
+          99.0181565284729,
+          98.75555336475372,
+          101.37390065938234,
+          102.3815218359232
+        ],
+        "after": [
+          98.76422863453627,
+          99.68920424580574,
+          100.07515735924244,
+          99.98262021690607,
+          98.87580387294292,
+          99.01952371001244,
+          102.06792876124382
+        ],
+        "clang": [
+          131.34855777025223,
+          126.699673011899,
+          131.30623940378428,
+          130.9173395857215,
+          130.56845217943192,
+          130.10326493531466,
+          128.26349027454853
+        ]
+      },
+      "median_ms": {
+        "before": 99.43537786602974,
+        "after": 99.68920424580574,
+        "clang": 130.56845217943192
+      }
+    },
+    "git-revision": {
+      "commands": {
+        "before": [
+          "/tmp/dynamite-refactor-baseline-cebd/target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/git-revision.i"
+        ],
+        "after": [
+          "target/release/dynamite_compiler",
+          "-o",
+          "llvm",
+          "temp/build-benchmark/measured-final/matched/git-revision.i"
+        ],
+        "clang": [
+          "/usr/bin/clang-15",
+          "-x",
+          "cpp-output",
+          "-std=gnu99",
+          "-O0",
+          "-g0",
+          "-S",
+          "-emit-llvm",
+          "temp/build-benchmark/measured-final/matched/git-revision.i",
+          "-o",
+          "/dev/null"
+        ]
+      },
+      "samples_ms": {
+        "before": [
+          223.81661366671324,
+          220.79573012888432,
+          217.82646887004375,
+          217.12689194828272,
+          245.81171106547117,
+          219.63510010391474,
+          221.01430501788855
+        ],
+        "after": [
+          217.06718858331442,
+          214.02322500944138,
+          217.64389798045158,
+          218.39752607047558,
+          230.97717761993408,
+          215.00590723007917,
+          217.856515198946
+        ],
+        "clang": [
+          244.46686916053295,
+          245.47432269901037,
+          243.45826916396618,
+          244.57107577472925,
+          247.8687996044755,
+          243.06410364806652,
+          248.69110994040966
+        ]
+      },
+      "median_ms": {
+        "before": 220.79573012888432,
+        "after": 217.64389798045158,
+        "clang": 244.57107577472925
+      }
+    }
+  }
+}

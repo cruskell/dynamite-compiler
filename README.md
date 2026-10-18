@@ -226,6 +226,10 @@ teardown, IR writes, Clang lowering and linking. See
 [the build benchmark tools](tools/benchmarks/README.md) for repeatable Redis/Git
 comparisons and interpretation of nested stage and Clang trace totals.
 
+For record-member scaling and a separate Clang comparison to LLVM IR, see the
+[2026-10-18 frontend measurements](tools/benchmarks/results/linux-x86_64-2026-10-18-record-members.md).
+These measurements do not replace the clean-build timings below.
+
 ## Measured Linux build times
 
 ### Native preprocessing and LLVM tools backend (2026-10-17)

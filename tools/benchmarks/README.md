@@ -103,3 +103,12 @@ For the experimental LLVM tools backend, set `DYNAMITE_BACKEND=llvm` and select
 matching `DYNAMITE_LLC`, `DYNAMITE_OPT`, and `DYNAMITE_LLD` executables. Use
 `--no-trace`, since Clang time-trace options are unsupported on that path.
 Preprocessing always uses Dynamite's native implementation.
+
+## Record-member scaling
+
+Build and run `cargo run --release --example profile_record_members -- INPUT.i ...`
+to measure tokenization, AST construction and teardown for synthetic wide records,
+a fully initialized record, and optional already-preprocessed application inputs.
+The example prints warm-run medians and excludes file reads and IR generation.
+See the [record-member measurements](results/linux-x86_64-2026-10-18-record-members.md)
+for the baseline comparison, Clang CLI timings and measurement boundaries.

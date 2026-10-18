@@ -27,45 +27,59 @@ impl StructType {
         self.definition().borrow().members[index].clone()
     }
     pub fn visible_members(&self) -> Vec<(String, Vec<usize>)> {
-        self.members()
-            .iter()
-            .enumerate()
-            .flat_map(|(index, member)| {
+        let mut members = vec![];
+        self.for_each_visible_member(&mut |name, path| {
+            members.push((name.to_owned(), path.to_vec()));
+        });
+        members
+    }
+
+    pub(crate) fn for_each_visible_member(&self, operation: &mut impl FnMut(&str, &[usize])) {
+        fn visit(
+            record: &StructType,
+            path: &mut Vec<usize>,
+            operation: &mut impl FnMut(&str, &[usize]),
+        ) {
+            let definition = record.definition();
+            let definition = definition.borrow();
+            for (index, member) in definition.members.iter().enumerate() {
+                path.push(index);
                 if member.anonymous {
                     let Type::Struct(child) = member.ty.unqualified() else {
                         unreachable!()
                     };
-                    child
-                        .visible_members()
-                        .into_iter()
-                        .map(|(name, mut path)| {
-                            path.insert(0, index);
-                            (name, path)
-                        })
-                        .collect()
+                    visit(child, path, operation);
                 } else {
-                    vec![(member.name.clone(), vec![index])]
+                    operation(&member.name, path);
                 }
-            })
-            .collect()
-    }
-    pub fn member_path(&self, name: &str) -> Option<Vec<usize>> {
-        let definition = self.definition();
-        let definition = definition.borrow();
-        for (index, member) in definition.members.iter().enumerate() {
-            if member.anonymous {
-                let Type::Struct(child) = member.ty.unqualified() else {
-                    unreachable!()
-                };
-                if let Some(mut path) = child.member_path(name) {
-                    path.insert(0, index);
-                    return Some(path);
-                }
-            } else if member.name == name {
-                return Some(vec![index]);
+                path.pop();
             }
         }
-        None
+        visit(self, &mut vec![], operation);
+    }
+
+    pub fn member_path(&self, name: &str) -> Option<Vec<usize>> {
+        fn find(record: &StructType, name: &str, path: &mut Vec<usize>) -> bool {
+            let definition = record.definition();
+            let definition = definition.borrow();
+            for (index, member) in definition.members.iter().enumerate() {
+                path.push(index);
+                if member.anonymous {
+                    let Type::Struct(child) = member.ty.unqualified() else {
+                        unreachable!()
+                    };
+                    if find(child, name, path) {
+                        return true;
+                    }
+                } else if member.name == name {
+                    return true;
+                }
+                path.pop();
+            }
+            false
+        }
+        let mut path = vec![];
+        find(self, name, &mut path).then_some(path)
     }
 }
 
