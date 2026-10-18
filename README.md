@@ -34,6 +34,9 @@ normalization, respectively.
 Declaration, attribute and type parsing live in `src/ast/declarations.rs`,
 `attributes.rs`, `declarators.rs` and `type_parser.rs`; initializer construction
 and builtin handling live in `initializers.rs` and `builtins.rs`.
+The native preprocessor keeps shared macro/header state in `src/preprocessor/native.rs`;
+its `lexer.rs`, `expansion.rs` and `options.rs` child modules own token handling,
+macro expansion and preprocessing/dependency arguments.
 
 The image workflow runs only when `dockerfiles/dev.Dockerfile`, `.dockerignore`,
 or `.github/workflows/publish.yaml` changes, or when started manually. Image
