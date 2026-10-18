@@ -30,6 +30,9 @@ Parser state, recursive-descent grammar and stage orchestration remain in
 `src/ast.rs`. Its child modules `src/ast/const_eval.rs`, `validation.rs` and
 `lowering.rs` own constant evaluation, semantic checks and code-generation type
 normalization, respectively.
+Declaration, attribute and type parsing live in `src/ast/declarations.rs`,
+`attributes.rs`, `declarators.rs` and `type_parser.rs`; initializer construction
+and builtin handling live in `initializers.rs` and `builtins.rs`.
 
 The image workflow runs only when `dockerfiles/dev.Dockerfile`, `.dockerignore`,
 or `.github/workflows/publish.yaml` changes, or when started manually. Image
