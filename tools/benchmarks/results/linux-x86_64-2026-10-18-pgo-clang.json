@@ -1,0 +1,602 @@
+{
+  "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+  "jobs": 4,
+  "versions": {
+    "curl": "8.23.0",
+    "git": "v2.56.0",
+    "redis": "8.10.2"
+  },
+  "compiler_binaries": {
+    "mixed_pgo": {
+      "path": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo",
+      "sha256": "eeb2b4f70798b22a9c64f6f7eb366939a7b4735cd1010009bba4253f446c4d50"
+    },
+    "clang": {
+      "path": "/usr/bin/clang-15",
+      "sha256": "22f8651e4eba296325daed391a432b11c3db82d8166da127ccb43b4f6f229e18"
+    }
+  },
+  "training": {
+    "mixed_pgo": {
+      "curl": 477,
+      "git": 568,
+      "redis": 184
+    },
+    "clang": "Installed Clang 15.0.7; no application-derived retraining"
+  },
+  "timing_scope": "make -j4 only; copies, cleaning, dependency removal and validation excluded. No compiler cache, timers or traces. Filesystem caches not flushed.",
+  "order": [
+    [
+      "mixed_pgo",
+      "clang"
+    ],
+    [
+      "clang",
+      "mixed_pgo"
+    ],
+    [
+      "mixed_pgo",
+      "clang"
+    ]
+  ],
+  "builds": [
+    {
+      "project": "curl",
+      "round": 1,
+      "compiler": "mixed_pgo",
+      "seconds": 25.99200871773064,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/curl-1-mixed_pgo",
+      "resource": "25.99 71.65 21.27 108544",
+      "smoke": {
+        "version": "curl 8.23.0 (x86_64-pc-linux-gnu) libcurl/8.23.0 OpenSSL/3.0.2 zlib/1.2.11",
+        "requests": "HTTP and HTTPS over loopback; certificate verification enabled"
+      }
+    },
+    {
+      "project": "curl",
+      "round": 1,
+      "compiler": "clang",
+      "seconds": 26.541769503615797,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/curl-1-clang",
+      "resource": "26.54 76.25 20.16 121232",
+      "smoke": {
+        "version": "curl 8.23.0 (x86_64-pc-linux-gnu) libcurl/8.23.0 OpenSSL/3.0.2 zlib/1.2.11",
+        "requests": "HTTP and HTTPS over loopback; certificate verification enabled"
+      }
+    },
+    {
+      "project": "redis",
+      "round": 1,
+      "compiler": "mixed_pgo",
+      "seconds": 18.994099450297654,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2",
+        "OPTIMIZATION=-O2",
+        "DEBUG=",
+        "CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/redis-1-mixed_pgo",
+      "resource": "18.99 52.64 5.41 111556",
+      "smoke": {
+        "version": "Redis server v=8.10.2 sha=a459aa8c:0 malloc=libc bits=64 build=2d0f8ce463e8424f",
+        "commands": "PING, SET, GET, EVAL, SHUTDOWN NOSAVE"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "redis",
+      "round": 1,
+      "compiler": "clang",
+      "seconds": 23.104350995272398,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2",
+        "OPTIMIZATION=-O2",
+        "DEBUG=",
+        "CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/redis-1-clang",
+      "resource": "23.10 57.90 6.48 125968",
+      "smoke": {
+        "version": "Redis server v=8.10.2 sha=a459aa8c:0 malloc=libc bits=64 build=6fdc39a630de1883",
+        "commands": "PING, SET, GET, EVAL, SHUTDOWN NOSAVE"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "git",
+      "round": 1,
+      "compiler": "mixed_pgo",
+      "seconds": 49.34677276853472,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O2 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/git-1-mixed_pgo",
+      "resource": "49.34 161.00 22.81 121896",
+      "smoke": {
+        "version": "git version 2.56.0",
+        "repository_operations": "init, add, commit, show, clean status"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "git",
+      "round": 1,
+      "compiler": "clang",
+      "seconds": 52.99491017591208,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O2 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/git-1-clang",
+      "resource": "52.99 179.42 18.37 139548",
+      "smoke": {
+        "version": "git version 2.56.0",
+        "repository_operations": "init, add, commit, show, clean status"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "curl",
+      "round": 2,
+      "compiler": "clang",
+      "seconds": 26.51101283915341,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/curl-2-clang",
+      "resource": "26.50 76.05 20.21 121232",
+      "smoke": {
+        "version": "curl 8.23.0 (x86_64-pc-linux-gnu) libcurl/8.23.0 OpenSSL/3.0.2 zlib/1.2.11",
+        "requests": "HTTP and HTTPS over loopback; certificate verification enabled"
+      }
+    },
+    {
+      "project": "curl",
+      "round": 2,
+      "compiler": "mixed_pgo",
+      "seconds": 25.98153691459447,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/curl-2-mixed_pgo",
+      "resource": "25.98 72.12 20.90 108544",
+      "smoke": {
+        "version": "curl 8.23.0 (x86_64-pc-linux-gnu) libcurl/8.23.0 OpenSSL/3.0.2 zlib/1.2.11",
+        "requests": "HTTP and HTTPS over loopback; certificate verification enabled"
+      }
+    },
+    {
+      "project": "redis",
+      "round": 2,
+      "compiler": "clang",
+      "seconds": 23.056384819559753,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2",
+        "OPTIMIZATION=-O2",
+        "DEBUG=",
+        "CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/redis-2-clang",
+      "resource": "23.05 58.05 6.35 125948",
+      "smoke": {
+        "version": "Redis server v=8.10.2 sha=a459aa8c:0 malloc=libc bits=64 build=cfeda812c8745cb",
+        "commands": "PING, SET, GET, EVAL, SHUTDOWN NOSAVE"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "redis",
+      "round": 2,
+      "compiler": "mixed_pgo",
+      "seconds": 19.056856021285057,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2",
+        "OPTIMIZATION=-O2",
+        "DEBUG=",
+        "CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/redis-2-mixed_pgo",
+      "resource": "19.05 52.87 5.50 109676",
+      "smoke": {
+        "version": "Redis server v=8.10.2 sha=a459aa8c:0 malloc=libc bits=64 build=a6f4eb5a609b22e1",
+        "commands": "PING, SET, GET, EVAL, SHUTDOWN NOSAVE"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "git",
+      "round": 2,
+      "compiler": "clang",
+      "seconds": 53.124948042444885,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O2 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/git-2-clang",
+      "resource": "53.12 179.60 18.52 139296",
+      "smoke": {
+        "version": "git version 2.56.0",
+        "repository_operations": "init, add, commit, show, clean status"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "git",
+      "round": 2,
+      "compiler": "mixed_pgo",
+      "seconds": 49.10266811773181,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O2 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/git-2-mixed_pgo",
+      "resource": "49.10 160.46 23.24 121360",
+      "smoke": {
+        "version": "git version 2.56.0",
+        "repository_operations": "init, add, commit, show, clean status"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "curl",
+      "round": 3,
+      "compiler": "mixed_pgo",
+      "seconds": 26.103314482606947,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/curl-3-mixed_pgo",
+      "resource": "26.10 71.72 21.33 108544",
+      "smoke": {
+        "version": "curl 8.23.0 (x86_64-pc-linux-gnu) libcurl/8.23.0 OpenSSL/3.0.2 zlib/1.2.11",
+        "requests": "HTTP and HTTPS over loopback; certificate verification enabled"
+      }
+    },
+    {
+      "project": "curl",
+      "round": 3,
+      "compiler": "clang",
+      "seconds": 26.383728100918233,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/curl-3-clang",
+      "resource": "26.38 76.17 20.09 121232",
+      "smoke": {
+        "version": "curl 8.23.0 (x86_64-pc-linux-gnu) libcurl/8.23.0 OpenSSL/3.0.2 zlib/1.2.11",
+        "requests": "HTTP and HTTPS over loopback; certificate verification enabled"
+      }
+    },
+    {
+      "project": "redis",
+      "round": 3,
+      "compiler": "mixed_pgo",
+      "seconds": 19.242257386446,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2",
+        "OPTIMIZATION=-O2",
+        "DEBUG=",
+        "CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/redis-3-mixed_pgo",
+      "resource": "19.24 52.85 5.47 110492",
+      "smoke": {
+        "version": "Redis server v=8.10.2 sha=a459aa8c:0 malloc=libc bits=64 build=4f6f718982345bdd",
+        "commands": "PING, SET, GET, EVAL, SHUTDOWN NOSAVE"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "redis",
+      "round": 3,
+      "compiler": "clang",
+      "seconds": 23.271829958073795,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O2",
+        "OPTIMIZATION=-O2",
+        "DEBUG=",
+        "CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O2 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/redis-3-clang",
+      "resource": "23.27 58.07 6.45 125948",
+      "smoke": {
+        "version": "Redis server v=8.10.2 sha=a459aa8c:0 malloc=libc bits=64 build=c4795f70ccff8c6f",
+        "commands": "PING, SET, GET, EVAL, SHUTDOWN NOSAVE"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "git",
+      "round": 3,
+      "compiler": "mixed_pgo",
+      "seconds": 49.002385552972555,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/mixed-pgo/pgo/dynamite-pgo",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O2 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/git-3-mixed_pgo",
+      "resource": "49.00 160.55 23.00 121468",
+      "smoke": {
+        "version": "git version 2.56.0",
+        "repository_operations": "init, add, commit, show, clean status"
+      },
+      "tracked_source_unchanged": true
+    },
+    {
+      "project": "git",
+      "round": 3,
+      "compiler": "clang",
+      "seconds": 52.49328352790326,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/usr/bin/clang-15",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O2 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/pgo-clang/git-3-clang",
+      "resource": "52.49 179.24 18.45 139812",
+      "smoke": {
+        "version": "git version 2.56.0",
+        "repository_operations": "init, add, commit, show, clean status"
+      },
+      "tracked_source_unchanged": true
+    }
+  ],
+  "clang_version": "Ubuntu clang version 15.0.7\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "compiler_source": "7804347c97ee021bfac6c7b1a3e6558ec8fb3f40 plus token-copy changes; saved mixed-corpus PGO binary, predates rebased PR main",
+  "summary": {
+    "redis": {
+      "mixed_pgo": {
+        "seconds": [
+          18.994099450297654,
+          19.056856021285057,
+          19.242257386446
+        ],
+        "median": 19.056856021285057
+      },
+      "clang": {
+        "seconds": [
+          23.104350995272398,
+          23.056384819559753,
+          23.271829958073795
+        ],
+        "median": 23.104350995272398
+      },
+      "reduction_vs_clang_percent": 17.518323604136455
+    },
+    "git": {
+      "mixed_pgo": {
+        "seconds": [
+          49.34677276853472,
+          49.10266811773181,
+          49.002385552972555
+        ],
+        "median": 49.10266811773181
+      },
+      "clang": {
+        "seconds": [
+          52.99491017591208,
+          53.124948042444885,
+          52.49328352790326
+        ],
+        "median": 52.99491017591208
+      },
+      "reduction_vs_clang_percent": 7.34455827033258
+    },
+    "curl": {
+      "mixed_pgo": {
+        "seconds": [
+          25.99200871773064,
+          25.98153691459447,
+          26.103314482606947
+        ],
+        "median": 25.99200871773064
+      },
+      "clang": {
+        "seconds": [
+          26.541769503615797,
+          26.51101283915341,
+          26.383728100918233
+        ],
+        "median": 26.51101283915341
+      },
+      "reduction_vs_clang_percent": 1.9576925429882652
+    }
+  },
+  "cpu": "Intel Core i5-5575R @ 2.80 GHz, four logical CPUs",
+  "archives": {
+    "redis": {
+      "path": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/git-redis-opt/sources/redis-8.10.2.tar.gz",
+      "sha256": "541a374b753a8405683dd88560465791acc98cf09445ef10ec1bd286904273e8"
+    },
+    "git": {
+      "path": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/git-redis-opt/sources/git-v2.56.0.tar.gz",
+      "sha256": "d761232b81394f7d4c3ef1a99fa804ffbe10d278ae1ad302833a0892050ca9fc"
+    },
+    "curl": {
+      "path": "/home/ubuntu/.codex/worktrees/fafc/dynamite-compiler/temp/curl-build/curl-8.23.0.tar.xz",
+      "sha256": "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
+    }
+  },
+  "curl_configuration": "Shared Dynamite-configured tree: --with-openssl --without-libpsl --disable-shared --enable-static --disable-docs CFLAGS=-O2 -g0; configure excluded; clean and dependency file removal before each build",
+  "limits": "Saved PGO compiler predates rebased PR head; default Clang IR backend. Application toolchains, not identical preprocessed inputs. Build time only, no runtime performance comparison. No full upstream test suites or held-out project."
+}

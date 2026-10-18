@@ -75,6 +75,9 @@ samples per configuration, not evidence of a universal improvement. All evaluate
 applications are included in mixed training; no fourth held-out application was
 evaluated.
 
+A subsequent [Clang comparison](linux-x86_64-2026-10-18-pgo-clang.md) measures
+this same mixed-PGO executable against Clang 15 with matching `-O2` build settings.
+
 ## Validation and artifacts
 
 All 18 builds succeeded. Each Git binary passed temporary repository operations;

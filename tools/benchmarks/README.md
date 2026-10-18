@@ -133,6 +133,8 @@ are specific to the source and Rust toolchain; regenerate them after changes.
 See the [curl-only versus mixed-corpus measurements](results/linux-x86_64-2026-10-18-mixed-pgo.md)
 for a three-application comparison using the same compiler source and different
 training corpora.
+See the [mixed-PGO versus Clang measurements](results/linux-x86_64-2026-10-18-pgo-clang.md)
+for three clean builds per compiler/application with the same `-O2` settings.
 
 For the experimental LLVM tools backend, set `DYNAMITE_BACKEND=llvm` and select
 matching `DYNAMITE_LLC`, `DYNAMITE_OPT`, and `DYNAMITE_LLD` executables. Use
