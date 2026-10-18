@@ -63,6 +63,10 @@ faster in every paired build in this snapshot. Three repetitions per
 configuration do not establish a general speedup across other applications,
 toolchains or platforms. All three applications were included in PGO training.
 
+The [subsequent -O0 measurements](linux-x86_64-2026-10-18-pgo-clang-o0.md)
+use these same compiler binaries and backend, changing the application
+optimization level, and include a side-by-side table with the -O2 results.
+
 ## Validation and artifacts
 
 All 18 builds succeeded. Every curl binary passed HTTP and HTTPS loopback

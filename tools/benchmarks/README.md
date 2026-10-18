@@ -135,6 +135,9 @@ for a three-application comparison using the same compiler source and different
 training corpora.
 See the [mixed-PGO versus Clang measurements](results/linux-x86_64-2026-10-18-pgo-clang.md)
 for three clean builds per compiler/application with the same `-O2` settings.
+The [matching `-O0` comparison](results/linux-x86_64-2026-10-18-pgo-clang-o0.md)
+keeps those compiler binaries and the Clang backend fixed while changing the
+application optimization level.
 
 For the experimental LLVM tools backend, set `DYNAMITE_BACKEND=llvm` and select
 matching `DYNAMITE_LLC`, `DYNAMITE_OPT`, and `DYNAMITE_LLD` executables. Use
