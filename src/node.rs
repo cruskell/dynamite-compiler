@@ -23,45 +23,6 @@ pub enum AtomicOperation {
     CompareExchange(bool),
 }
 
-/// Decode GNU numbered register operands, leaving target-specific modifiers to the backend.
-pub(crate) fn render_inline_assembly(
-    template: &str,
-    mut operand: impl FnMut(usize, Option<char>) -> Option<String>,
-) -> Option<String> {
-    let mut rendered = String::new();
-    let mut chars = template.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '%' {
-            rendered.push(ch);
-            continue;
-        }
-        if chars.peek() == Some(&'%') {
-            chars.next();
-            rendered.push('%');
-            continue;
-        }
-        let modifier = chars
-            .peek()
-            .copied()
-            .filter(char::is_ascii_alphabetic)
-            .inspect(|_| {
-                chars.next();
-            });
-        let mut index = None;
-        while let Some(ch) = chars.peek().copied().filter(char::is_ascii_digit) {
-            chars.next();
-            index = Some(
-                index
-                    .unwrap_or(0usize)
-                    .checked_mul(10)?
-                    .checked_add(ch.to_digit(10)? as usize)?,
-            );
-        }
-        rendered.push_str(&operand(index?, modifier)?);
-    }
-    Some(rendered)
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
     InlineAsm(bool, bool),
@@ -669,6 +630,45 @@ impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.to_debug_string(2))
     }
+}
+
+/// Decode GNU numbered register operands, leaving target-specific modifiers to the backend.
+pub(crate) fn render_inline_assembly(
+    template: &str,
+    mut operand: impl FnMut(usize, Option<char>) -> Option<String>,
+) -> Option<String> {
+    let mut rendered = String::new();
+    let mut chars = template.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            rendered.push(ch);
+            continue;
+        }
+        if chars.peek() == Some(&'%') {
+            chars.next();
+            rendered.push('%');
+            continue;
+        }
+        let modifier = chars
+            .peek()
+            .copied()
+            .filter(char::is_ascii_alphabetic)
+            .inspect(|_| {
+                chars.next();
+            });
+        let mut index = None;
+        while let Some(ch) = chars.peek().copied().filter(char::is_ascii_digit) {
+            chars.next();
+            index = Some(
+                index
+                    .unwrap_or(0usize)
+                    .checked_mul(10)?
+                    .checked_add(ch.to_digit(10)? as usize)?,
+            );
+        }
+        rendered.push_str(&operand(index?, modifier)?);
+    }
+    Some(rendered)
 }
 
 #[cfg(test)]
