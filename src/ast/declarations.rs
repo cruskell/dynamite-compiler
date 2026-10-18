@@ -7,6 +7,16 @@ use crate::node::{Node, NodeType};
 use crate::token::{Token, TokenType};
 use std::rc::Rc;
 
+struct GlobalDeclaration {
+    base: Type,
+    alignment: usize,
+    internal: bool,
+    external: bool,
+    inline: bool,
+    thread_local: bool,
+    attributes: DeclarationAttributes,
+}
+
 impl AstBuilderImpl<'_> {
     pub(super) fn new_local_variable(&mut self, ty: Type, alignment: usize) -> (Node, bool) {
         let mut alignments = vec![alignment];
@@ -261,10 +271,10 @@ impl AstBuilderImpl<'_> {
             .is_some()
     }
 
-    pub(super) fn global_definition(&mut self) {
+    fn global_declaration_specifiers(&mut self) -> Option<GlobalDeclaration> {
         while self.attempt_reserved("__extension__").is_some() {}
         if self.attempt_static_assert() {
-            return;
+            return None;
         }
         // Attribute collection belongs to this declaration header, not its body or parameters.
         self.declaration_attributes_state = Some(DeclarationAttributes::default());
@@ -340,7 +350,7 @@ impl AstBuilderImpl<'_> {
             }
             self.typedef_definition();
             self.expect_reserved(";");
-            return;
+            return None;
         }
         if storage
             .as_ref()
@@ -385,9 +395,33 @@ impl AstBuilderImpl<'_> {
                     "inline requires a function declaration",
                 );
             }
-            return;
+            return None;
         }
-        let inherited_attributes = self.declaration_attributes_state.take().unwrap_or_default();
+        let attributes = self.declaration_attributes_state.take().unwrap_or_default();
+        Some(GlobalDeclaration {
+            base,
+            alignment,
+            internal,
+            external,
+            inline,
+            thread_local,
+            attributes,
+        })
+    }
+
+    pub(super) fn global_definition(&mut self) {
+        let Some(GlobalDeclaration {
+            base,
+            alignment,
+            internal,
+            external,
+            inline,
+            thread_local,
+            attributes: inherited_attributes,
+        }) = self.global_declaration_specifiers()
+        else {
+            return;
+        };
         loop {
             self.declaration_attributes_state = Some(inherited_attributes.clone());
             let mut alignments = vec![alignment];
@@ -541,65 +575,7 @@ impl AstBuilderImpl<'_> {
                     self.expect_reserved(";");
                     return;
                 }
-                let (_, result, _) = ty.function_signature_ref().unwrap();
-                if definition && result.unqualified() != &Type::Void {
-                    self.expect_object_type(result, &token);
-                }
-                self.return_pointer = if definition && matches!(result, Type::Struct(_)) {
-                    self.offset_size = self.offset_size.div_ceil(8) * 8 + 8;
-                    Some(self.offset_size)
-                } else {
-                    None
-                };
-                self.variadic_last = args.last().and_then(|arg| arg.offset);
-                let (parameters, _, variadic) = ty.function_signature_ref().unwrap();
-                self.variadic_parameters = variadic.then(|| parameters.to_vec());
-                self.return_type = Some(result.clone());
-                self.current_function = Some(token.clone());
-                self.labels.clear();
-                self.defined_labels.clear();
-                let mut bounds = self.take_bounds();
-                Self::resolve_parameter_bounds(&mut bounds, &args);
-                self.mutable_static = None;
-                let mut body = self.consume_block();
-                if body.is_some() {
-                    let (parameters, result, _) = ty.function_signature_ref().unwrap();
-                    if parameters
-                        .iter()
-                        .chain(std::iter::once(result))
-                        .any(|ty| matches!(ty.unqualified(), Type::LongDouble(128)))
-                    {
-                        self.error_logger.print_error_position(token.pos, "extended long double parameters and results in function definitions are not supported");
-                    }
-                    if parameters
-                        .iter()
-                        .chain(std::iter::once(result))
-                        .any(|ty| matches!(ty.unqualified(), Type::Float16))
-                    {
-                        self.error_logger.print_error_position(token.pos,
-                            "_Float16 parameters and results in function definitions are not supported");
-                    }
-                }
-                if let Some(body) = &mut body {
-                    bounds.append(&mut body.children);
-                    body.children = bounds;
-                    self.resolve_vla_gotos(body);
-                }
-                self.vla_active.clear();
-                for (name, position) in &self.labels {
-                    if !self.defined_labels.contains(name) {
-                        self.error_logger
-                            .print_error_position(*position, "goto target is not defined");
-                    }
-                }
-                self.return_type = None;
-                self.current_function = None;
-                self.variadic_last = args.last().and_then(|arg| arg.offset);
-                self.variadic_parameters = None;
-                self.scope_stack.pop();
-                if body.is_none() {
-                    self.expect_reserved(";");
-                }
+                let body = self.parse_function_body(&token, &ty, &args);
                 if self.functions[token.s_value.as_str()].body.is_some() {
                     if body.is_some() {
                         if !replaceable_inline_body || !external_definition {
