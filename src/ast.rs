@@ -10,27 +10,16 @@ use rustc_apfloat::Float;
 use std::collections::{HashMap, HashSet};
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
-#[path = "atomic.rs"]
 mod atomic;
-#[path = "inline_asm.rs"]
 mod inline_asm;
-#[path = "inline_calls.rs"]
 mod inline_calls;
-#[path = "object_size.rs"]
 mod object_size;
-#[path = "overflow.rs"]
 mod overflow;
-#[path = "prefetch.rs"]
 mod prefetch;
-#[path = "statement_expression.rs"]
 mod statement_expression;
-#[path = "transparent_union.rs"]
 mod transparent_union;
-#[path = "type_query.rs"]
 mod type_query;
-#[path = "varargs.rs"]
 mod varargs;
-#[path = "vla.rs"]
 mod vla;
 
 #[derive(Clone, Copy, PartialEq)]
