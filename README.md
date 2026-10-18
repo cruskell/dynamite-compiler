@@ -21,8 +21,9 @@ unused must-use results and unsafe operations without explicit unsafe blocks.
 `make ci` includes the lint gate and platform tests; formatting checks do not
 modify source files.
 
-`tests/integration_test.rs` remains the integration test entry point. Driver and
-external-toolchain cases live in `tests/cases/driver.rs`; compilation helpers and
+`tests/integration_test.rs` remains the integration test entry point. Language
+regressions are grouped by feature under `tests/cases/`, alongside
+driver and external-toolchain cases in `driver.rs`. Compilation helpers and
 temporary driver fixtures live in `tests/support/`. These modules share one test
 executable, and existing substring filters such as `llvm_tools_backend` still apply.
 
