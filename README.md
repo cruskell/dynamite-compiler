@@ -53,25 +53,13 @@ with `docker pull ghcr.io/cruskell/dynamite-compiler-dev:latest`.
 
 ## Verified project builds
 
-The following upstream tags were clean-built with Dynamite compiler commit
-[`f1be756`](https://github.com/cruskell/dynamite-compiler/commit/f1be756843a35d7b28e5ad49b5e10090b6e72fef)
-on macOS ARM64 using the LLVM backend. Upstream source files were unchanged.
-
-| Project | Verified tag | Validation |
-| --- | --- | --- |
-| Git | [`v2.56.0`](https://github.com/git/git/tree/v2.56.0) | Clean build and repository-operation smoke tests. |
-| Redis | [`8.10.2`](https://github.com/redis/redis/tree/8.10.2) | Clean build, basic commands and Lua, and all 158 upstream test units plus five additional test groups. |
-
-Git was built with `NO_RUST=YesPlease NO_PRECOMPILED_HEADER=YesPlease`.
-Redis used the default macOS libc allocator, with TLS and separately cloned
-external modules disabled. Its build probe automatically disabled optional
-Vector Sets because C11 `_Atomic` is not supported.
-
-These checks used a `CC` adapter around the Dynamite CLI. Dynamite parsed the
-projects' C sources and generated LLVM IR; Clang handled preprocessing,
-IR-to-object lowering, and linking. C compilation did not fall back to Clang's
-C frontend. The listed platform and build options define the scope of these
-checks.
+Git v2.56.0 and Redis 8.10.2 were clean-built with compiler commit
+[`6739321`](https://github.com/cruskell/dynamite-compiler/commit/67393212784eab4d92df3572c1d352629dc66284)
+on Linux x86_64 using native preprocessing and the LLVM tools backend.
+Upstream source files were unchanged. Runtime smoke checks covered Git repository
+operations, branches, diffs, `gc` and `fsck`, plus Redis commands, Lua/cjson/math,
+SAVE and RDB verification. See [build performance](#build-performance) for the
+measured configurations and results.
 
 ## C build driver
 
@@ -165,13 +153,6 @@ Its compiler headers are embedded in Dynamite; OS libc headers remain external. 
 Unsupported native options return an error. It is not a complete replacement
 for every Clang/GNU preprocessing extension; cross targets, sysroots, macro
 dumps, and date/time predefined macros are outside its current scope.
-[macOS measurements](tools/benchmarks/results/macos-arm64-2026-10-17-native-pipeline-post-201.md)
-found native preprocessing faster in every Git/Redis round across a six-round
-comparison and a separate three-round confirmation after main #201. In the latest
-comparison, median paired build time fell by 12.0% for Git and 24.8% for Redis
-with Clang lowering. The Clang-free pipeline measured -9.4% and -19.8%, respectively;
-the earlier six-round Git result was +0.4%, so do not treat its latest speedup as
-precise. No recurring large slowdown was observed on the tested host.
 LLVM IR-to-object lowering, assembly, and linking still use external tools;
 libc/libm/pthread dependencies of compiled programs are unchanged.
 
@@ -226,271 +207,41 @@ teardown, IR writes, Clang lowering and linking. See
 [the build benchmark tools](tools/benchmarks/README.md) for repeatable Redis/Git
 comparisons and interpretation of nested stage and Clang trace totals.
 
-For record-member scaling and a separate Clang comparison to LLVM IR, see the
-[2026-10-18 frontend measurements](tools/benchmarks/results/linux-x86_64-2026-10-18-record-members.md).
-These measurements do not replace the clean-build timings below.
+## Build performance
 
-## Measured Linux build times
+Measured on 2026-10-18 with compiler commit `6739321`, Clang/LLVM 15.0.7 and
+Rust 1.86 release binaries on Linux x86_64 (Intel Core i5-5575R, four logical
+CPUs). Values are **whole-build wall times**, including dependency compilation
+and linking, for clean Redis 8.10.2 and Git v2.56.0 builds.
 
-### Record-member optimization and current main (2026-10-18)
-
-Current main `6739321` and baseline `7804347` (before #216) each built pristine
-Redis 8.10.2 and Git v2.56.0 twice alongside Clang 15.0.7. These are **whole-build
-wall times**, including dependencies and linking, with `make -j4`, GNU99 and
-`-O0 -g0` on Linux x86_64 (Intel i5-5575R, Rust 1.86 release).
-Dynamite explicitly selected native preprocessing and the **opt-in LLVM 15 tools
-backend**; its default Clang lowering/linking backend was not measured.
-
-| Clean build | Before #216 | Current main | Clang | Reduction vs before | Reduction vs Clang |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Redis | 10.906 s | 10.731 s | 14.008 s | 1.61% | 23.40% |
-| Git | 38.408 s | 38.317 s | 40.733 s | 0.24% | 5.93% |
-
-Values are two-run medians; compiler order reverses on the second round. These
-are clean builds with warm filesystem caches and no compiler cache. Redis built
-six native tools using libc, with TLS/Vector Sets/C11 atomics disabled; Git
-omitted Rust/PCH and optional scripting/localization frontends. Git's roughly
-0.2% before/after difference is too small to claim a confirmed improvement.
-All 12 builds and runtime smoke checks passed. Full-build changes are smaller
-than the earlier Redis-server frontend-only reduction. See the
-[method, samples and stage totals](tools/benchmarks/results/linux-x86_64-2026-10-18-full-builds.md)
-and [measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-18-full-builds.json).
-
-### Native preprocessing and LLVM tools backend (2026-10-17)
-
-At commit `de9de24` (including [#201](https://github.com/cruskell/dynamite-compiler/pull/201)),
-Dynamite and Clang 15.0.7 each built clean upstream Redis 8.10.2 and Git v2.56.0
-twice, in alternating order. These are **whole-build wall times**, including
-dependencies and linking, on Linux x86_64 (Intel i5-5575R, Rust 1.86 release).
-Both used GNU99, `-O0 -g0`, four make workers and the same benchmark wrapper;
-Clang time traces were disabled. Filesystem caches were not cleared and no
-compiler cache was used.
-
-| Clean build | Dynamite median | Clang median | Dynamite elapsed reduction |
+| Clean build | Dynamite | Clang | Dynamite elapsed reduction |
 | --- | ---: | ---: | ---: |
-| Redis, 184 C compilations | 10.94 s | 14.01 s | 21.9% |
-| Git, 568 C compilations | 38.90 s | 40.83 s | 4.7% |
+| Redis | 10.731 s | 14.008 s | 23.40% |
+| Git | 38.317 s | 40.733 s | 5.93% |
 
-That snapshot explicitly selected native preprocessing and `DYNAMITE_BACKEND=llvm`,
-with external LLVM 15 `llc`/`opt`/LLD tools and Clang disabled in its driver.
-Preprocessing is now always native; selecting the LLVM tools backend remains
-opt-in, and the default IR lowering/linking backend still uses Clang. Clang's reference
-build used its complete C toolchain. Compiler capability macros can select
-different source paths, so this compares application builds rather than
-identical preprocessed inputs. It does not measure generated-program performance.
+Each value is the median of two runs, with compiler order reversed on the second
+round. Both compilers used GNU99, `-O0 -g0`, `make -j4` and the same recording
+wrapper. Filesystem caches were warm; no compiler cache or time traces were used.
+Source copies and Rust compiler builds were outside the timer.
 
-Sources were unchanged. Redis used libc, with TLS/Vector Sets/C11 atomics
-disabled and Lua also at `-O0`; external/test modules were excluded. Git disabled
-Rust/PCH and optional scripting/localization frontends. Redis's two C11 feature
-probes succeeded only with Clang, adding different earlier standard/warning
-flags; the common final `-std=gnu99` overrides those standard flags. Excluding
-these probes, both compilers built the same 184 Redis C inputs. Git's 568 C
-compile commands matched exactly. All eight builds passed runtime smoke checks:
-Redis commands, Lua and RDB persistence checks; Git commits, branches, diffs,
-`gc` and `fsck`.
+Dynamite explicitly selected native preprocessing and **`DYNAMITE_BACKEND=llvm`**,
+using external LLVM 15 tools for lowering and linking. Its default Clang
+lowering/linking backend was not measured. These results do not measure the
+performance of the generated programs.
 
-These two-run samples are a snapshot, not a guaranteed speedup. Raw elapsed
-samples, source commits, compiler hashes, build commands and validation are in
-[the measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-17-native-llvm.json).
-Reproduce with [the benchmark runner](tools/benchmarks/README.md), setting the
-LLVM tools backend and tool paths and passing `--no-trace --runs 2 --jobs 4`.
+Redis built six native tools with libc, TLS/Vector Sets/C11 atomics disabled,
+and Lua at `-O0`; external/test modules were excluded. Git disabled Rust/PCH and
+optional scripting/localization frontends. Both compilers built the same 184
+Redis and 568 Git C inputs, but capability macros and feature probes can select
+different code paths. This compares application builds, not identical
+preprocessed inputs.
 
-### Scalar expression type reuse (#201)
-
-A separate alternating before/after run compared `2b6dee5` with the measured
-[#201](https://github.com/cruskell/dynamite-compiler/pull/201) head `0455cd1`, using
-the same native preprocessing/LLVM tools configuration. Redis's median changed
-from 11.02 s to 10.90 s (-1.1%); Git's changed from 38.61 s to 38.63 s (+0.05%,
-essentially unchanged). Clang was not rerun in that cohort; the fresh Clang
-comparison above is a separate measurement.
-
-Retaining scalar arithmetic result types avoids repeated subtree type queries.
-For already-preprocessed scalar addition chains, parsing (including validation
-and lowering) changed as follows. Each median uses four alternating samples per
-variant, with five frontend iterations per sample and matching optimized harnesses.
-
-| Addition-chain terms | Before parsing | After parsing |
-| --- | ---: | ---: |
-| 64 | 1.218 ms | 0.243 ms |
-| 128 | 4.209 ms | 0.391 ms |
-| 256 | 16.373 ms | 0.695 ms |
-| 512 | 68.754 ms | 1.336 ms |
-
-This removes quadratic repeated type resolution on these scalar arithmetic
-chains; other AST traversals, type queries and backend output construction can
-still be quadratic. The synthetic result does not imply the same whole-build
-gain. Both cohorts' raw samples are in the snapshot linked above.
-
-### Historical Clang preprocessing/backend measurements (2026-10-16)
-
-The following results used earlier compiler revisions and a Clang-backed
-pipeline. They are retained as historical measurements and should not be mixed
-with the native preprocessing/LLVM tools results above.
-
-Before declaration pruning, on 2026-10-16, clean upstream Redis 8.10.2 and Git v2.56.0 builds were measured
-with the release compiler, Clang 15.0.7, GNU99, -O0/-g0 and four make workers on
-Linux x86_64 (Intel i5-5575R, Rust 1.86). Each compiler ran twice with alternating
-order; filesystem caches were not cleared. Sources were unchanged. Git disabled
-Rust/PCH and optional scripting/localization frontends; Redis used libc, with
-TLS/Vector Sets/C11 atomics disabled and Lua also at -O0. External/test modules
-were excluded from these timed builds.
-
-| Clean build | Dynamite median | Clang median | Ratio |
-| --- | ---: | ---: | ---: |
-| Redis, 184 C compilations | 15.95 s | 13.90 s | 1.15x |
-| Git, 568 C compilations | 51.68 s | 40.89 s | 1.26x |
-
-Mean Dynamite stage totals below are **worker seconds**, whose parallel work
-overlaps; they must not be added to or compared directly with build wall time.
-
-| Stage | Redis | Git |
-| --- | ---: | ---: |
-| Preprocessing, including Clang invocation | 8.86 | 53.55 |
-| Tokenization | 1.79 | 18.54 |
-| Parsing, validation and AST lowering | 5.44 | 46.13 |
-| LLVM text generation | 1.28 | 4.85 |
-| AST/token teardown | 0.64 | 8.39 |
-| IR file write | 0.07 | 0.62 |
-| Clang IR-to-object invocation | 9.74 | 34.36 |
-
-Clang's C trace combines preprocessing/tokenization/parsing/semantics/IR
-construction into Frontend, rather than matching Dynamite's inner timers. Its
-Frontend totals are 13.24/106.08 worker seconds for Redis/Git. Dynamite's enclosing
-frontend_total is 18.12/131.84, including the preprocessing subprocess and explicit
-AST/token teardown; those timer boundaries differ from Clang's Frontend.
-
-The common Clang backend's internal timer excludes driver startup and IR input
-parsing. These comparable trace/link totals are also worker seconds:
-
-| Phase | Redis Dynamite | Redis Clang | Git Dynamite | Git Clang |
-| --- | ---: | ---: | ---: | ---: |
-| Clang internal Backend | 4.04 | 2.88 | 11.25 | 5.96 |
-| Link invocations | 0.40 | 0.37 | 3.19 | 3.24 |
-
-Full trace totals, CPU/RSS data, dependency times, exact flags and repeated
-samples are in the [measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16.json).
-Capability profiles may select different code paths, so four additional serial
-comparisons use identical preprocessed inputs. These show the frontend core is
-competitive on these samples; extra Clang invocations and IR reading/backend
-work explain much of the end-to-end gap, rather than IR text generation alone.
-
-Unused external function declarations were subsequently removed from LLVM output,
-including unused built-in libc declarations. References in retained function
-bodies, reachable static inline bodies and global initializers preserve the
-necessary declarations; ABI diagnostics still run before declaration omission.
-Definitions retain their previous emission rules. Native assembly is unchanged.
-
-The following before/after measurements use the same preprocessed bytes and
-release binaries on the same host. Frontend runs alternate order; IR lowering
-rotates before/after/Clang order, with 15 serial runs each and Clang 15 at -O0/-g0.
-Times are median process wall time for Clang IR-to-object invocation, not full
-build time. Nine unconditional intrinsic declarations remain in Dynamite IR.
-
-| Input | Declarations before → after | IR bytes before → after | Lowering before → after | Clang IR lowering |
-| --- | ---: | ---: | ---: | ---: |
-| Redis adlist | 265 → 11 | 49,391 → 40,381 | 29.65 → 29.88 ms | 28.73 ms |
-| Redis server | 4,526 → 505 | 1,484,479 → 1,322,124 | 192.34 → 179.75 ms | 140.67 ms |
-| Git abspath | 5,744 → 31 | 299,703 → 48,120 | 48.32 → 30.40 ms | 29.48 ms |
-| Git revision | 7,188 → 222 | 1,269,466 → 958,482 | 162.31 → 140.71 ms | 105.72 ms |
-
-This reduces lowering time by 37.1% for abspath, 13.3% for revision and 6.5% for
-server; adlist shows no gain. Median frontend generation time also decreased on
-all four samples. These gains apply to these stages and inputs, not whole builds.
-Input/binary hashes, timer boundaries and individual samples are in the
-[declaration-pruning snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16-declaration-pruning.json).
-
-Follow-up clean builds with the same flags and two alternating runs each take
-median 15.66 s / 14.00 s for Redis and 48.63 s / 41.07 s for Git
-(Dynamite / Clang). Each run compiles 184 / 568 C files, with unchanged upstream
-sources; basic Redis persistence/Lua/extended-float and Git repository/gc/fsck
-checks pass for both compilers. These follow-up builds were not interleaved
-with the old compiler, so their difference from the earlier whole-build table
-is not a controlled before/after speedup measurement.
-
-A 7,547-sample user-CPU profile of the Git revision frontend attributed at least
-25.5% of self samples to allocator/free routines and 7.2% to memory copying.
-A subsequent allocation change borrows reserved tokens until AST ownership is
-needed, concatenates adjacent strings in the original token buffer, and inspects
-call parameter/value-conversion types without unnecessary deep copies.
-
-On the same four preprocessed inputs, 15 alternating serial runs give these
-median frontend times, including tokenization, parsing, IR generation and
-AST/token teardown, but excluding input/output and process startup:
-
-| Input | Frontend before → after | Reduction | Allocation requests before → after |
-| --- | ---: | ---: | ---: |
-| Redis adlist | 8.22 → 7.46 ms | 9.2% | 47,896 → 42,755 |
-| Redis server | 193.23 → 182.64 ms | 5.5% | 1,629,931 → 1,553,331 |
-| Git abspath | 102.10 → 94.32 ms | 7.6% | 678,255 → 601,587 |
-| Git revision | 227.04 → 213.67 ms | 5.9% | 1,395,429 → 1,278,665 |
-
-Allocation counts come from three separate Linux/glibc whole-process probe runs
-per compiler/input, including startup and file I/O. They count malloc/calloc/
-realloc requests, not live objects or peak memory; timing runs use no allocator
-instrumentation. Revision's cumulative requested bytes decrease 9.5%, from
-220.71 MB to 199.76 MB. In-place concatenation retains the original token buffer
-capacity, so it can leave more spare capacity allocated during parsing.
-All four outputs have identical LLVM IR after canonicalizing module-level order.
-Raw samples, hashes and measurement boundaries are in the
-[allocation snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16-allocations.json).
-
-For this change, complete clean builds compare saved baseline/Dynamite/Clang
-binaries in that order, then reverse the order on a second run. Flags, source
-revisions and four-worker parallelism match the earlier builds. Median wall times:
-
-| Project | Before | After | Reduction | Clang |
-| --- | ---: | ---: | ---: | ---: |
-| Redis | 15.67 s | 15.45 s | 1.4% | 13.93 s |
-| Git | 48.32 s | 46.91 s | 2.9% | 40.85 s |
-
-Both repetitions improve, but two runs are a small sample on this host and flag
-set. Every build succeeds with unchanged sources and 184 / 568 C compilations;
-Redis persistence/Lua/extended-float and Git repository/gc/fsck smoke checks
-pass for all three compilers. Maximum per-compilation process RSS is essentially
-unchanged (Redis about 99 MiB, Git 94 MiB), not a peak whole-build measurement.
-
-A further header-processing change replaces a cloned function-signature
-comparison with a structural declarator check, stores diagnostic origins only
-at contiguous source-run boundaries, and borrows known unescaped marker
-filenames. Source lines/columns, UTF-8 boundaries, nested includes and EOF
-locations remain covered by regressions. Source-map lookup now counts newlines
-within a run when rendering diagnostics, avoiding per-line mapping allocations
-during successful compilation. Clang still runs once for preprocessing and once
-for IR lowering per C compilation.
-
-On identical preprocessed inputs, 15 alternating serial runs isolate the
-declarator change (source mapping is outside these timers):
-
-| Input | Frontend before → after | Reduction | Allocation requests before → after |
-| --- | ---: | ---: | ---: |
-| Redis adlist | 7.34 → 7.22 ms | 1.6% | 42,755 → 41,328 |
-| Redis server | 181.59 → 179.89 ms | 0.9% | 1,553,331 → 1,535,777 |
-| Git abspath | 93.88 → 90.79 ms | 3.3% | 601,587 → 559,990 |
-| Git revision | 213.32 → 210.05 ms | 1.5% | 1,278,665 → 1,226,882 |
-
-Allocation probes use three separate whole-process runs with the same boundaries
-and limitations as the preceding experiment. All four canonical LLVM IR outputs
-remain identical. Samples and hashes are in the
-[header-bookkeeping snapshot](tools/benchmarks/results/linux-x86_64-2026-10-16-header-bookkeeping.json).
-
-Full clean builds use baseline/Dynamite/Clang, then reverse that order, with the
-same four-worker flags and unchanged sources:
-
-| Project | Before median | After median | Clang median |
-| --- | ---: | ---: | ---: |
-| Redis | 15.46 s | 15.42 s | 13.94 s |
-| Git | 46.96 s | 46.52 s | 41.00 s |
-
-Git improves in both repetitions, about 0.9% by median; Redis shows no clear
-whole-build gain. These remain small two-run samples on one host/flag set.
-The mean sum of source-map construction timers decreases from 0.239 to 0.142
-worker seconds for Redis and 1.813 to 1.237 for Git (40% / 32%); these overlapping
-worker sums are not build wall times. Replaying Clang's unchanged line markers
-for revision reduces origin entries from 35,833 to 1,448, or 859,992 to 34,752
-bytes of used origin payload, excluding Vec spare capacity and other state.
-Maximum per-compilation RSS remains essentially unchanged. Every build succeeds
-with 184 / 568 C compilations, and Redis/Git smoke checks pass for all three
-compilers.
+All builds and runtime smoke checks passed. Two runs on one host are a snapshot,
+not a guaranteed speedup. The [measurement report](tools/benchmarks/results/linux-x86_64-2026-10-18-full-builds.md)
+contains exact conditions, pre-change comparisons, individual samples and stage
+totals; the [data snapshot](tools/benchmarks/results/linux-x86_64-2026-10-18-full-builds.json)
+preserves compiler hashes, source revisions and validation. Reproduce with the
+[benchmark tools](tools/benchmarks/README.md).
 
 ## Proposed direction
 
