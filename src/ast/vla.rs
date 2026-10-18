@@ -83,59 +83,6 @@ impl AstBuilderImpl<'_> {
             });
         }
     }
-    pub(super) fn integer_constant(node: &Node) -> bool {
-        match node.nt {
-            NodeType::Num => node
-                .resolve_type()
-                .is_some_and(|ty| ty.integer_info().is_some()),
-            NodeType::Cast
-                if node
-                    .resolve_type()
-                    .is_some_and(|ty| ty.integer_info().is_some())
-                    && node
-                        .lhs
-                        .as_ref()
-                        .is_some_and(|child| child.nt == NodeType::Num) =>
-            {
-                true
-            }
-            NodeType::Cast => {
-                node.resolve_type()
-                    .is_some_and(|ty| ty.integer_info().is_some())
-                    && node.lhs.as_deref().is_some_and(Self::integer_constant)
-            }
-            NodeType::BitNot => node.lhs.as_deref().is_some_and(Self::integer_constant),
-            NodeType::Add
-            | NodeType::Sub
-            | NodeType::Mul
-            | NodeType::Div
-            | NodeType::Mod
-            | NodeType::Eq
-            | NodeType::Ne
-            | NodeType::Lt
-            | NodeType::Le
-            | NodeType::BitAnd
-            | NodeType::BitOr
-            | NodeType::BitXor
-            | NodeType::BitLeft
-            | NodeType::BitRight
-            | NodeType::LogicalAnd
-            | NodeType::LogicalOr => {
-                node.lhs
-                    .as_ref()
-                    .is_some_and(|child| Self::integer_constant(child))
-                    && node
-                        .rhs
-                        .as_ref()
-                        .is_some_and(|child| Self::integer_constant(child))
-            }
-            NodeType::Conditional => [&node.cond, &node.then, &node.els]
-                .into_iter()
-                .flatten()
-                .all(|child| Self::integer_constant(child)),
-            _ => false,
-        }
-    }
     pub(super) fn vla_temporary(&mut self, token: &Token, ty: Type) -> Node {
         self.register_local_variable(
             Token {

@@ -26,6 +26,11 @@ external-toolchain cases live in `tests/cases/driver.rs`; compilation helpers an
 temporary driver fixtures live in `tests/support/`. These modules share one test
 executable, and existing substring filters such as `llvm_tools_backend` still apply.
 
+Parser state, recursive-descent grammar and stage orchestration remain in
+`src/ast.rs`. Its child modules `src/ast/const_eval.rs`, `validation.rs` and
+`lowering.rs` own constant evaluation, semantic checks and code-generation type
+normalization, respectively.
+
 The image workflow runs only when `dockerfiles/dev.Dockerfile`, `.dockerignore`,
 or `.github/workflows/publish.yaml` changes, or when started manually. Image
 changes are tested in a newly built image on pull requests. Publishing runs only
