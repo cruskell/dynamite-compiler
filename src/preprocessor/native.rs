@@ -11,6 +11,7 @@ use lexer::{lex, needs_space, spelling};
 pub(super) use options::{preprocess, preprocess_many};
 use smol_str::SmolStr;
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
@@ -70,8 +71,15 @@ struct Macro {
     variadic: bool,
     body: Vec<Token>,
     parameter_indices: Vec<Option<usize>>,
+    parameter_uses: Vec<ParameterUses>,
     has_paste: bool,
     query: Option<Query>,
+}
+
+#[derive(Clone, Default)]
+struct ParameterUses {
+    expanded: usize,
+    raw: bool,
 }
 
 struct Conditional {
@@ -199,12 +207,24 @@ impl CleanSource {
         })
     }
 
-    fn directive_tokens(&self, index: usize, text: &str) -> Result<Vec<Token>, String> {
+    fn directive_tokens(
+        &self,
+        index: usize,
+        text: &str,
+        physical_line: usize,
+    ) -> Result<Rc<Vec<Token>>, String> {
         let mut cache = self.directives.borrow_mut();
         if cache[index].is_none() {
-            cache[index] = Some(Rc::new(lex(text)?));
+            let mut tokens = lex(text)?;
+            if let Some(first) = tokens.first_mut() {
+                first.space = true;
+            }
+            for token in &mut tokens {
+                token.line += physical_line - 1;
+            }
+            cache[index] = Some(Rc::new(tokens));
         }
-        Ok(cache[index].as_ref().unwrap().as_ref().clone())
+        Ok(Rc::clone(cache[index].as_ref().unwrap()))
     }
 }
 
@@ -573,16 +593,27 @@ impl Preprocessor {
                 dependency_lines.push((physical_line.saturating_add_signed(line_offset), text));
                 continue;
             }
-            let mut line = if self.dependency_only {
-                source.directive_tokens(line_index, text)?
-            } else {
-                lex(text)?
+            let cached = self
+                .dependency_only
+                .then(|| source.directive_tokens(line_index, text, physical_line))
+                .transpose()?;
+            let mut line = match &cached {
+                Some(tokens) => Cow::Borrowed(tokens.as_slice()),
+                None => Cow::Owned(lex(text)?),
             };
-            if let Some(first) = line.first_mut() {
-                first.space = true;
-            }
-            for token in &mut line {
-                token.line = (physical_line + token.line - 1).saturating_add_signed(line_offset);
+            if !self.dependency_only {
+                if let Some(first) = line.to_mut().first_mut() {
+                    first.space = true;
+                }
+                for token in line.to_mut() {
+                    token.line =
+                        (physical_line + token.line - 1).saturating_add_signed(line_offset);
+                }
+            } else if line_offset != 0 {
+                // A #line directive must not change tokens shared with another input.
+                for token in line.to_mut() {
+                    token.line = token.line.saturating_add_signed(line_offset);
+                }
             }
             if line.first().is_some_and(|t| t.is("#")) {
                 self.flush_dependency(&mut dependency_lines, &file)?;
@@ -740,7 +771,7 @@ impl Preprocessor {
                     }
                 }
             } else if active {
-                pending.extend(line);
+                pending.extend(line.into_owned());
                 pending.push(Token::new(
                     "\n",
                     false,
@@ -796,6 +827,10 @@ mod tests {
             "#define V(args...) args\nV(1,2)\n",
             "#define V(x,...) f(x,##__VA_ARGS__)\nV(1,) V(1)\n",
             "#define S(x) #x\nS(a\n b)\n",
+            "#define F(x) x x\nF(__COUNTER__) __COUNTER__\n",
+            "#define F(x) x #x x x##tail\nF(__COUNTER__) __COUNTER__\n",
+            "#define F(x) #x x##tail x x\nF(__COUNTER__) __COUNTER__\n",
+            "#define DROP(x) 42\nDROP(__COUNTER__) __COUNTER__\n",
             "#define x 3\n#define f(a) f(x * (a))\n#undef x\n#define x 2\n#define g f\n#define z z[0]\n#define h g(~\n#define m(a) a(w)\n#define w 0,1\n#define t(a) a\nf(y+1)+ f(f(z)) % t(t(g)(0)+t)(1);\ng(x+(3,4)-w)| h 5) & m(f)^m(m);\n",
             "#define x 7\n#if defined(x) && !defined missing\nx\n#else\n#error wrong\n#endif\n",
             "#if 0 && 1/0\n#error wrong\n#elif 1 || 1/0\nyes\n#endif\n",
@@ -955,6 +990,36 @@ mod tests {
             header.guard.is_none(),
             "trailing includes must prevent guard-based skipping"
         );
+    }
+
+    #[test]
+    fn shared_directives_keep_physical_lines_between_dependency_scans() {
+        let directory = super::super::IncludeDirectory::new().unwrap();
+        fs::write(directory.0.join("mapped.h"), "").unwrap();
+        fs::write(directory.0.join("physical.h"), "").unwrap();
+        fs::write(
+            directory.0.join("shared.h"),
+            "#ifdef REMAP\n#line 200\n#endif\n#if __LINE__ == 201\n#include \"mapped.h\"\n#elif __LINE__ == 6\n#include \"physical.h\"\n#else\n#error incorrect cached line\n#endif\n",
+        )
+        .unwrap();
+        let mut headers = HashMap::new();
+        for (code, expected, absent) in [
+            (
+                "#define REMAP\n#include \"shared.h\"\n",
+                "mapped.h",
+                "physical.h",
+            ),
+            ("#include \"shared.h\"\n", "physical.h", "mapped.h"),
+        ] {
+            let mut pp = Preprocessor::new(vec![directory.0.clone()], vec![]);
+            pp.dependency_only = true;
+            pp.headers = headers;
+            pp.process(code, &directory.0.join(expected).with_extension("c"))
+                .unwrap();
+            assert!(pp.dependencies.contains(&directory.0.join(expected)));
+            assert!(!pp.dependencies.contains(&directory.0.join(absent)));
+            headers = pp.headers;
+        }
     }
 
     #[test]

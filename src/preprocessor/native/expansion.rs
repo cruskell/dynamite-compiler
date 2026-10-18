@@ -1,7 +1,7 @@
 //! Define and expand macros while preserving hide sets and stateful effects.
 
 use super::lexer::identifier;
-use super::{Hidden, Macro, Preprocessor, Query, Token, lex, spelling};
+use super::{Hidden, Macro, ParameterUses, Preprocessor, Query, Token, lex, spelling};
 use std::{collections::VecDeque, rc::Rc};
 
 impl Preprocessor {
@@ -50,7 +50,7 @@ impl Preprocessor {
             parameters = Some(names);
         }
         let body = tokens[index..].to_vec();
-        let parameter_indices = body
+        let parameter_indices: Vec<_> = body
             .iter()
             .map(|t| {
                 parameters
@@ -58,6 +58,19 @@ impl Preprocessor {
                     .and_then(|names| names.iter().position(|p| p == &t.text))
             })
             .collect();
+        let mut parameter_uses =
+            vec![ParameterUses::default(); parameters.as_ref().map_or(0, Vec::len)];
+        for (index, parameter) in parameter_indices.iter().enumerate() {
+            if let Some(parameter) = parameter {
+                let raw = index > 0 && matches!(body[index - 1].text.as_str(), "#" | "##")
+                    || body.get(index + 1).is_some_and(|t| t.is("##"));
+                if raw {
+                    parameter_uses[*parameter].raw = true;
+                } else {
+                    parameter_uses[*parameter].expanded += 1;
+                }
+            }
+        }
         let has_paste = body.iter().any(|t| t.is("##"));
         if self.dependency_only {
             let mut effectful = has_paste;
@@ -93,6 +106,7 @@ impl Preprocessor {
                 variadic,
                 body,
                 parameter_indices,
+                parameter_uses,
                 has_paste,
                 query: None,
             }),
@@ -318,7 +332,7 @@ impl Preprocessor {
                 continue;
             }
             let mut omitted_variadic = false;
-            let arguments = if let Some(parameters) = &definition.parameters {
+            let mut arguments = if let Some(parameters) = &definition.parameters {
                 let n = pending.iter().take_while(|t| t.is("\n")).count();
                 if !pending.get(n).is_some_and(|t| t.is("(")) {
                     if !discard {
@@ -407,10 +421,10 @@ impl Preprocessor {
                 }
                 continue;
             }
-            let mut substituted: Vec<Token> = vec![];
+            let mut substituted: Vec<Token> = Vec::with_capacity(definition.body.len());
             let body = &definition.body;
             let mut index = 0;
-            let mut expanded_arguments: Vec<Option<Vec<Token>>> =
+            let mut expanded_arguments: Vec<Option<(Vec<Token>, usize)>> =
                 vec![None; arguments.as_ref().map_or(0, Vec::len)];
             while index < body.len() {
                 let current = &body[index];
@@ -445,24 +459,37 @@ impl Preprocessor {
                 } else if let Some(arg) = definition.parameter_indices[index] {
                     let pasted = index > 0 && body[index - 1].is("##")
                         || body.get(index + 1).is_some_and(|t| t.is("##"));
-                    let raw = &arguments.as_ref().unwrap()[arg];
-                    let values = if pasted {
-                        raw
+                    let start = substituted.len();
+                    if pasted {
+                        let raw = &arguments.as_ref().unwrap()[arg];
+                        if raw.is_empty() {
+                            substituted.push(Token::new("", current.space, token.line));
+                        } else {
+                            substituted.extend_from_slice(raw);
+                        }
                     } else {
                         if expanded_arguments[arg].is_none() {
-                            expanded_arguments[arg] =
-                                Some(self.expand(raw.clone(), file, depth + 1)?);
+                            let raw = &mut arguments.as_mut().unwrap()[arg];
+                            let input = if definition.parameter_uses[arg].raw {
+                                raw.clone()
+                            } else {
+                                std::mem::take(raw)
+                            };
+                            expanded_arguments[arg] = Some((
+                                self.expand(input, file, depth + 1)?,
+                                definition.parameter_uses[arg].expanded,
+                            ));
                         }
-                        expanded_arguments[arg].as_ref().unwrap()
-                    };
-                    if values.is_empty() && pasted {
-                        substituted.push(Token::new("", current.space, token.line));
-                    } else {
-                        let start = substituted.len();
-                        substituted.extend_from_slice(values);
-                        if let Some(first) = substituted.get_mut(start) {
-                            first.space = current.space;
+                        let (values, remaining) = expanded_arguments[arg].as_mut().unwrap();
+                        *remaining -= 1;
+                        if *remaining == 0 {
+                            substituted.append(values);
+                        } else {
+                            substituted.extend_from_slice(values);
                         }
+                    }
+                    if let Some(first) = substituted.get_mut(start) {
+                        first.space = current.space;
                     }
                 } else {
                     substituted.push(current.clone());
@@ -473,21 +500,20 @@ impl Preprocessor {
                 substituted
             } else {
                 let mut replacement: Vec<Token> = Vec::with_capacity(substituted.len());
-                let mut index = 0;
-                while index < substituted.len() {
-                    if substituted[index].is("##") || substituted[index].is("##gnu") {
-                        let gnu = substituted[index].is("##gnu");
+                let mut substituted = substituted.into_iter();
+                while let Some(current) = substituted.next() {
+                    if current.is("##") || current.is("##gnu") {
+                        let gnu = current.is("##gnu");
                         let left = replacement
                             .pop()
                             .ok_or("## cannot start a macro replacement")?;
-                        index += 1;
                         let right = substituted
-                            .get(index)
+                            .next()
                             .ok_or("## cannot end a macro replacement")?;
                         // GNU variadic macros permit comma elision for an omitted tail.
                         if gnu {
                             if !omitted_variadic {
-                                replacement.extend([left, right.clone()]);
+                                replacement.extend([left, right]);
                             }
                         } else {
                             let joined = format!("{}{}", left.text, right.text);
@@ -505,9 +531,8 @@ impl Preprocessor {
                             }
                         }
                     } else {
-                        replacement.push(substituted[index].clone());
+                        replacement.push(current);
                     }
-                    index += 1;
                 }
                 replacement.retain(|t| !t.text.is_empty());
                 replacement
