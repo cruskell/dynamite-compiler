@@ -37,6 +37,9 @@ and builtin handling live in `initializers.rs` and `builtins.rs`.
 The native preprocessor keeps shared macro/header state in `src/preprocessor/native.rs`;
 its `lexer.rs`, `expansion.rs` and `options.rs` child modules own token handling,
 macro expansion and preprocessing/dependency arguments.
+Each backend keeps its generator entry point and core node dispatch in
+`src/generator/<backend>/generator.rs`; `generator/aggregate.rs`, `globals.rs`,
+`atomic.rs` and `inline_asm.rs` contain the corresponding target-specific operations.
 
 The image workflow runs only when `dockerfiles/dev.Dockerfile`, `.dockerignore`,
 or `.github/workflows/publish.yaml` changes, or when started manually. Image
