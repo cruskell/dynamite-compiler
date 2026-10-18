@@ -1,0 +1,949 @@
+{
+  "date": "2026-10-18 Asia/Tokyo",
+  "utc_started": "2026-10-18T08:51:52.396152+00:00",
+  "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+  "cpu": "Intel Core i5-5575R @ 2.80GHz, four logical CPUs",
+  "baseline_commit": "7804347c97ee021bfac6c7b1a3e6558ec8fb3f40",
+  "dynamite_commit": "67393212784eab4d92df3572c1d352629dc66284",
+  "dynamite_diff": "",
+  "compiler_binaries": {
+    "baseline": {
+      "path": "/tmp/dynamite-refactor-baseline-cebd/target/release/dynamite-cc",
+      "sha256": "addbb76aeef9f49f0e2b2594634311e2c2ba5c624a4dd548ece190f239971a56"
+    },
+    "dynamite": {
+      "path": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/target/release/dynamite-cc",
+      "sha256": "13fd368e8e44f0c551ee4d425f930e50fc509945c25d8fcbefc70bb8ca340d93"
+    },
+    "clang": {
+      "path": "/usr/bin/clang-15",
+      "sha256": "22f8651e4eba296325daed391a432b11c3db82d8166da127ccb43b4f6f229e18"
+    }
+  },
+  "clang_version": "Ubuntu clang version 15.0.7\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+  "conditions": {
+    "rust": "1.86.0, release, opt-level 3, debuginfo 1",
+    "preprocessor": "native",
+    "backend": "LLVM tools, explicitly selected with DYNAMITE_BACKEND=llvm; default Clang backend not measured",
+    "llvm_tools": {
+      "DYNAMITE_LLC": "/usr/bin/llc-15",
+      "DYNAMITE_OPT": "/usr/bin/opt-15",
+      "DYNAMITE_LLD": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/llvm-tools/lld/usr/bin/ld.lld-15",
+      "version": "15.0.7"
+    },
+    "CFLAGS": "-O0 -g0 -std=gnu99",
+    "make_jobs": 4,
+    "runs_per_compiler": 2,
+    "order_per_project": [
+      "baseline",
+      "dynamite",
+      "clang",
+      "clang",
+      "dynamite",
+      "baseline"
+    ],
+    "compiler_cache": false,
+    "filesystem_cache_cleared": false,
+    "clang_time_traces": false,
+    "source_copy_and_rust_build_timed": false,
+    "dependency_builds_and_linking_timed": true,
+    "comparison_scope": "Complete application toolchains; compiler capability macros may select different C paths. Redis disables TLS/vector sets/C11 atomics, uses libc and builds six native tools; Git disables Rust/PCH/scripting/localization frontends."
+  },
+  "sources": {
+    "redis": {
+      "path": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/build-benchmark/redis",
+      "commit": "498ecd0d6d007db11ddb3aea9428552598a78622",
+      "status": ""
+    },
+    "git": {
+      "path": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/build-benchmark/git",
+      "commit": "a018953688f1b10bddf91bff8747068f5f4746a4",
+      "status": ""
+    }
+  },
+  "builds": [
+    {
+      "project": "redis",
+      "compiler": "baseline",
+      "run": 1,
+      "seconds": 10.914523044601083,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-baseline-1",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-baseline-1-records",
+      "tracked_source_changes": "",
+      "compile_count": 184,
+      "compile_worker_seconds": 20.81746788788587,
+      "compile_cpu_seconds": 19.565131000000004,
+      "max_compile_rss_kib": 82840.0,
+      "dependency_scan_worker_seconds": 2.137657629325986,
+      "link_worker_seconds": 0.22519884631037712,
+      "stages": {
+        "preprocess.read": 0.007562717000000003,
+        "preprocess.native": 5.263544895000001,
+        "preprocess.map": 0.1545689489999999,
+        "preprocess": 5.475932990999999,
+        "tokenize": 0.7771340469999999,
+        "parse.declarations": 3.549760666999999,
+        "parse.validate": 0.30359361400000007,
+        "parse.lower": 0.4591586689999999,
+        "parse.inline": 0.004107640000000001,
+        "parse": 4.367618902999999,
+        "generate": 1.0439936390000002,
+        "drop_ast": 0.00012031500000000006,
+        "drop_tokens": 0.00010657300000000001,
+        "frontend_total": 11.728058186999998,
+        "write_ir": 0.025602434999999996,
+        "lower": 8.571434771000002
+      },
+      "failed_invocations": [
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        },
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        }
+      ]
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 1,
+      "seconds": 10.71165047120303,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-dynamite-1",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-dynamite-1-records",
+      "tracked_source_changes": "",
+      "compile_count": 184,
+      "compile_worker_seconds": 20.117478171363473,
+      "compile_cpu_seconds": 18.934504000000004,
+      "max_compile_rss_kib": 81904.0,
+      "dependency_scan_worker_seconds": 2.1352911489084363,
+      "link_worker_seconds": 0.19587950594723225,
+      "stages": {
+        "preprocess.read": 0.007383897000000001,
+        "preprocess.native": 5.361383545000005,
+        "preprocess.map": 0.14734308,
+        "preprocess": 5.561877488,
+        "tokenize": 0.7771328199999996,
+        "parse.declarations": 2.894605947000001,
+        "parse.validate": 0.30690934400000003,
+        "parse.lower": 0.432042142,
+        "parse.inline": 0.0021868179999999984,
+        "parse": 3.685570178000001,
+        "generate": 1.016521366,
+        "drop_ast": 0.00012469499999999997,
+        "drop_tokens": 0.00010678300000000005,
+        "frontend_total": 11.095233455000008,
+        "write_ir": 0.025614323000000005,
+        "lower": 8.517936234000004
+      },
+      "failed_invocations": [
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        },
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        }
+      ]
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 1,
+      "seconds": 13.990622484125197,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-clang-1",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-clang-1-records",
+      "tracked_source_changes": "",
+      "compile_count": 184,
+      "compile_worker_seconds": 20.428496713750064,
+      "compile_cpu_seconds": 19.46365699999999,
+      "max_compile_rss_kib": 119224.0,
+      "dependency_scan_worker_seconds": 5.031078482978046,
+      "link_worker_seconds": 0.3734993925318122,
+      "stages": {},
+      "failed_invocations": []
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 2,
+      "seconds": 14.026229514740407,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-clang-2",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-clang-2-records",
+      "tracked_source_changes": "",
+      "compile_count": 184,
+      "compile_worker_seconds": 20.55550209712237,
+      "compile_cpu_seconds": 19.449584999999995,
+      "max_compile_rss_kib": 119136.0,
+      "dependency_scan_worker_seconds": 5.002538112923503,
+      "link_worker_seconds": 0.3853205982595682,
+      "stages": {},
+      "failed_invocations": []
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 2,
+      "seconds": 10.749889364466071,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-dynamite-2",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-dynamite-2-records",
+      "tracked_source_changes": "",
+      "compile_count": 184,
+      "compile_worker_seconds": 20.374338204041123,
+      "compile_cpu_seconds": 18.89987800000001,
+      "max_compile_rss_kib": 82800.0,
+      "dependency_scan_worker_seconds": 2.094152320176363,
+      "link_worker_seconds": 0.2054015314206481,
+      "stages": {
+        "preprocess.read": 0.0073448369999999956,
+        "preprocess.native": 5.484958705000001,
+        "preprocess.map": 0.15888661900000006,
+        "preprocess": 5.7006893960000005,
+        "tokenize": 0.8006133570000005,
+        "parse.declarations": 2.863616975999998,
+        "parse.validate": 0.292411082,
+        "parse.lower": 0.43495684000000023,
+        "parse.inline": 0.0022088439999999993,
+        "parse": 3.6388710560000006,
+        "generate": 1.0391640999999994,
+        "drop_ast": 0.00011857600000000005,
+        "drop_tokens": 0.00011113700000000002,
+        "frontend_total": 11.233565718000001,
+        "write_ir": 0.025854605000000006,
+        "lower": 8.618311485000001
+      },
+      "failed_invocations": [
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        },
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        }
+      ]
+    },
+    {
+      "project": "redis",
+      "compiler": "baseline",
+      "run": 2,
+      "seconds": 10.89802498370409,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "-C",
+        "src",
+        "MALLOC=libc",
+        "BUILD_TLS=no",
+        "SKIP_VEC_SETS=yes",
+        "OPT=-O0",
+        "OPTIMIZATION=-O0",
+        "DEBUG=",
+        "CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1",
+        "LUA_CFLAGS=-O0 -g0 -std=gnu99 -D__STDC_NO_ATOMICS__=1 -Wall -DLUA_ANSI -DENABLE_CJSON_GLOBAL -DREDIS_STATIC= -DLUA_USE_MKSTEMP",
+        "redis-server",
+        "redis-cli",
+        "redis-benchmark",
+        "redis-check-rdb",
+        "redis-check-aof",
+        "redis-sentinel"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-baseline-2",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/redis-baseline-2-records",
+      "tracked_source_changes": "",
+      "compile_count": 184,
+      "compile_worker_seconds": 20.765062948688865,
+      "compile_cpu_seconds": 19.51731,
+      "max_compile_rss_kib": 83132.0,
+      "dependency_scan_worker_seconds": 2.1085666567087173,
+      "link_worker_seconds": 0.19024391938000917,
+      "stages": {
+        "preprocess.read": 0.007606045,
+        "preprocess.native": 5.397112541999998,
+        "preprocess.map": 0.15007347900000007,
+        "preprocess": 5.604425783000003,
+        "tokenize": 0.7921953400000001,
+        "parse.declarations": 3.521645479000002,
+        "parse.validate": 0.304571634,
+        "parse.lower": 0.4564511600000001,
+        "parse.inline": 0.0022229400000000005,
+        "parse": 4.328750156,
+        "generate": 1.0443983980000002,
+        "drop_ast": 0.00011699299999999997,
+        "drop_tokens": 0.00010546199999999996,
+        "frontend_total": 11.822281770999993,
+        "write_ir": 0.025192237000000003,
+        "lower": 8.443553966
+      },
+      "failed_invocations": [
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        },
+        {
+          "args": [
+            "-std=gnu11",
+            "-c",
+            "foo.c",
+            "-o",
+            "foo.o"
+          ],
+          "returncode": 1
+        }
+      ]
+    },
+    {
+      "project": "git",
+      "compiler": "baseline",
+      "run": 1,
+      "seconds": 38.39746214263141,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-baseline-1",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-baseline-1-records",
+      "tracked_source_changes": "",
+      "compile_count": 568,
+      "compile_worker_seconds": 119.27237456757575,
+      "compile_cpu_seconds": 113.63529700000004,
+      "max_compile_rss_kib": 75988.0,
+      "dependency_scan_worker_seconds": 0,
+      "link_worker_seconds": 1.2371238358318806,
+      "stages": {
+        "preprocess.read": 0.013283697000000006,
+        "preprocess.native": 50.81339812000001,
+        "preprocess.map": 1.338915211,
+        "preprocess": 52.323462021999916,
+        "tokenize": 8.085146520999993,
+        "parse.declarations": 27.011826046999985,
+        "parse.validate": 2.3928536159999982,
+        "parse.lower": 3.762117206999999,
+        "parse.inline": 0.026438292999999977,
+        "parse": 33.37091273500001,
+        "generate": 2.446097763000002,
+        "drop_ast": 0.00037540000000000045,
+        "drop_tokens": 0.0003273250000000002,
+        "frontend_total": 96.43494166900007,
+        "write_ir": 0.060643879000000046,
+        "lower": 20.450023670999997
+      },
+      "failed_invocations": []
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 1,
+      "seconds": 38.282219029031694,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-dynamite-1",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-dynamite-1-records",
+      "tracked_source_changes": "",
+      "compile_count": 568,
+      "compile_worker_seconds": 119.14103610441089,
+      "compile_cpu_seconds": 113.46856500000001,
+      "max_compile_rss_kib": 74708.0,
+      "dependency_scan_worker_seconds": 0,
+      "link_worker_seconds": 1.3050370011478662,
+      "stages": {
+        "preprocess.read": 0.013457687999999992,
+        "preprocess.native": 51.00696686899999,
+        "preprocess.map": 1.351596057,
+        "preprocess": 52.53465864399997,
+        "tokenize": 8.058797887000004,
+        "parse.declarations": 26.949376457999993,
+        "parse.validate": 2.3420831079999984,
+        "parse.lower": 3.729029704,
+        "parse.inline": 0.028468206,
+        "parse": 33.20088211799998,
+        "generate": 2.3918446529999975,
+        "drop_ast": 0.0003848279999999998,
+        "drop_tokens": 0.0003379780000000004,
+        "frontend_total": 96.40480552900007,
+        "write_ir": 0.06113893399999997,
+        "lower": 20.346525680999996
+      },
+      "failed_invocations": []
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 1,
+      "seconds": 40.653022503480315,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-clang-1",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-clang-1-records",
+      "tracked_source_changes": "",
+      "compile_count": 568,
+      "compile_worker_seconds": 125.88574760966003,
+      "compile_cpu_seconds": 120.31871700000002,
+      "max_compile_rss_kib": 120316.0,
+      "dependency_scan_worker_seconds": 0,
+      "link_worker_seconds": 3.1084503550082445,
+      "stages": {},
+      "failed_invocations": []
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 2,
+      "seconds": 40.81267121806741,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-clang-2",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-clang-2-records",
+      "tracked_source_changes": "",
+      "compile_count": 568,
+      "compile_worker_seconds": 126.41146847698838,
+      "compile_cpu_seconds": 120.48953899999998,
+      "max_compile_rss_kib": 120072.0,
+      "dependency_scan_worker_seconds": 0,
+      "link_worker_seconds": 3.0961826415732503,
+      "stages": {},
+      "failed_invocations": []
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 2,
+      "seconds": 38.35249412432313,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-dynamite-2",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-dynamite-2-records",
+      "tracked_source_changes": "",
+      "compile_count": 568,
+      "compile_worker_seconds": 119.4648434696719,
+      "compile_cpu_seconds": 113.556351,
+      "max_compile_rss_kib": 75768.0,
+      "dependency_scan_worker_seconds": 0,
+      "link_worker_seconds": 1.2730650547891855,
+      "stages": {
+        "preprocess.read": 0.013720486,
+        "preprocess.native": 50.938204873000004,
+        "preprocess.map": 1.3544642690000004,
+        "preprocess": 52.469436865000056,
+        "tokenize": 8.125050559999996,
+        "parse.declarations": 27.08219182299999,
+        "parse.validate": 2.329583988,
+        "parse.lower": 3.724139430000003,
+        "parse.inline": 0.027679393999999982,
+        "parse": 33.319330349000026,
+        "generate": 2.4446469830000006,
+        "drop_ast": 0.00037353800000000014,
+        "drop_tokens": 0.0003461990000000007,
+        "frontend_total": 96.58437099100003,
+        "write_ir": 0.05997499399999995,
+        "lower": 20.53562880700003
+      },
+      "failed_invocations": []
+    },
+    {
+      "project": "git",
+      "compiler": "baseline",
+      "run": 2,
+      "seconds": 38.41911706421524,
+      "returncode": 0,
+      "command": [
+        "make",
+        "-j4",
+        "CC=/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/tools/benchmarks/cc.py",
+        "NO_RUST=YesPlease",
+        "NO_PRECOMPILED_HEADER=YesPlease",
+        "NO_GETTEXT=YesPlease",
+        "NO_TCLTK=YesPlease",
+        "NO_PERL=YesPlease",
+        "NO_PYTHON=YesPlease",
+        "CFLAGS=-O0 -g0 -std=gnu99",
+        "all"
+      ],
+      "cwd": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-baseline-2",
+      "records": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds/git-baseline-2-records",
+      "tracked_source_changes": "",
+      "compile_count": 568,
+      "compile_worker_seconds": 119.76728680264205,
+      "compile_cpu_seconds": 114.12099700000009,
+      "max_compile_rss_kib": 76584.0,
+      "dependency_scan_worker_seconds": 0,
+      "link_worker_seconds": 1.2605405794456601,
+      "stages": {
+        "preprocess.read": 0.013625333999999987,
+        "preprocess.native": 50.70891350899998,
+        "preprocess.map": 1.3775095710000007,
+        "preprocess": 52.265199289999984,
+        "tokenize": 8.14273456899999,
+        "parse.declarations": 27.27292575399997,
+        "parse.validate": 2.410372131000001,
+        "parse.lower": 3.8012755779999963,
+        "parse.inline": 0.028156658,
+        "parse": 33.677599172,
+        "generate": 2.483303025000001,
+        "drop_ast": 0.0005055799999999997,
+        "drop_tokens": 0.000332447,
+        "frontend_total": 96.78665125900012,
+        "write_ir": 0.07031063899999997,
+        "lower": 20.43377743099998
+      },
+      "failed_invocations": []
+    }
+  ],
+  "summary": [
+    {
+      "project": "redis",
+      "compiler": "baseline",
+      "runs": 2,
+      "wall_seconds": [
+        10.914523044601083,
+        10.89802498370409
+      ],
+      "median_wall_seconds": 10.906274014152586,
+      "mean_stages": {
+        "drop_ast": 0.00011865400000000002,
+        "drop_tokens": 0.00010601749999999998,
+        "frontend_total": 11.775169978999996,
+        "generate": 1.0441960185,
+        "lower": 8.507494368500002,
+        "parse": 4.348184529499999,
+        "parse.declarations": 3.5357030730000005,
+        "parse.inline": 0.0031652900000000007,
+        "parse.lower": 0.4578049145,
+        "parse.validate": 0.304082624,
+        "preprocess": 5.540179387,
+        "preprocess.map": 0.15232121399999998,
+        "preprocess.native": 5.330328718499999,
+        "preprocess.read": 0.007584381000000001,
+        "tokenize": 0.7846646935,
+        "write_ir": 0.025397336
+      },
+      "mean_clang_trace_totals": {}
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "runs": 2,
+      "wall_seconds": [
+        10.71165047120303,
+        10.749889364466071
+      ],
+      "median_wall_seconds": 10.73076991783455,
+      "mean_stages": {
+        "drop_ast": 0.00012163550000000002,
+        "drop_tokens": 0.00010896000000000004,
+        "frontend_total": 11.164399586500004,
+        "generate": 1.0278427329999997,
+        "lower": 8.568123859500002,
+        "parse": 3.662220617000001,
+        "parse.declarations": 2.8791114614999995,
+        "parse.inline": 0.002197830999999999,
+        "parse.lower": 0.4334994910000001,
+        "parse.validate": 0.299660213,
+        "preprocess": 5.631283442000001,
+        "preprocess.map": 0.15311484950000004,
+        "preprocess.native": 5.423171125000003,
+        "preprocess.read": 0.007364366999999998,
+        "tokenize": 0.7888730885,
+        "write_ir": 0.025734464000000006
+      },
+      "mean_clang_trace_totals": {}
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "runs": 2,
+      "wall_seconds": [
+        13.990622484125197,
+        14.026229514740407
+      ],
+      "median_wall_seconds": 14.008425999432802,
+      "mean_stages": {},
+      "mean_clang_trace_totals": {}
+    },
+    {
+      "project": "git",
+      "compiler": "baseline",
+      "runs": 2,
+      "wall_seconds": [
+        38.39746214263141,
+        38.41911706421524
+      ],
+      "median_wall_seconds": 38.40828960342333,
+      "mean_stages": {
+        "drop_ast": 0.0004404900000000001,
+        "drop_tokens": 0.0003298860000000001,
+        "frontend_total": 96.61079646400009,
+        "generate": 2.464700394000001,
+        "lower": 20.44190055099999,
+        "parse": 33.5242559535,
+        "parse.declarations": 27.142375900499978,
+        "parse.inline": 0.027297475499999987,
+        "parse.lower": 3.7816963924999976,
+        "parse.validate": 2.4016128734999995,
+        "preprocess": 52.29433065599995,
+        "preprocess.map": 1.3582123910000004,
+        "preprocess.native": 50.76115581449999,
+        "preprocess.read": 0.013454515499999996,
+        "tokenize": 8.113940544999991,
+        "write_ir": 0.06547725900000001
+      },
+      "mean_clang_trace_totals": {}
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "runs": 2,
+      "wall_seconds": [
+        38.282219029031694,
+        38.35249412432313
+      ],
+      "median_wall_seconds": 38.31735657667741,
+      "mean_stages": {
+        "drop_ast": 0.00037918299999999995,
+        "drop_tokens": 0.00034208850000000054,
+        "frontend_total": 96.49458826000006,
+        "generate": 2.418245817999999,
+        "lower": 20.441077244000013,
+        "parse": 33.260106233500004,
+        "parse.declarations": 27.015784140499992,
+        "parse.inline": 0.02807379999999999,
+        "parse.lower": 3.7265845670000015,
+        "parse.validate": 2.335833547999999,
+        "preprocess": 52.50204775450001,
+        "preprocess.map": 1.3530301630000001,
+        "preprocess.native": 50.97258587099999,
+        "preprocess.read": 0.013589086999999996,
+        "tokenize": 8.091924223500001,
+        "write_ir": 0.06055696399999996
+      },
+      "mean_clang_trace_totals": {}
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "runs": 2,
+      "wall_seconds": [
+        40.653022503480315,
+        40.81267121806741
+      ],
+      "median_wall_seconds": 40.73284686077386,
+      "mean_stages": {},
+      "mean_clang_trace_totals": {}
+    }
+  ],
+  "comparisons": {
+    "redis": {
+      "baseline_median_seconds": 10.906274014152586,
+      "dynamite_median_seconds": 10.73076991783455,
+      "clang_median_seconds": 14.008425999432802,
+      "reduction_vs_baseline_percent": 1.609203070547216,
+      "reduction_vs_clang_percent": 23.39774705402994
+    },
+    "git": {
+      "baseline_median_seconds": 38.40828960342333,
+      "dynamite_median_seconds": 38.31735657667741,
+      "clang_median_seconds": 40.73284686077386,
+      "reduction_vs_baseline_percent": 0.2367536479359722,
+      "reduction_vs_clang_percent": 5.930079702881241
+    }
+  },
+  "runtime_smokes": [
+    {
+      "project": "git",
+      "compiler": "baseline",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "baseline",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 1,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "baseline",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "baseline",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "dynamite",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "dynamite",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "git",
+      "compiler": "clang",
+      "run": 2,
+      "passed": true
+    },
+    {
+      "project": "redis",
+      "compiler": "clang",
+      "run": 2,
+      "passed": true
+    }
+  ],
+  "compile_command_validation": {
+    "baseline_current_exact_match": true,
+    "clang_git_exact_match": true,
+    "clang_redis_source_set_match": true,
+    "successful_C_compilations_per_build": {
+      "redis": 184,
+      "git": 568
+    },
+    "redis_note": "Two foo.c C11 feature probes fail by design with Dynamite and succeed with Clang. They are excluded from successful C compile aggregates, but included in whole-build elapsed time. Clang probe-derived warning/standard options differ; the final common GNU99 flag wins."
+  },
+  "artifacts": "/home/ubuntu/ghq/github.com/cruskell/dynamite-compiler/temp/full-build-2026-10-18/builds"
+}
