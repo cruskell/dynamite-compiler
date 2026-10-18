@@ -44,3 +44,48 @@ jobs:
         run: apt-get install -y --no-install-recommends clang-15 make
       - name: Run all tests with native preprocessing
         run: PATH="/usr/lib/llvm-15/bin:$PATH" cargo test --verbose
+
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: rust:1.86.0-slim
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install native compiler and lint components
+        run: |
+          test "$(uname -m)" = aarch64
+          apt-get update && apt-get install -y --no-install-recommends clang-15 make
+          rustup component add rustfmt clippy
+      - name: Check formatting and architecture-specific lints
+        run: make lint
+      - name: Run native ARM64 assembly and LLVM tests
+        run: PATH="/usr/lib/llvm-15/bin:$PATH" cargo test --all-features --verbose
+
+  build-macos:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            name: build-macos-x86_64
+            machine: x86_64
+          - runner: macos-15
+            name: build-macos-arm64
+            machine: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTUP_TOOLCHAIN: 1.86.0
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust lint components
+        run: rustup toolchain install 1.86.0 --profile minimal --component rustfmt --component clippy
+      - name: Verify native architecture and compiler
+        run: |
+          test "$(uname -m)" = "${{ matrix.machine }}"
+          rustc -vV
+          clang --version
+      - name: Check formatting and architecture-specific lints
+        run: make lint
+      - name: Run native macOS assembly and LLVM tests
+        run: cargo test --all-features --verbose
