@@ -29,33 +29,44 @@ mod varargs;
 mod vla;
 
 pub struct AstBuilderImpl<'a> {
+    // Input and diagnostics.
     error_logger: &'a dyn error::ErrorLogger,
     tokens: &'a Vec<Token>,
     cur: usize,
-    offset_size: usize,
-    loop_stack: Vec<usize>,
-    labels: HashMap<String, usize>,
-    defined_labels: HashSet<String>,
-    switch_stack: Vec<Vec<Node>>,
-    switch_types: Vec<Type>,
-    return_type: Option<Type>,
+
+    // Scopes, types and declaration context.
+    scope_stack: Vec<HashMap<String, Identifier>>,
+    struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
+    next_enum_id: usize,
+    declaration_attributes_state: Option<DeclarationAttributes>,
+    parameter_depth: usize,
+
+    // Current function.
     current_function: Option<Token>,
-    mutable_static: Option<Token>,
+    return_type: Option<Type>,
     return_pointer: Option<usize>,
+    mutable_static: Option<Token>,
     variadic_parameters: Option<Vec<Type>>,
     variadic_last: Option<usize>,
+
+    // Local storage and variable-length arrays.
+    offset_size: usize,
+    next_deferred_local: usize,
     pending_bounds: Vec<Node>,
-    parameter_depth: usize,
-    declaration_attributes_state: Option<DeclarationAttributes>,
     dynamic_objects: Vec<Node>,
     vla_active: Vec<usize>,
-    jump_depths: Vec<usize>,
+
+    // Control flow and jump lifetimes.
+    loop_stack: Vec<usize>,
     continue_depths: HashMap<usize, usize>,
+    switch_stack: Vec<Vec<Node>>,
+    switch_types: Vec<Type>,
     switch_vla_depths: Vec<usize>,
-    next_enum_id: usize,
-    next_deferred_local: usize,
-    struct_definitions: Vec<Rc<RefCell<StructDefinition>>>,
-    scope_stack: Vec<HashMap<String, Identifier>>,
+    labels: HashMap<String, usize>,
+    defined_labels: HashSet<String>,
+    jump_depths: Vec<usize>,
+
+    // Translation-unit output.
     pub functions: HashMap<String, Func>,
     pub global_variables: HashMap<String, GlobalVariable>,
     pub string_literals: Vec<Token>,
@@ -71,16 +82,17 @@ pub struct ProgramAst<'a> {
 
 pub enum Identifier {
     TypeDef(Type),
-    Constant(i64, Type),
     EnumTag {
         ty: Type,
         fixed: bool,
         defined: bool,
     },
-    StaticObject(Type, String),
+    Constant(i64, Type),
+
     Local(Type, usize, bool, usize),
     Dynamic(Type, usize, bool),
     Static(Type),
+    StaticObject(Type, String),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -165,14 +177,16 @@ impl Declarator {
 
 #[derive(Clone, Default)]
 struct DeclarationAttributes {
+    typedef_declarator: bool,
+    word_mode: bool,
+    vector_size: Option<usize>,
+    transparent_union: bool,
+
     gnu_inline: bool,
     noinline: bool,
-    weak_import: bool,
+
     common: bool,
-    typedef_declarator: bool,
-    transparent_union: bool,
-    vector_size: Option<usize>,
-    word_mode: bool,
+    weak_import: bool,
     hidden: bool,
 }
 

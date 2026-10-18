@@ -15,16 +15,18 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Options<'a> {
+    return_ty: Type,
+    return_pointer: Option<String>,
+
     register_number: &'a mut usize,
     register_map: &'a mut HashMap<usize, usize>,
     register_queue: &'a mut Vec<String>,
-    label_number: usize,
-    terminated: bool,
-    return_ty: Type,
-    return_pointer: Option<String>,
-    break_labels: Vec<String>,
     expression_slots: HashMap<usize, usize>,
     argument_slots: HashMap<(usize, usize), usize>,
+
+    label_number: usize,
+    break_labels: Vec<String>,
+    terminated: bool,
 }
 
 impl Options<'_> {

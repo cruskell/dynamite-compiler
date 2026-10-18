@@ -81,9 +81,11 @@ pub struct Token {
     pub pos: usize,
     /// Active pragma pack limit at this source position.
     pub packing: Option<u8>,
+    pub s_value: smol_str::SmolStr,
+
     pub i_value: usize,
     pub extended_float: Option<Box<u128>>,
-    pub s_value: smol_str::SmolStr,
+
     pub string_encoding: StringEncoding,
     pub string_bytes: StringBytes,
 }

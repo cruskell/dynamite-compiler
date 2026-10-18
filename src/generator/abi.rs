@@ -26,9 +26,10 @@ pub struct Signature {
     pub arguments: Vec<Argument>,
     pub result: Vec<Part>,
     pub indirect_result: bool,
-    pub stack_size: usize,
-    pub floating: usize,
+
     pub general: usize,
+    pub floating: usize,
+    pub stack_size: usize,
 }
 
 fn floating_members(ty: &Type, offset: usize, members: &mut Vec<Part>) -> bool {

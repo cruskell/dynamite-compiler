@@ -252,28 +252,37 @@ fn include_guard(source: &CleanSource) -> Option<SmolStr> {
 }
 
 pub(super) struct Preprocessor {
-    macros: HashMap<SmolStr, Rc<Macro>>,
+    // Search configuration and diagnostics.
     includes: Vec<PathBuf>,
-    frameworks: Vec<PathBuf>,
     quotes: Vec<PathBuf>,
-    include_cache: HashMap<(PathBuf, SmolStr, bool, bool), Option<PathBuf>>,
-    search_origins: HashMap<PathBuf, usize>,
-    headers: HashMap<PathBuf, Header>,
-    once: HashSet<PathBuf>,
-    counter: usize,
-    depth: usize,
-    output: String,
-    base_file: String,
-    pub(super) dependencies: Vec<PathBuf>,
-    seen_dependencies: HashSet<PathBuf>,
+    frameworks: Vec<PathBuf>,
     warnings_as_errors: bool,
     dependency_only: bool,
-    condition_expansion: bool,
+
+    // Macro definitions and expansion dependencies.
+    macros: HashMap<SmolStr, Rc<Macro>>,
+    builtin_names: HashSet<SmolStr>,
     stateful: HashSet<SmolStr>,
     // Keep historical edges after redefinition: extra expansion is safe; missing effects is not.
     dependents: HashMap<SmolStr, HashSet<SmolStr>>,
-    builtin_names: HashSet<SmolStr>,
+
+    // Header lookup and source traversal.
     include_context: PathBuf,
+    search_origins: HashMap<PathBuf, usize>,
+    include_cache: HashMap<(PathBuf, SmolStr, bool, bool), Option<PathBuf>>,
+    headers: HashMap<PathBuf, Header>,
+    once: HashSet<PathBuf>,
+    depth: usize,
+    base_file: String,
+
+    // Expansion state.
+    counter: usize,
+    condition_expansion: bool,
+
+    // Generated source and dependency output.
+    output: String,
+    pub(super) dependencies: Vec<PathBuf>,
+    seen_dependencies: HashSet<PathBuf>,
 }
 
 impl Preprocessor {

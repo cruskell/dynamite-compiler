@@ -4,20 +4,23 @@ use crate::token::Token;
 
 #[derive(Default)]
 pub struct Func {
+    pub token: Option<Token>,
+    pub cty: Type,
+    pub args: Vec<Node>,
     pub body: Option<Node>,
+    pub mutable_static: Option<Token>,
+
+    pub offset_size: usize,
+    pub return_pointer: Option<usize>,
+
     pub internal: bool,
+    pub external_definition: bool,
+    pub weak_import: bool,
+    pub hidden: bool,
+
     pub inline_definition: bool,
     pub gnu_inline: bool,
     pub noinline: bool,
-    pub weak_import: bool,
-    pub hidden: bool,
-    pub external_definition: bool,
-    pub mutable_static: Option<Token>,
-    pub return_pointer: Option<usize>,
-    pub cty: Type,
-    pub offset_size: usize,
-    pub token: Option<Token>,
-    pub args: Vec<Node>,
 }
 
 impl Func {
