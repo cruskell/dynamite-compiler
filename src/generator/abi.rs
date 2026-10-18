@@ -82,6 +82,11 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
                 }
             }
         }
+        Type::Arr(child, count) => {
+            for index in 0..count.unwrap_or(0) {
+                integer_slots(child, offset + index * child.size_of(), slots);
+            }
+        }
         Type::Struct(st) if st.definition().borrow().members.is_empty() && st.has_bit_fields() => {
             slots.fill(Some(true))
         }
@@ -101,11 +106,6 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
                 }
             }
         }
-        Type::Arr(child, count) => {
-            for index in 0..count.unwrap_or(0) {
-                integer_slots(child, offset + index * child.size_of(), slots);
-            }
-        }
         _ => {
             for slot in slots
                 .iter_mut()
@@ -119,13 +119,13 @@ fn integer_slots(ty: &Type, offset: usize, slots: &mut [Option<bool>]) {
 }
 fn has_unaligned_member(ty: &Type, offset: usize) -> bool {
     match ty.unqualified() {
+        Type::Arr(child, count) => (0..count.unwrap_or(0))
+            .any(|index| has_unaligned_member(child, offset + index * child.size_of())),
         Type::Struct(record) => record.definition().borrow().members.iter().any(|member| {
             let offset = offset + member.offset;
             member.bit_field.is_none()
                 && (offset % member.ty.align_of() != 0 || has_unaligned_member(&member.ty, offset))
         }),
-        Type::Arr(child, count) => (0..count.unwrap_or(0))
-            .any(|index| has_unaligned_member(child, offset + index * child.size_of())),
         _ => false,
     }
 }
@@ -358,9 +358,9 @@ pub fn signature(
         arguments,
         result: result_parts,
         indirect_result,
-        stack_size: stack,
-        floating,
         general,
+        floating,
+        stack_size: stack,
     }
 }
 

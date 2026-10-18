@@ -288,27 +288,12 @@ pub(super) struct Preprocessor {
 impl Preprocessor {
     pub(super) fn new(includes: Vec<PathBuf>, quotes: Vec<PathBuf>) -> Self {
         Self {
-            macros: HashMap::new(),
             includes,
-            frameworks: vec![],
             quotes,
-            include_cache: HashMap::new(),
-            search_origins: HashMap::new(),
-            headers: HashMap::new(),
-            once: HashSet::new(),
-            counter: 0,
-            depth: 0,
-            output: String::new(),
-            base_file: String::new(),
-            dependencies: vec![],
-            seen_dependencies: HashSet::new(),
+            frameworks: vec![],
             warnings_as_errors: false,
             dependency_only: false,
-            condition_expansion: false,
-            stateful: [SmolStr::new("__COUNTER__"), SmolStr::new("_Pragma")]
-                .into_iter()
-                .collect(),
-            dependents: HashMap::new(),
+            macros: HashMap::new(),
             builtin_names: [
                 "__LINE__",
                 "__FILE__",
@@ -321,7 +306,22 @@ impl Preprocessor {
             .into_iter()
             .map(SmolStr::new)
             .collect(),
+            stateful: [SmolStr::new("__COUNTER__"), SmolStr::new("_Pragma")]
+                .into_iter()
+                .collect(),
+            dependents: HashMap::new(),
             include_context: PathBuf::new(),
+            search_origins: HashMap::new(),
+            include_cache: HashMap::new(),
+            headers: HashMap::new(),
+            once: HashSet::new(),
+            depth: 0,
+            base_file: String::new(),
+            counter: 0,
+            condition_expansion: false,
+            output: String::new(),
+            dependencies: vec![],
+            seen_dependencies: HashSet::new(),
         }
     }
 

@@ -198,8 +198,8 @@ impl AstBuilderImpl<'_> {
                         matches!(
                             identifier,
                             Identifier::TypeDef(_)
-                                | Identifier::Constant(..)
                                 | Identifier::EnumTag { .. }
+                                | Identifier::Constant(..)
                         )
                     })
                     .collect();

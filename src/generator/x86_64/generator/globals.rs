@@ -45,8 +45,8 @@ impl AsmGenerator<'_> {
 
     pub(super) fn weak_reference(&self, name: &str) -> Assembly {
         let directive = match self.target_os {
-            Os::MacOS => ".weak_reference",
             Os::Linux => ".weak",
+            Os::MacOS => ".weak_reference",
         };
         format!("{directive} {}", self.with_prefix(name)).into()
     }
@@ -62,8 +62,8 @@ impl AsmGenerator<'_> {
         if gv.common && !gv.internal && !gv.thread_local && gv.data.is_none() {
             let alignment = gv.ty.align_of().max(gv.alignment).max(1);
             let alignment = match self.target_os {
-                Os::MacOS => alignment.trailing_zeros() as usize,
                 Os::Linux => alignment,
+                Os::MacOS => alignment.trailing_zeros() as usize,
             };
             return format!(
                 ".comm {},{},{}",
@@ -106,7 +106,94 @@ impl AsmGenerator<'_> {
             data
         };
         match ty {
-            Type::Aligned(child, _) => self.gen_initializer_element(child, data),
+            Type::Bool | Type::Integer { .. } | Type::LongLong { .. } => format!(
+                "  {} {}",
+                if ty.size_of() == 1 {
+                    ".byte".to_string()
+                } else {
+                    format!(".{}byte", ty.size_of())
+                },
+                if let Some(GlobalVariableData::Address { symbol, offset }) = data {
+                    format!("{}{offset:+}", self.address_symbol(symbol))
+                } else if let Some(GlobalVariableData::Elem(value)) = data {
+                    ty.convert_constant(value.parse().unwrap()).to_string()
+                } else {
+                    "0".into()
+                }
+            )
+            .into(),
+            Type::I8 | Type::SignedChar => format!(
+                "  .byte {}",
+                if let Some(GlobalVariableData::Elem(s)) = data {
+                    s
+                } else {
+                    "0"
+                }
+            )
+            .into(),
+            Type::I32 => format!(
+                "  .4byte {}",
+                if let Some(GlobalVariableData::Elem(s)) = data {
+                    s
+                } else {
+                    "0"
+                }
+            )
+            .into(),
+            Type::Integer128 { .. } => "  .zero 16".into(),
+            Type::Enum(value) => self.gen_initializer_element(&value.underlying.borrow(), data),
+            Type::Float16 => "  .zero 2".into(),
+            Type::LongDouble(bits) if *bits != 64 => {
+                let value = if let Some(GlobalVariableData::Elem(value)) = data {
+                    value.parse::<u128>().unwrap()
+                } else {
+                    0
+                };
+                format!(
+                    "  .8byte {}\n  .8byte {}",
+                    value as u64,
+                    (value >> 64) as u64
+                )
+                .into()
+            }
+            Type::Float(_) | Type::LongDouble(_) => format!(
+                "  .{}byte {}",
+                ty.size_of(),
+                if let Some(GlobalVariableData::Elem(value)) = data {
+                    value.as_str()
+                } else {
+                    "0"
+                }
+            )
+            .into(),
+            Type::Arr(children_ty, size) => {
+                let size = size.unwrap_or(0);
+                if let Some(GlobalVariableData::Arr(v)) = data {
+                    vec![
+                        v.iter()
+                            .enumerate()
+                            .filter(|(i, _)| *i < size)
+                            .map(|(_, d)| {
+                                self.gen_initializer_element(children_ty.as_ref(), Some(d))
+                            })
+                            .collect::<Vec<Assembly>>()
+                            .into(),
+                        format!(
+                            "  .zero {}",
+                            children_ty.size_of()
+                                * v.iter()
+                                    .enumerate()
+                                    .filter(|(i, _)| *i < size)
+                                    .fold(size, |_, _| { size.saturating_sub(v.len()) })
+                        )
+                        .into(),
+                    ]
+                    .into()
+                } else {
+                    format!("  .zero {}", children_ty.size_of() * size).into()
+                }
+            }
+            Type::Vector(..) => format!("  .zero {}", ty.size_of()).into(),
             Type::Struct(struct_type)
                 if struct_type.has_bit_fields() || struct_type.definition().borrow().is_union =>
             {
@@ -159,94 +246,7 @@ impl AsmGenerator<'_> {
                 }
                 lines.into()
             }
-            Type::Arr(children_ty, size) => {
-                let size = size.unwrap_or(0);
-                if let Some(GlobalVariableData::Arr(v)) = data {
-                    vec![
-                        v.iter()
-                            .enumerate()
-                            .filter(|(i, _)| *i < size)
-                            .map(|(_, d)| {
-                                self.gen_initializer_element(children_ty.as_ref(), Some(d))
-                            })
-                            .collect::<Vec<Assembly>>()
-                            .into(),
-                        format!(
-                            "  .zero {}",
-                            children_ty.size_of()
-                                * v.iter()
-                                    .enumerate()
-                                    .filter(|(i, _)| *i < size)
-                                    .fold(size, |_, _| { size.saturating_sub(v.len()) })
-                        )
-                        .into(),
-                    ]
-                    .into()
-                } else {
-                    format!("  .zero {}", children_ty.size_of() * size).into()
-                }
-            }
-            Type::Enum(value) => self.gen_initializer_element(&value.underlying.borrow(), data),
-            Type::I8 | Type::SignedChar => format!(
-                "  .byte {}",
-                if let Some(GlobalVariableData::Elem(s)) = data {
-                    s
-                } else {
-                    "0"
-                }
-            )
-            .into(),
-            Type::Integer128 { .. } => "  .zero 16".into(),
-            Type::Float16 => "  .zero 2".into(),
-            Type::Vector(..) => format!("  .zero {}", ty.size_of()).into(),
-            Type::LongDouble(bits) if *bits != 64 => {
-                let value = if let Some(GlobalVariableData::Elem(value)) = data {
-                    value.parse::<u128>().unwrap()
-                } else {
-                    0
-                };
-                format!(
-                    "  .8byte {}\n  .8byte {}",
-                    value as u64,
-                    (value >> 64) as u64
-                )
-                .into()
-            }
-            Type::Float(_) | Type::LongDouble(_) => format!(
-                "  .{}byte {}",
-                ty.size_of(),
-                if let Some(GlobalVariableData::Elem(value)) = data {
-                    value.as_str()
-                } else {
-                    "0"
-                }
-            )
-            .into(),
-            Type::Integer { .. } | Type::LongLong { .. } | Type::Bool => format!(
-                "  {} {}",
-                if ty.size_of() == 1 {
-                    ".byte".to_string()
-                } else {
-                    format!(".{}byte", ty.size_of())
-                },
-                if let Some(GlobalVariableData::Address { symbol, offset }) = data {
-                    format!("{}{offset:+}", self.address_symbol(symbol))
-                } else if let Some(GlobalVariableData::Elem(value)) = data {
-                    ty.convert_constant(value.parse().unwrap()).to_string()
-                } else {
-                    "0".into()
-                }
-            )
-            .into(),
-            Type::I32 => format!(
-                "  .4byte {}",
-                if let Some(GlobalVariableData::Elem(s)) = data {
-                    s
-                } else {
-                    "0"
-                }
-            )
-            .into(),
+            Type::Aligned(child, _) => self.gen_initializer_element(child, data),
             _ => format!(
                 "  .8byte {}",
                 if let Some(GlobalVariableData::Address { symbol, offset }) = data {

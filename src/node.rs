@@ -169,19 +169,19 @@ impl Node {
     fn has_effects(node: &Self, value: bool) -> bool {
         if matches!(
             node.nt,
-            NodeType::InlineAsm(_, _)
-                | NodeType::Prefetch(..)
-                | NodeType::Atomic(_)
-                | NodeType::Assign
-                | NodeType::ZeroFill { .. }
-                | NodeType::CopyBytes { .. }
+            NodeType::Assign
+                | NodeType::SuffixIncr
+                | NodeType::SuffixDecr
                 | NodeType::CallFunc
                 | NodeType::AddOverflow
                 | NodeType::SubOverflow
-                | NodeType::SuffixIncr
-                | NodeType::SuffixDecr
                 | NodeType::VaStart
                 | NodeType::VaEnd
+                | NodeType::Prefetch(..)
+                | NodeType::Atomic(_)
+                | NodeType::InlineAsm(_, _)
+                | NodeType::ZeroFill { .. }
+                | NodeType::CopyBytes { .. }
         ) || (value
             && (node.volatile_access
                 || node.object_type().is_some_and(|ty| {
@@ -218,8 +218,8 @@ impl Node {
             }
         }
         let mut node = Self {
-            token,
             nt,
+            token,
             lhs: Some(Box::new(lhs)),
             rhs: Some(Box::new(rhs)),
             ..Self::default()
@@ -229,8 +229,8 @@ impl Node {
     }
     pub fn new_with_op_and_lhs(token: Option<Token>, nt: NodeType, lhs: Node) -> Self {
         let mut node = Self {
-            token,
             nt,
+            token,
             lhs: Some(Box::new(lhs)),
             ..Self::default()
         };
@@ -249,12 +249,12 @@ impl Node {
                 | NodeType::Mul
                 | NodeType::Div
                 | NodeType::Mod
+                | NodeType::BitLeft
+                | NodeType::BitRight
                 | NodeType::BitAnd
                 | NodeType::BitXor
                 | NodeType::BitOr
                 | NodeType::BitNot
-                | NodeType::BitLeft
-                | NodeType::BitRight
         ) {
             self.cty = self
                 .infer_arithmetic_type_view()
@@ -288,7 +288,7 @@ impl Node {
                 &lhs,
                 self.rhs.as_ref()?.resolve_type_view()?.as_ref(),
             ))),
-            NodeType::BitNot | NodeType::BitLeft | NodeType::BitRight => {
+            NodeType::BitLeft | NodeType::BitRight | NodeType::BitNot => {
                 Some(Cow::Owned(lhs.promoted()))
             }
             _ => None,
@@ -297,16 +297,16 @@ impl Node {
 
     pub fn new_with_num(token: Option<Token>, value: usize) -> Self {
         Self {
-            token,
             nt: NodeType::Num,
+            token,
             value: Some(value),
             ..Self::default()
         }
     }
     pub fn new_if_node(token: Option<Token>, cond: Node, then: Node, els: Option<Node>) -> Self {
         Self {
-            token,
             nt: NodeType::If,
+            token,
             cond: Some(Box::new(cond)),
             then: Some(Box::new(then)),
             els: els.map(Box::new),
@@ -315,8 +315,8 @@ impl Node {
     }
     pub fn new_while_node(token: Option<Token>, cond: Node, then: Node) -> Self {
         Self {
-            token,
             nt: NodeType::While,
+            token,
             cond: Some(Box::new(cond)),
             then: Some(Box::new(then)),
             ..Self::default()
@@ -330,12 +330,12 @@ impl Node {
         then: Node,
     ) -> Self {
         Self {
-            token,
             nt: NodeType::For,
-            ini: ini.map(Box::new),
+            token,
             cond: cond.map(Box::new),
-            upd: upd.map(Box::new),
             then: Some(Box::new(then)),
+            ini: ini.map(Box::new),
+            upd: upd.map(Box::new),
             ..Self::default()
         }
     }
@@ -413,6 +413,50 @@ impl Node {
     }
     pub(crate) fn resolve_qualified_type_view(&self) -> Option<Cow<'_, Type>> {
         match self.nt {
+            NodeType::Num => Some(
+                self.cty
+                    .as_ref()
+                    .map_or(Cow::Owned(Type::I32), Cow::Borrowed),
+            ),
+            NodeType::LocalVar
+            | NodeType::GlobalVar
+            | NodeType::CallFunc
+            | NodeType::AddOverflow
+            | NodeType::SubOverflow
+            | NodeType::BitScan { .. }
+            | NodeType::VaStart
+            | NodeType::VaEnd
+            | NodeType::StackAlloc
+            | NodeType::Prefetch(..)
+            | NodeType::Atomic(_)
+            | NodeType::ZeroFill { .. }
+            | NodeType::CopyBytes { .. } => self.cty.as_ref().map(Cow::Borrowed),
+            NodeType::Addr => {
+                if let Some(ty) = self.lhs.as_ref().unwrap().object_type_view() {
+                    Some(Cow::Owned(Type::Ptr(Rc::new(ty.into_owned()))))
+                } else {
+                    self.cty.as_ref().map(Cow::Borrowed)
+                }
+            }
+            NodeType::Deref => self.lhs.as_ref().unwrap().dest_type_view(),
+            NodeType::Cast | NodeType::FloatAbs | NodeType::InlineAsm(_, _) => {
+                self.cty.as_ref().map(Cow::Borrowed)
+            }
+            NodeType::Add
+            | NodeType::Sub
+            | NodeType::Mul
+            | NodeType::Div
+            | NodeType::Mod
+            | NodeType::BitLeft
+            | NodeType::BitRight
+            | NodeType::BitAnd
+            | NodeType::BitXor
+            | NodeType::BitOr
+            | NodeType::BitNot => self
+                .cty
+                .as_ref()
+                .map(Cow::Borrowed)
+                .or_else(|| self.infer_arithmetic_type_view()),
             NodeType::Eq
             | NodeType::Ne
             | NodeType::Lt
@@ -450,51 +494,7 @@ impl Node {
                     then
                 }
             }
-            NodeType::Cast | NodeType::FloatAbs | NodeType::InlineAsm(_, _) => {
-                self.cty.as_ref().map(Cow::Borrowed)
-            }
-            NodeType::Num => Some(
-                self.cty
-                    .as_ref()
-                    .map_or(Cow::Owned(Type::I32), Cow::Borrowed),
-            ),
             NodeType::Sequence => self.children.last().and_then(Node::resolve_type_view),
-            NodeType::Add
-            | NodeType::Sub
-            | NodeType::Mul
-            | NodeType::Div
-            | NodeType::Mod
-            | NodeType::BitAnd
-            | NodeType::BitXor
-            | NodeType::BitOr
-            | NodeType::BitNot
-            | NodeType::BitLeft
-            | NodeType::BitRight => self
-                .cty
-                .as_ref()
-                .map(Cow::Borrowed)
-                .or_else(|| self.infer_arithmetic_type_view()),
-            NodeType::Prefetch(..)
-            | NodeType::StackAlloc
-            | NodeType::BitScan { .. }
-            | NodeType::ZeroFill { .. }
-            | NodeType::CopyBytes { .. }
-            | NodeType::Atomic(_)
-            | NodeType::LocalVar
-            | NodeType::CallFunc
-            | NodeType::AddOverflow
-            | NodeType::SubOverflow
-            | NodeType::GlobalVar
-            | NodeType::VaStart
-            | NodeType::VaEnd => self.cty.as_ref().map(Cow::Borrowed),
-            NodeType::Addr => {
-                if let Some(ty) = self.lhs.as_ref().unwrap().object_type_view() {
-                    Some(Cow::Owned(Type::Ptr(Rc::new(ty.into_owned()))))
-                } else {
-                    self.cty.as_ref().map(Cow::Borrowed)
-                }
-            }
-            NodeType::Deref => self.lhs.as_ref().unwrap().dest_type_view(),
             _ => {
                 if let Some(node) = self.lhs.as_ref() {
                     if let Some(ty) = node.resolve_type_view() {
@@ -529,6 +529,9 @@ impl Node {
     }
     pub fn to_debug_string(&self, indent: usize) -> String {
         match self.nt {
+            NodeType::Num => {
+                format!("Num: {}", self.value.unwrap())
+            }
             NodeType::LocalVar => {
                 format!(
                     "LocalVar: {{ type: {:?}, offset: {} }}",
@@ -538,9 +541,6 @@ impl Node {
             }
             NodeType::GlobalVar => {
                 format!("GlobalVar: {{ name: {}{} }}", &self.global_name, &self.dest)
-            }
-            NodeType::Num => {
-                format!("Num: {}", self.value.unwrap())
             }
             _ => [
                 vec![format!("{:?}:", self.nt)],

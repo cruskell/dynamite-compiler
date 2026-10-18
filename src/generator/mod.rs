@@ -73,10 +73,10 @@ pub(crate) fn referenced_symbols<'a>(
         pending: &mut Vec<&'a str>,
     ) {
         match data {
-            GlobalVariableData::Address { symbol, .. } => add_name(symbol, names, pending),
             GlobalVariableData::Elem(value) if value.starts_with('@') => {
                 add_name(&value[1..], names, pending)
             }
+            GlobalVariableData::Address { symbol, .. } => add_name(symbol, names, pending),
             GlobalVariableData::Arr(values) => {
                 for value in values {
                     data_names(value, names, pending);

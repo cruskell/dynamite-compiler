@@ -788,11 +788,11 @@ impl AstBuilderImpl<'_> {
                                 || format!(".anonymous.{}", members.len()),
                                 |name| name.s_value.to_string(),
                             ),
-                            anonymous,
-                            requested_alignment,
                             ty: member_type,
                             offset,
+                            requested_alignment,
                             bit_field: (field.width != 0).then_some(field),
+                            anonymous,
                         });
                     }
                     if self.attempt_reserved(",").is_none() {
@@ -813,6 +813,7 @@ impl AstBuilderImpl<'_> {
             }
             *ty.definition().borrow_mut() = StructDefinition {
                 members,
+                complete: true,
                 is_union,
                 transparent_union: false,
                 has_bit_fields,
@@ -821,7 +822,6 @@ impl AstBuilderImpl<'_> {
                 align,
                 natural_align,
                 packing,
-                complete: true,
             };
         }
         if defining {

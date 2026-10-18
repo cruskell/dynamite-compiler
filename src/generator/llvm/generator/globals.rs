@@ -88,6 +88,7 @@ impl IrGenerator<'_> {
 
     pub(super) fn contains_packed_record(ty: &Type) -> bool {
         match ty.unqualified() {
+            Type::Arr(child, _) => Self::contains_packed_record(child),
             Type::Struct(record) => {
                 record.definition().borrow().packing.is_some()
                     || ty.contains_typedef_alignment()
@@ -96,7 +97,6 @@ impl IrGenerator<'_> {
                         .iter()
                         .any(|member| Self::contains_packed_record(&member.ty))
             }
-            Type::Arr(child, _) => Self::contains_packed_record(child),
             _ => false,
         }
     }
@@ -182,11 +182,26 @@ impl IrGenerator<'_> {
             }
         }
         match ty {
-            Type::Aligned(child, _) => self.gen_initializer_element(child, data),
-            Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
+            Type::Void | Type::Func(_, _) | Type::VariadicFunc(_, _) => {
+                format!("{} zeroinitializer", Self::gen_type(ty))
+            }
+            Type::Bool
+            | Type::I8
+            | Type::SignedChar
+            | Type::I32
+            | Type::Integer { .. }
+            | Type::LongLong { .. } => format!(
+                "{} {}",
+                Self::gen_type(ty),
+                if let Some(GlobalVariableData::Elem(s)) = data {
+                    s
+                } else {
+                    "0"
+                }
+            ),
             Type::Integer128 { .. } => "<2 x i64> zeroinitializer".into(),
+            Type::Enum(value) => self.gen_initializer_element(&value.underlying.borrow(), data),
             Type::Float16 => "half zeroinitializer".into(),
-            Type::Vector(..) => format!("{} zeroinitializer", Self::gen_type(ty)),
             Type::LongDouble(80) => {
                 let bits = if let Some(GlobalVariableData::Elem(value)) = data {
                     value.parse::<u128>().unwrap()
@@ -206,7 +221,42 @@ impl IrGenerator<'_> {
                 };
                 format!("{} {}", Self::gen_type(ty), Self::float_literal(ty, bits))
             }
-
+            Type::Ptr(_) => format!(
+                "ptr {}",
+                match data {
+                    Some(GlobalVariableData::Address { symbol, offset }) => {
+                        if *offset == 0 {
+                            self.symbol_name(symbol)
+                        } else {
+                            format!(
+                                "getelementptr (i8, ptr {}, i64 {offset})",
+                                self.symbol_name(symbol)
+                            )
+                        }
+                    }
+                    Some(GlobalVariableData::Elem(value)) if value.starts_with('@') =>
+                        value.clone(),
+                    Some(GlobalVariableData::Elem(value)) if value != "0" =>
+                        format!("inttoptr (i64 {} to ptr)", value),
+                    _ => "null".to_string(),
+                }
+            ),
+            Type::Arr(children_ty, size) => {
+                if let Some(GlobalVariableData::Arr(v)) = data {
+                    format!(
+                        "{} [{}]",
+                        Self::gen_type(ty),
+                        (0..size.unwrap_or(0))
+                            .map(|i| self.gen_initializer_element(children_ty, v.get(i)))
+                            .collect::<Vec<String>>()
+                            .join(", "),
+                    )
+                } else {
+                    format!("{} zeroinitializer", Self::gen_type(ty))
+                }
+            }
+            Type::Vla(..) => unreachable!("variable length arrays have automatic storage"),
+            Type::Vector(..) => format!("{} zeroinitializer", Self::gen_type(ty)),
             Type::Struct(struct_type)
                 if struct_type.definition().borrow().is_union || struct_type.has_bit_fields() =>
             {
@@ -249,7 +299,6 @@ impl IrGenerator<'_> {
                     format!("{} [{}]", Self::gen_type(ty), elements)
                 }
             }
-            Type::Qualified(child, _) => self.gen_initializer_element(child, data),
             Type::Struct(struct_type) => {
                 if let Some(GlobalVariableData::Arr(elements)) = data {
                     let mut fields = vec![];
@@ -276,58 +325,8 @@ impl IrGenerator<'_> {
                     format!("{} zeroinitializer", Self::gen_type(ty))
                 }
             }
-            Type::Arr(children_ty, size) => {
-                if let Some(GlobalVariableData::Arr(v)) = data {
-                    format!(
-                        "{} [{}]",
-                        Self::gen_type(ty),
-                        (0..size.unwrap_or(0))
-                            .map(|i| self.gen_initializer_element(children_ty, v.get(i)))
-                            .collect::<Vec<String>>()
-                            .join(", "),
-                    )
-                } else {
-                    format!("{} zeroinitializer", Self::gen_type(ty))
-                }
-            }
-            Type::Ptr(_) => format!(
-                "ptr {}",
-                match data {
-                    Some(GlobalVariableData::Address { symbol, offset }) => {
-                        if *offset == 0 {
-                            self.symbol_name(symbol)
-                        } else {
-                            format!(
-                                "getelementptr (i8, ptr {}, i64 {offset})",
-                                self.symbol_name(symbol)
-                            )
-                        }
-                    }
-                    Some(GlobalVariableData::Elem(value)) if value.starts_with('@') =>
-                        value.clone(),
-                    Some(GlobalVariableData::Elem(value)) if value != "0" =>
-                        format!("inttoptr (i64 {} to ptr)", value),
-                    _ => "null".to_string(),
-                }
-            ),
-            Type::Enum(value) => self.gen_initializer_element(&value.underlying.borrow(), data),
-            Type::I8
-            | Type::SignedChar
-            | Type::I32
-            | Type::LongLong { .. }
-            | Type::Integer { .. }
-            | Type::Bool => format!(
-                "{} {}",
-                Self::gen_type(ty),
-                if let Some(GlobalVariableData::Elem(s)) = data {
-                    s
-                } else {
-                    "0"
-                }
-            ),
-            Type::Void | Type::Func(_, _) | Type::VariadicFunc(_, _) => {
-                format!("{} zeroinitializer", Self::gen_type(ty))
-            }
+            Type::Qualified(child, _) => self.gen_initializer_element(child, data),
+            Type::Aligned(child, _) => self.gen_initializer_element(child, data),
         }
     }
 }

@@ -85,8 +85,8 @@ impl AstBuilderImpl<'_> {
         self.expect_reserved(")");
         Node {
             token: Some(token),
-            value: Some(offset),
             cty: Some(Type::integer(64, false)),
+            value: Some(offset),
             ..Node::default()
         }
     }
@@ -111,12 +111,6 @@ impl AstBuilderImpl<'_> {
             .or_insert_with(|| GlobalVariable {
                 ty: ty.clone(),
                 alignment: 1,
-                thread_local: false,
-                internal: true,
-                weak_import: false,
-                hidden: false,
-                common: false,
-                declaration_only: false,
                 data: Some(GlobalVariableData::Arr(
                     function
                         .s_value
@@ -125,12 +119,18 @@ impl AstBuilderImpl<'_> {
                         .map(|byte| GlobalVariableData::Elem(byte.to_string()))
                         .collect(),
                 )),
+                internal: true,
+                declaration_only: false,
+                common: false,
+                weak_import: false,
+                hidden: false,
+                thread_local: false,
             });
         Node {
             nt: NodeType::GlobalVar,
-            global_name: name,
             token: Some(token),
             cty: Some(ty),
+            global_name: name,
             ..Node::default()
         }
     }
@@ -146,9 +146,9 @@ impl AstBuilderImpl<'_> {
         self.expect_conversion(&ty, &expected);
         let cast = |operand| Node {
             nt: NodeType::Cast,
+            token: Some(token.clone()),
             cty: Some(ty.clone()),
             lhs: Some(Box::new(operand)),
-            token: Some(token.clone()),
             ..Node::default()
         };
         let value = cast(value);
@@ -190,10 +190,11 @@ impl AstBuilderImpl<'_> {
         };
         self.expect_reserved("(");
         self.expect_reserved(")");
+        let value = ty.float_constant(f64::INFINITY);
         Node {
             token: Some(token),
-            value: Some(ty.float_constant(f64::INFINITY)),
             cty: Some(ty),
+            value: Some(value),
             ..Node::default()
         }
     }
@@ -232,13 +233,13 @@ impl AstBuilderImpl<'_> {
             } else {
                 0x7ff8_0000_0000_0000 | (payload & 0x0007_ffff_ffff_ffff)
             };
+            let extended_float = (ty.float_bits() == Some(80))
+                .then(|| Box::new(crate::floating::Extended::qnan(Some(payload.into())).to_bits()));
             return Node {
                 token: Some(token),
-                value: Some(bits as usize),
-                extended_float: (ty.float_bits() == Some(80)).then(|| {
-                    Box::new(crate::floating::Extended::qnan(Some(payload.into())).to_bits())
-                }),
                 cty: Some(ty),
+                value: Some(bits as usize),
+                extended_float,
                 ..Node::default()
             };
         }
@@ -389,8 +390,8 @@ impl AstBuilderImpl<'_> {
             }
         }
         self.functions.entry(name.into()).or_insert_with(|| Func {
-            cty: ty.clone(),
             token: Some(token.clone()),
+            cty: ty.clone(),
             ..Func::default()
         });
         self.scope_stack[0]
@@ -398,8 +399,8 @@ impl AstBuilderImpl<'_> {
             .or_insert_with(|| Identifier::Static(ty.clone()));
         self.postfix(Node {
             nt: NodeType::GlobalVar,
-            cty: Some(ty),
             token: Some(token),
+            cty: Some(ty),
             global_name: name.into(),
             ..Node::default()
         })

@@ -95,7 +95,7 @@ impl AstBuilderImpl<'_> {
                     continue;
                 }
                 let name = self.tokens[self.cur].clone();
-                if !matches!(name.tt, TokenType::Ident | TokenType::Reserved) {
+                if !matches!(name.tt, TokenType::Reserved | TokenType::Ident) {
                     self.error_logger
                         .print_error_position(name.pos, "attribute name expected");
                 }

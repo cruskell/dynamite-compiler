@@ -220,16 +220,16 @@ impl IrGenerator<'_> {
         let mut registers = HashMap::new();
         let mut queue = vec![];
         let mut options = Options {
+            return_ty: result.clone(),
+            return_pointer: signature.indirect_result.then(|| "%abi.result".into()),
             register_number: &mut number,
             register_map: &mut registers,
             register_queue: &mut queue,
-            label_number: 0,
-            terminated: false,
-            return_ty: result.clone(),
-            return_pointer: signature.indirect_result.then(|| "%abi.result".into()),
-            break_labels: vec![],
             expression_slots: HashMap::new(),
             argument_slots: HashMap::new(),
+            label_number: 0,
+            break_labels: vec![],
+            terminated: false,
         };
         let mut lines = vec![format!(
             "define {}{}{return_abi} {}({}){} uwtable \"frame-pointer\"=\"all\" {{",

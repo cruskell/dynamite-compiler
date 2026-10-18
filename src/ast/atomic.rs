@@ -82,14 +82,14 @@ impl AstBuilderImpl<'_> {
         args.push(order);
         self.postfix(Node {
             nt: NodeType::Atomic(operation),
+            token: Some(token),
             cty: Some(if operation == AtomicOperation::Store {
                 Type::Void
             } else {
                 ty
             }),
-            volatile_access: object.qualifiers().volatile,
-            token: Some(token),
             args,
+            volatile_access: object.qualifiers().volatile,
             ..Node::default()
         })
     }
@@ -116,8 +116,8 @@ impl AstBuilderImpl<'_> {
         if matches!(ty, Type::Ptr(_)) {
             Node {
                 nt: NodeType::Cast,
-                cty: Some(ty.clone()),
                 token: value.token.clone(),
+                cty: Some(ty.clone()),
                 lhs: Some(Box::new(value)),
                 ..Node::default()
             }
@@ -190,10 +190,10 @@ impl AstBuilderImpl<'_> {
             nt: NodeType::Atomic(AtomicOperation::CompareExchange(
                 expected_object.qualifiers().volatile,
             )),
-            cty: Some(Type::Bool),
             token: Some(token),
-            volatile_access: object.qualifiers().volatile,
+            cty: Some(Type::Bool),
             args: vec![pointer, expected, desired, weak, success, failure],
+            volatile_access: object.qualifiers().volatile,
             ..Node::default()
         })
     }

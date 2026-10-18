@@ -13,9 +13,9 @@ fn number(value: usize, ty: Type, token: &Token) -> Node {
 fn cast(value: Node, ty: Type, token: &Token) -> Node {
     Node {
         nt: NodeType::Cast,
-        lhs: Some(Box::new(value)),
-        cty: Some(ty),
         token: Some(token.clone()),
+        cty: Some(ty),
+        lhs: Some(Box::new(value)),
         ..Node::default()
     }
 }
@@ -26,9 +26,9 @@ fn temporary(ty: Type, offset: &mut usize, token: &Token) -> Node {
     *offset = (*offset + ty.size_of()).div_ceil(ty.align_of()) * ty.align_of();
     Node {
         nt: NodeType::LocalVar,
+        token: Some(token.clone()),
         cty: Some(ty),
         offset: Some(*offset),
-        token: Some(token.clone()),
         ..Node::default()
     }
 }
@@ -83,10 +83,10 @@ impl AstBuilderImpl<'_> {
         }
         Node {
             nt: operation,
-            cty: Some(Type::Bool),
             token: Some(token),
-            volatile_access: target.qualifiers().volatile,
+            cty: Some(Type::Bool),
             args: vec![lhs, rhs, pointer],
+            volatile_access: target.qualifiers().volatile,
             ..Node::default()
         }
     }

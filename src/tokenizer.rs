@@ -185,6 +185,7 @@ fn encode_string_literal(value: &str, encoding: StringEncoding) -> Vec<u8> {
     for character in text.chars() {
         let scalar = character as u32;
         match encoding {
+            StringEncoding::Narrow | StringEncoding::Utf8 => unreachable!(),
             StringEncoding::Utf16 => {
                 let value = scalar as u16;
                 if scalar > 0xffff {
@@ -201,7 +202,6 @@ fn encode_string_literal(value: &str, encoding: StringEncoding) -> Vec<u8> {
             }
             StringEncoding::Utf32 => bytes.extend_from_slice(&scalar.to_ne_bytes()),
             StringEncoding::Wide => bytes.extend_from_slice(&scalar.to_ne_bytes()),
-            StringEncoding::Narrow | StringEncoding::Utf8 => unreachable!(),
         }
     }
     bytes
@@ -488,10 +488,8 @@ impl Tokenizer {
                 .map_err(|_| error::SyntaxError::new(start, "invalid floating literal"))?
         };
         Ok(Some((
-            Token {
-                tt: TokenType::Float,
-                pos: start,
-                extended_float: if extended && cfg!(target_arch = "x86_64") {
+            {
+                let extended_float = if extended && cfg!(target_arch = "x86_64") {
                     use rustc_apfloat::Float;
                     let value = code[start..numeric_end]
                         .parse::<crate::floating::Extended>()
@@ -501,21 +499,26 @@ impl Tokenizer {
                     Some(Box::new(value.to_bits()))
                 } else {
                     None
-                },
-                i_value: if single {
-                    (value as f32).to_bits() as usize
-                } else {
-                    value.to_bits() as usize
-                },
-                s_value: if single {
-                    "f"
-                } else if extended {
-                    "l"
-                } else {
-                    "d"
+                };
+                Token {
+                    tt: TokenType::Float,
+                    pos: start,
+                    s_value: if single {
+                        "f"
+                    } else if extended {
+                        "l"
+                    } else {
+                        "d"
+                    }
+                    .into(),
+                    i_value: if single {
+                        (value as f32).to_bits() as usize
+                    } else {
+                        value.to_bits() as usize
+                    },
+                    extended_float,
+                    ..Token::default()
                 }
-                .into(),
-                ..Token::default()
             },
             pos,
         )))

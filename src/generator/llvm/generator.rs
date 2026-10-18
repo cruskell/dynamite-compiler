@@ -230,17 +230,27 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_type(ty: &Type) -> String {
         match ty {
-            Type::Qualified(child, _) | Type::Aligned(child, _) => Self::gen_type(child),
             Type::Void => "void".to_string(),
+            Type::Bool => "i8".to_string(),
+            Type::I8 | Type::SignedChar => "i8".to_string(),
+            Type::I32 => "i32".to_string(),
+            Type::Integer { bits, .. } => format!("i{bits}"),
+            Type::LongLong { .. } => "i64".to_string(),
             // LLVM 15 gives i128 only 8-byte alignment on some targets.
             Type::Integer128 { .. } => "<2 x i64>".to_string(),
+            Type::Enum(value) => Self::gen_type(&value.underlying.borrow()),
             Type::Float16 => "half".to_string(),
-            Type::Vector(element, lanes) => format!("<{lanes} x {}>", Self::gen_type(element)),
             Type::LongDouble(80) => "x86_fp80".to_string(),
             Type::LongDouble(128) => "fp128".to_string(),
             Type::Float(bits) | Type::LongDouble(bits) => {
                 if *bits == 32 { "float" } else { "double" }.to_string()
             }
+            Type::Ptr(_) => "ptr".to_string(),
+            Type::Arr(child, size) => {
+                format!("[{} x {}]", size.unwrap_or(0), Self::gen_type(child))
+            }
+            Type::Vla(child, _) => format!("[0 x {}]", Self::gen_type(child)),
+            Type::Vector(element, lanes) => format!("<{lanes} x {}>", Self::gen_type(element)),
             Type::Struct(record)
                 if record.definition().borrow().is_union
                     || record.has_bit_fields()
@@ -278,25 +288,6 @@ impl<'a> IrGenerator<'a> {
                 }
                 format!("{{ {} }}", fields.join(", "))
             }
-            Type::Enum(value) => Self::gen_type(&value.underlying.borrow()),
-            Type::I8 | Type::SignedChar => "i8".to_string(),
-            Type::LongLong { .. } => "i64".to_string(),
-            Type::I32 => "i32".to_string(),
-            Type::Integer { bits, .. } => format!("i{bits}"),
-            Type::Bool => "i8".to_string(),
-            Type::Ptr(_) => "ptr".to_string(),
-            Type::Arr(child, size) => {
-                format!("[{} x {}]", size.unwrap_or(0), Self::gen_type(child))
-            }
-            Type::Vla(child, _) => format!("[0 x {}]", Self::gen_type(child)),
-            Type::VariadicFunc(args, result) => format!(
-                "{} ({}, ...)",
-                Self::gen_type(result),
-                args.iter()
-                    .map(Self::gen_type)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
             Type::Func(args, result) => format!(
                 "{} ({})",
                 Self::gen_type(result),
@@ -305,6 +296,15 @@ impl<'a> IrGenerator<'a> {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Type::VariadicFunc(args, result) => format!(
+                "{} ({}, ...)",
+                Self::gen_type(result),
+                args.iter()
+                    .map(Self::gen_type)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Type::Qualified(child, _) | Type::Aligned(child, _) => Self::gen_type(child),
         }
     }
 
@@ -357,16 +357,16 @@ impl<'a> IrGenerator<'a> {
         }
         let return_ty = result;
         let options = &mut Options {
+            return_ty: return_ty.clone(),
+            return_pointer: None,
             register_number: &mut func.args.len(),
             register_map: &mut HashMap::<usize, usize>::new(),
             register_queue: &mut vec![],
-            label_number: 0,
-            terminated: false,
-            return_ty: return_ty.clone(),
-            return_pointer: None,
-            break_labels: vec![],
             expression_slots: HashMap::new(),
             argument_slots: HashMap::new(),
+            label_number: 0,
+            break_labels: vec![],
+            terminated: false,
         };
         [
             vec![format!(
@@ -684,34 +684,6 @@ impl<'a> IrGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, options: &mut Options) -> Vec<String> {
         match node.nt {
-            NodeType::CopyBytes { .. } => self.gen_node(node, options),
-            NodeType::CallFunc => {
-                let lines = self.gen_node(node, options);
-                options.register_queue.pop();
-                options
-                    .register_queue
-                    .push(format!("%{}", options.register_map[&node.offset.unwrap()]));
-                lines
-            }
-            NodeType::Conditional => {
-                let lines = self.gen_node(node, options);
-                options.register_queue.pop();
-                let slot = options.expression_slots[&node.token.as_ref().unwrap().pos];
-                options.register_queue.push(format!("%{}", slot));
-                lines
-            }
-
-            NodeType::Sequence => {
-                let mut lines = vec![];
-                let depth = options.register_queue.len();
-                for child in &node.children[..node.children.len() - 1] {
-                    lines.extend(self.gen_node(child, options));
-                    options.register_queue.truncate(depth);
-                }
-                lines.extend(self.gen_addr(node.children.last().unwrap(), options));
-                lines
-            }
-
             NodeType::LocalVar => {
                 let register = options.register_from_offset(node.offset.unwrap());
                 options.register_queue.push(format!("%{}", register));
@@ -728,6 +700,32 @@ impl<'a> IrGenerator<'a> {
                 vec![]
             }
             NodeType::Deref => self.gen_node(node.lhs.as_ref().unwrap(), options),
+            NodeType::Conditional => {
+                let lines = self.gen_node(node, options);
+                options.register_queue.pop();
+                let slot = options.expression_slots[&node.token.as_ref().unwrap().pos];
+                options.register_queue.push(format!("%{}", slot));
+                lines
+            }
+            NodeType::CallFunc => {
+                let lines = self.gen_node(node, options);
+                options.register_queue.pop();
+                options
+                    .register_queue
+                    .push(format!("%{}", options.register_map[&node.offset.unwrap()]));
+                lines
+            }
+            NodeType::Sequence => {
+                let mut lines = vec![];
+                let depth = options.register_queue.len();
+                for child in &node.children[..node.children.len() - 1] {
+                    lines.extend(self.gen_node(child, options));
+                    options.register_queue.truncate(depth);
+                }
+                lines.extend(self.gen_addr(node.children.last().unwrap(), options));
+                lines
+            }
+            NodeType::CopyBytes { .. } => self.gen_node(node, options),
             _ => {
                 self.error_logger.print_error_position(
                     node.token.as_ref().unwrap().pos,
@@ -770,229 +768,6 @@ impl<'a> IrGenerator<'a> {
             return lines;
         }
         match node.nt {
-            NodeType::Prefetch(write, locality) => {
-                return self.gen_prefetch(node, write, locality, options);
-            }
-            NodeType::InlineAsm(volatile, memory) => {
-                return self.gen_inline_assembly(node, volatile, memory, options);
-            }
-            NodeType::Atomic(operation) => {
-                return self.gen_atomic(node, operation, options);
-            }
-            NodeType::VaStart | NodeType::VaEnd => {
-                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
-                let pointer = options.register_queue.pop().unwrap();
-                let intrinsic = if node.nt == NodeType::VaStart {
-                    "va_start"
-                } else {
-                    "va_end"
-                };
-                lines.push(format!("  call void @llvm.{intrinsic}(ptr {pointer})"));
-                options.register_queue.push("0".into());
-                return lines;
-            }
-
-            NodeType::CopyBytes { bytes } => {
-                let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
-                let destination = options.register_queue.pop().unwrap();
-                lines.extend(self.gen_addr(node.rhs.as_ref().unwrap(), options));
-                let source = options.register_queue.pop().unwrap();
-                lines.push(format!(
-                    "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {destination}, ptr align 1 {source}, i64 {bytes}, i1 false)"
-                ));
-                options.register_queue.push(destination);
-                return lines;
-            }
-            NodeType::ZeroFill { bytes } => {
-                let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
-                let pointer = options.register_queue.pop().unwrap();
-                lines.push(format!(
-                    "  call void @llvm.memset.p0.i64(ptr align 1 {pointer}, i8 0, i64 {bytes}, i1 false)"
-                ));
-                options.register_queue.push("0".into());
-                return lines;
-            }
-            NodeType::BitScan { bits, leading } => {
-                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
-                let operand = options.register_queue.pop().unwrap();
-                let count = options.new_temporary();
-                let intrinsic = if leading { "ctlz" } else { "cttz" };
-                lines.push(format!(
-                    "  %{count} = call i{bits} @llvm.{intrinsic}.i{bits}(i{bits} {operand}, i1 false)"
-                ));
-                if bits == 64 {
-                    let result = options.new_register();
-                    lines.push(format!("  %{result} = trunc i64 %{count} to i32"));
-                } else {
-                    options.register_queue.push(format!("%{count}"));
-                }
-                return lines;
-            }
-            NodeType::FloatAbs => {
-                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
-                let value = options.register_queue.pop().unwrap();
-                let ty = node.resolve_type_view().unwrap();
-                let bits = ty.float_bits().unwrap();
-                let float = Self::gen_type(&ty);
-                let raw = options.new_temporary();
-                let masked = options.new_temporary();
-                let result = options.new_register();
-                let mask = (1u128 << (bits - 1)) - 1;
-                lines.extend([
-                    format!("  %{raw} = bitcast {float} {value} to i{bits}"),
-                    format!("  %{masked} = and i{bits} %{raw}, {mask}"),
-                    format!("  %{result} = bitcast i{bits} %{masked} to {float}"),
-                ]);
-                return lines;
-            }
-            NodeType::Cast => {
-                let operand = node.lhs.as_ref().unwrap();
-                let mut lines = self.gen_node(operand, options);
-                let value = options.register_queue.pop().unwrap();
-                let target = node.cty.as_ref().unwrap();
-                if *target == Type::Void {
-                    options.register_queue.push("0".to_string());
-                } else {
-                    let value = Self::convert_integer(
-                        value,
-                        &operand.resolve_type_view().unwrap(),
-                        target,
-                        options,
-                        &mut lines,
-                    );
-                    options.register_queue.push(value);
-                }
-                return lines;
-            }
-            NodeType::Sequence => {
-                let mut lines = vec![];
-                let depth = options.register_queue.len();
-                for (index, child) in node.children.iter().enumerate() {
-                    lines.extend(self.gen_node(child, options));
-                    if index + 1 < node.children.len() {
-                        options.register_queue.truncate(depth);
-                    }
-                }
-                return lines;
-            }
-            NodeType::DefVar => {
-                return node
-                    .children
-                    .iter()
-                    .flat_map(|node| self.gen_node(node, options))
-                    .collect();
-            }
-            NodeType::CallFunc => {
-                if matches!(node.resolve_type_view().as_deref(), Some(Type::Struct(_)))
-                    || node.args.iter().any(|arg| {
-                        matches!(arg.resolve_type_view().as_deref(), Some(Type::Struct(_)))
-                    })
-                {
-                    return self.aggregate_call(node, options);
-                }
-                let parameters = &node.parameter_types;
-                let result = node.cty.as_ref().unwrap();
-                let variadic = node.variadic;
-                let mut lines = vec![];
-                let callee = if let Some(callee) = &node.lhs {
-                    lines.extend(self.gen_node(callee, options));
-                    options.register_queue.pop().unwrap()
-                } else {
-                    self.symbol_name(&node.global_name)
-                };
-                let mut arguments = vec![];
-                for (i, arg) in node.args.iter().enumerate() {
-                    lines.extend(self.gen_node(arg, options));
-                    let value = options.register_queue.pop().unwrap();
-                    let source = Type::decay_view(arg.resolve_type_view().unwrap());
-                    let ty = parameters
-                        .get(node.args.len() - i - 1)
-                        .map(Cow::Borrowed)
-                        .unwrap_or_else(|| {
-                            if source.integer_info().is_some() {
-                                Cow::Owned(source.promoted())
-                            } else {
-                                Cow::Borrowed(source.as_ref())
-                            }
-                        });
-                    let value = Self::convert_integer(value, &source, &ty, options, &mut lines);
-                    arguments.push(format!("{} {}", Self::abi_parameter_type(&ty), value));
-                }
-                arguments.reverse();
-                let signature = if variadic {
-                    format!(
-                        " ({}, ...)",
-                        parameters
-                            .iter()
-                            .map(Self::gen_type)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                } else {
-                    String::new()
-                };
-                if *result == Type::Void {
-                    lines.push(format!(
-                        "  call void{} {}({})",
-                        signature,
-                        callee,
-                        arguments.join(", ")
-                    ));
-                    options.register_queue.push("0".to_string());
-                    return lines;
-                }
-                lines.push(format!(
-                    "  %{} = call {}{} {}({})",
-                    options.new_register(),
-                    Self::abi_result_type(result),
-                    signature,
-                    callee,
-                    arguments.join(", ")
-                ));
-                return lines;
-            }
-            NodeType::Block => {
-                return node
-                    .children
-                    .iter()
-                    .flat_map(|node| self.gen_node(node, options))
-                    .collect();
-            }
-            NodeType::Return => {
-                if matches!(options.return_ty, Type::Struct(_)) {
-                    return self.aggregate_return(node, options);
-                }
-                if options.return_ty == Type::Void {
-                    let mut lines = if let Some(operand) = &node.lhs {
-                        self.gen_node(operand, options)
-                    } else {
-                        vec![]
-                    };
-                    if node.lhs.is_some() {
-                        options.register_queue.pop();
-                    }
-                    lines.push("  ret void".to_string());
-                    options.terminated = true;
-                    return lines;
-                }
-                if node.lhs.is_none() {
-                    options.terminated = true;
-                    return vec!["  ret void".to_string()];
-                }
-                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
-                let value = options.register_queue.pop().unwrap();
-                let source_ty = node.resolve_type_view().unwrap();
-                let target_ty = options.return_ty.clone();
-                let value =
-                    Self::convert_integer(value, &source_ty, &target_ty, options, &mut lines);
-                lines.push(format!(
-                    "  ret {} {}",
-                    Self::gen_type_with_opaque_ptr(&target_ty),
-                    value
-                ));
-                options.terminated = true;
-                return lines;
-            }
             NodeType::Num => {
                 let ty = node.resolve_type_view().unwrap();
                 options.register_queue.push(if ty.float_bits().is_some() {
@@ -1005,40 +780,7 @@ impl<'a> IrGenerator<'a> {
                 });
                 return vec![];
             }
-            NodeType::StackAlloc => {
-                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
-                let size = options.register_queue.pop().unwrap();
-                let register = options.new_register();
-                lines.push(format!("  %{register} = alloca i8, i64 {size}, align 16"));
-                return lines;
-            }
-            NodeType::Assign => {
-                let mut lines = self.gen_node(node.rhs.as_ref().unwrap(), options);
-                let value = options.register_queue.pop().unwrap();
-                lines.extend(self.gen_addr(node.lhs.as_ref().unwrap(), options));
-                let address = options.register_queue.pop().unwrap();
-                let ty = node.lhs.as_ref().unwrap().resolve_type_view().unwrap();
-                let source_ty = node.rhs.as_ref().unwrap().resolve_type_view().unwrap();
-                let value = Self::convert_integer(value, &source_ty, &ty, options, &mut lines);
-                lines.push(format!(
-                    "  store {}{} {}, ptr {}, align {}",
-                    if node.lhs.as_ref().is_some_and(|lhs| lhs.volatile_access) {
-                        "volatile "
-                    } else {
-                        ""
-                    },
-                    Self::gen_type_with_opaque_ptr(&ty),
-                    value,
-                    address,
-                    Self::access_alignment(node.lhs.as_ref().unwrap())
-                ));
-                options.register_queue.push(value);
-                return lines;
-            }
-            NodeType::Addr => {
-                return self.gen_addr(node.lhs.as_ref().unwrap(), options);
-            }
-            NodeType::Deref | NodeType::LocalVar | NodeType::GlobalVar => {
+            NodeType::LocalVar | NodeType::GlobalVar | NodeType::Deref => {
                 let mut lines = self.gen_addr(node, options);
                 let ty = node.resolve_type_view().unwrap();
                 if !matches!(
@@ -1058,6 +800,28 @@ impl<'a> IrGenerator<'a> {
                         address,
                         Self::access_alignment(node)
                     ));
+                }
+                return lines;
+            }
+            NodeType::Addr => {
+                return self.gen_addr(node.lhs.as_ref().unwrap(), options);
+            }
+            NodeType::Cast => {
+                let operand = node.lhs.as_ref().unwrap();
+                let mut lines = self.gen_node(operand, options);
+                let value = options.register_queue.pop().unwrap();
+                let target = node.cty.as_ref().unwrap();
+                if *target == Type::Void {
+                    options.register_queue.push("0".to_string());
+                } else {
+                    let value = Self::convert_integer(
+                        value,
+                        &operand.resolve_type_view().unwrap(),
+                        target,
+                        options,
+                        &mut lines,
+                    );
+                    options.register_queue.push(value);
                 }
                 return lines;
             }
@@ -1145,160 +909,6 @@ impl<'a> IrGenerator<'a> {
                     value
                 ));
                 return lines;
-            }
-            NodeType::Switch => {
-                let mut lines = self.gen_node(node.cond.as_ref().unwrap(), options);
-                let value = options.register_queue.pop().unwrap();
-                let selector_ty = node
-                    .cond
-                    .as_ref()
-                    .unwrap()
-                    .resolve_type_view()
-                    .unwrap()
-                    .promoted();
-                let value = Self::convert_integer(
-                    value,
-                    &node.cond.as_ref().unwrap().resolve_type_view().unwrap(),
-                    &selector_ty,
-                    options,
-                    &mut lines,
-                );
-                let end = options.new_label();
-                let default = node
-                    .children
-                    .iter()
-                    .find(|case| case.value.is_none())
-                    .map(|case| format!("case.{}", case.token.as_ref().unwrap().pos))
-                    .unwrap_or(end.clone());
-                lines.push(format!(
-                    "  switch {} {}, label %{} [",
-                    Self::gen_type(&selector_ty),
-                    value,
-                    default
-                ));
-                for case in &node.children {
-                    if let Some(value) = case.value {
-                        lines.push(format!(
-                            "    {} {}, label %case.{}",
-                            Self::gen_type(&selector_ty),
-                            value as i64,
-                            case.token.as_ref().unwrap().pos
-                        ));
-                    }
-                }
-                lines.push("  ]".to_string());
-                options.terminated = true;
-                options.break_labels.push(end.clone());
-                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
-                options.break_labels.pop();
-                if !options.terminated {
-                    lines.push(format!("  br label %{}", end));
-                }
-                lines.push(format!("{}:", end));
-                options.terminated = false;
-                return lines;
-            }
-            NodeType::Goto => {
-                options.terminated = true;
-                return vec![format!("  br label %goto.{}", node.value.unwrap())];
-            }
-            NodeType::Label => {
-                let label = format!("goto.{}", node.value.unwrap());
-                let mut lines = vec![];
-                if !options.terminated {
-                    lines.push(format!("  br label %{label}"));
-                }
-                lines.push(format!("{label}:"));
-                options.terminated = false;
-                lines.extend(self.gen_node(node.lhs.as_ref().unwrap(), options));
-                return lines;
-            }
-            NodeType::Case => {
-                let label = format!("case.{}", node.token.as_ref().unwrap().pos);
-                let mut lines = vec![];
-                if !options.terminated {
-                    lines.push(format!("  br label %{}", label));
-                }
-                lines.push(format!("{}:", label));
-                options.terminated = false;
-                lines.extend(self.gen_node(node.lhs.as_ref().unwrap(), options));
-                return lines;
-            }
-            NodeType::DoWhile => {
-                let body_label = options.new_label();
-                let condition_label = format!("continue.{}", node.token.as_ref().unwrap().pos);
-                let end_label = options.new_label();
-                let mut lines = vec![
-                    format!("  br label %{}", body_label),
-                    format!("{}:", body_label),
-                ];
-                options.break_labels.push(end_label.clone());
-                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
-                options.break_labels.pop();
-                if !options.terminated {
-                    lines.push(format!("  br label %{}", condition_label));
-                }
-                options.terminated = false;
-                lines.push(format!("{}:", condition_label));
-                let predicate =
-                    self.gen_predicate(node.cond.as_ref().unwrap(), options, &mut lines);
-                lines.push(format!(
-                    "  br i1 {}, label %{}, label %{}",
-                    predicate, body_label, end_label
-                ));
-                lines.push(format!("{}:", end_label));
-                return lines;
-            }
-            NodeType::While | NodeType::For => {
-                let mut lines = vec![];
-                if let Some(initializer) = &node.ini {
-                    lines.extend(self.gen_node(initializer, options));
-                }
-                let condition_label = options.new_label();
-                let body_label = options.new_label();
-                let update_label = format!("continue.{}", node.token.as_ref().unwrap().pos);
-                let end_label = options.new_label();
-                lines.push(format!("  br label %{}", condition_label));
-                lines.push(format!("{}:", condition_label));
-                let predicate = if let Some(condition) = &node.cond {
-                    self.gen_predicate(condition, options, &mut lines)
-                } else {
-                    "true".to_string()
-                };
-                lines.push(format!(
-                    "  br i1 {}, label %{}, label %{}",
-                    predicate, body_label, end_label
-                ));
-                lines.push(format!("{}:", body_label));
-                options.break_labels.push(end_label.clone());
-                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
-                options.break_labels.pop();
-                if !options.terminated {
-                    lines.push(format!("  br label %{}", update_label));
-                }
-                options.terminated = false;
-                lines.push(format!("{}:", update_label));
-                if let Some(update) = &node.upd {
-                    lines.extend(self.gen_node(update, options));
-                }
-                lines.push(format!("  br label %{}", condition_label));
-                lines.push(format!("{}:", end_label));
-                return lines;
-            }
-            NodeType::Continue => {
-                options.terminated = true;
-                return vec![format!("  br label %continue.{}", node.value.unwrap())];
-            }
-            NodeType::Break => {
-                let Some(label) = options.break_labels.last() else {
-                    self.error_logger.print_error_position(
-                        node.token.as_ref().unwrap().pos,
-                        "unexpected break found",
-                    );
-                    unreachable!()
-                };
-                options.terminated = true;
-                return vec![format!("  br label %{}", label)];
             }
             NodeType::LogicalAnd | NodeType::LogicalOr => {
                 let mut lines = vec![];
@@ -1406,6 +1016,29 @@ impl<'a> IrGenerator<'a> {
                 ));
                 return lines;
             }
+            NodeType::Assign => {
+                let mut lines = self.gen_node(node.rhs.as_ref().unwrap(), options);
+                let value = options.register_queue.pop().unwrap();
+                lines.extend(self.gen_addr(node.lhs.as_ref().unwrap(), options));
+                let address = options.register_queue.pop().unwrap();
+                let ty = node.lhs.as_ref().unwrap().resolve_type_view().unwrap();
+                let source_ty = node.rhs.as_ref().unwrap().resolve_type_view().unwrap();
+                let value = Self::convert_integer(value, &source_ty, &ty, options, &mut lines);
+                lines.push(format!(
+                    "  store {}{} {}, ptr {}, align {}",
+                    if node.lhs.as_ref().is_some_and(|lhs| lhs.volatile_access) {
+                        "volatile "
+                    } else {
+                        ""
+                    },
+                    Self::gen_type_with_opaque_ptr(&ty),
+                    value,
+                    address,
+                    Self::access_alignment(node.lhs.as_ref().unwrap())
+                ));
+                options.register_queue.push(value);
+                return lines;
+            }
             NodeType::SuffixIncr | NodeType::SuffixDecr => {
                 let operand = node.lhs.as_ref().unwrap();
                 let mut lines = self.gen_addr(operand, options);
@@ -1485,6 +1118,135 @@ impl<'a> IrGenerator<'a> {
                 options.register_queue.push(format!("%{}", old));
                 return lines;
             }
+            NodeType::CallFunc => {
+                if matches!(node.resolve_type_view().as_deref(), Some(Type::Struct(_)))
+                    || node.args.iter().any(|arg| {
+                        matches!(arg.resolve_type_view().as_deref(), Some(Type::Struct(_)))
+                    })
+                {
+                    return self.aggregate_call(node, options);
+                }
+                let parameters = &node.parameter_types;
+                let result = node.cty.as_ref().unwrap();
+                let variadic = node.variadic;
+                let mut lines = vec![];
+                let callee = if let Some(callee) = &node.lhs {
+                    lines.extend(self.gen_node(callee, options));
+                    options.register_queue.pop().unwrap()
+                } else {
+                    self.symbol_name(&node.global_name)
+                };
+                let mut arguments = vec![];
+                for (i, arg) in node.args.iter().enumerate() {
+                    lines.extend(self.gen_node(arg, options));
+                    let value = options.register_queue.pop().unwrap();
+                    let source = Type::decay_view(arg.resolve_type_view().unwrap());
+                    let ty = parameters
+                        .get(node.args.len() - i - 1)
+                        .map(Cow::Borrowed)
+                        .unwrap_or_else(|| {
+                            if source.integer_info().is_some() {
+                                Cow::Owned(source.promoted())
+                            } else {
+                                Cow::Borrowed(source.as_ref())
+                            }
+                        });
+                    let value = Self::convert_integer(value, &source, &ty, options, &mut lines);
+                    arguments.push(format!("{} {}", Self::abi_parameter_type(&ty), value));
+                }
+                arguments.reverse();
+                let signature = if variadic {
+                    format!(
+                        " ({}, ...)",
+                        parameters
+                            .iter()
+                            .map(Self::gen_type)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    String::new()
+                };
+                if *result == Type::Void {
+                    lines.push(format!(
+                        "  call void{} {}({})",
+                        signature,
+                        callee,
+                        arguments.join(", ")
+                    ));
+                    options.register_queue.push("0".to_string());
+                    return lines;
+                }
+                lines.push(format!(
+                    "  %{} = call {}{} {}({})",
+                    options.new_register(),
+                    Self::abi_result_type(result),
+                    signature,
+                    callee,
+                    arguments.join(", ")
+                ));
+                return lines;
+            }
+            NodeType::Sequence => {
+                let mut lines = vec![];
+                let depth = options.register_queue.len();
+                for (index, child) in node.children.iter().enumerate() {
+                    lines.extend(self.gen_node(child, options));
+                    if index + 1 < node.children.len() {
+                        options.register_queue.truncate(depth);
+                    }
+                }
+                return lines;
+            }
+            NodeType::DefVar => {
+                return node
+                    .children
+                    .iter()
+                    .flat_map(|node| self.gen_node(node, options))
+                    .collect();
+            }
+            NodeType::Block => {
+                return node
+                    .children
+                    .iter()
+                    .flat_map(|node| self.gen_node(node, options))
+                    .collect();
+            }
+            NodeType::Return => {
+                if matches!(options.return_ty, Type::Struct(_)) {
+                    return self.aggregate_return(node, options);
+                }
+                if options.return_ty == Type::Void {
+                    let mut lines = if let Some(operand) = &node.lhs {
+                        self.gen_node(operand, options)
+                    } else {
+                        vec![]
+                    };
+                    if node.lhs.is_some() {
+                        options.register_queue.pop();
+                    }
+                    lines.push("  ret void".to_string());
+                    options.terminated = true;
+                    return lines;
+                }
+                if node.lhs.is_none() {
+                    options.terminated = true;
+                    return vec!["  ret void".to_string()];
+                }
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let value = options.register_queue.pop().unwrap();
+                let source_ty = node.resolve_type_view().unwrap();
+                let target_ty = options.return_ty.clone();
+                let value =
+                    Self::convert_integer(value, &source_ty, &target_ty, options, &mut lines);
+                lines.push(format!(
+                    "  ret {} {}",
+                    Self::gen_type_with_opaque_ptr(&target_ty),
+                    value
+                ));
+                options.terminated = true;
+                return lines;
+            }
             NodeType::If => {
                 let mut lines = vec![];
                 let predicate =
@@ -1521,6 +1283,241 @@ impl<'a> IrGenerator<'a> {
                 }
                 return lines;
             }
+            NodeType::While | NodeType::For => {
+                let mut lines = vec![];
+                if let Some(initializer) = &node.ini {
+                    lines.extend(self.gen_node(initializer, options));
+                }
+                let condition_label = options.new_label();
+                let body_label = options.new_label();
+                let update_label = format!("continue.{}", node.token.as_ref().unwrap().pos);
+                let end_label = options.new_label();
+                lines.push(format!("  br label %{}", condition_label));
+                lines.push(format!("{}:", condition_label));
+                let predicate = if let Some(condition) = &node.cond {
+                    self.gen_predicate(condition, options, &mut lines)
+                } else {
+                    "true".to_string()
+                };
+                lines.push(format!(
+                    "  br i1 {}, label %{}, label %{}",
+                    predicate, body_label, end_label
+                ));
+                lines.push(format!("{}:", body_label));
+                options.break_labels.push(end_label.clone());
+                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
+                options.break_labels.pop();
+                if !options.terminated {
+                    lines.push(format!("  br label %{}", update_label));
+                }
+                options.terminated = false;
+                lines.push(format!("{}:", update_label));
+                if let Some(update) = &node.upd {
+                    lines.extend(self.gen_node(update, options));
+                }
+                lines.push(format!("  br label %{}", condition_label));
+                lines.push(format!("{}:", end_label));
+                return lines;
+            }
+            NodeType::DoWhile => {
+                let body_label = options.new_label();
+                let condition_label = format!("continue.{}", node.token.as_ref().unwrap().pos);
+                let end_label = options.new_label();
+                let mut lines = vec![
+                    format!("  br label %{}", body_label),
+                    format!("{}:", body_label),
+                ];
+                options.break_labels.push(end_label.clone());
+                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
+                options.break_labels.pop();
+                if !options.terminated {
+                    lines.push(format!("  br label %{}", condition_label));
+                }
+                options.terminated = false;
+                lines.push(format!("{}:", condition_label));
+                let predicate =
+                    self.gen_predicate(node.cond.as_ref().unwrap(), options, &mut lines);
+                lines.push(format!(
+                    "  br i1 {}, label %{}, label %{}",
+                    predicate, body_label, end_label
+                ));
+                lines.push(format!("{}:", end_label));
+                return lines;
+            }
+            NodeType::Switch => {
+                let mut lines = self.gen_node(node.cond.as_ref().unwrap(), options);
+                let value = options.register_queue.pop().unwrap();
+                let selector_ty = node
+                    .cond
+                    .as_ref()
+                    .unwrap()
+                    .resolve_type_view()
+                    .unwrap()
+                    .promoted();
+                let value = Self::convert_integer(
+                    value,
+                    &node.cond.as_ref().unwrap().resolve_type_view().unwrap(),
+                    &selector_ty,
+                    options,
+                    &mut lines,
+                );
+                let end = options.new_label();
+                let default = node
+                    .children
+                    .iter()
+                    .find(|case| case.value.is_none())
+                    .map(|case| format!("case.{}", case.token.as_ref().unwrap().pos))
+                    .unwrap_or(end.clone());
+                lines.push(format!(
+                    "  switch {} {}, label %{} [",
+                    Self::gen_type(&selector_ty),
+                    value,
+                    default
+                ));
+                for case in &node.children {
+                    if let Some(value) = case.value {
+                        lines.push(format!(
+                            "    {} {}, label %case.{}",
+                            Self::gen_type(&selector_ty),
+                            value as i64,
+                            case.token.as_ref().unwrap().pos
+                        ));
+                    }
+                }
+                lines.push("  ]".to_string());
+                options.terminated = true;
+                options.break_labels.push(end.clone());
+                lines.extend(self.gen_node(node.then.as_ref().unwrap(), options));
+                options.break_labels.pop();
+                if !options.terminated {
+                    lines.push(format!("  br label %{}", end));
+                }
+                lines.push(format!("{}:", end));
+                options.terminated = false;
+                return lines;
+            }
+            NodeType::Case => {
+                let label = format!("case.{}", node.token.as_ref().unwrap().pos);
+                let mut lines = vec![];
+                if !options.terminated {
+                    lines.push(format!("  br label %{}", label));
+                }
+                lines.push(format!("{}:", label));
+                options.terminated = false;
+                lines.extend(self.gen_node(node.lhs.as_ref().unwrap(), options));
+                return lines;
+            }
+            NodeType::Break => {
+                let Some(label) = options.break_labels.last() else {
+                    self.error_logger.print_error_position(
+                        node.token.as_ref().unwrap().pos,
+                        "unexpected break found",
+                    );
+                    unreachable!()
+                };
+                options.terminated = true;
+                return vec![format!("  br label %{}", label)];
+            }
+            NodeType::Continue => {
+                options.terminated = true;
+                return vec![format!("  br label %continue.{}", node.value.unwrap())];
+            }
+            NodeType::Goto => {
+                options.terminated = true;
+                return vec![format!("  br label %goto.{}", node.value.unwrap())];
+            }
+            NodeType::Label => {
+                let label = format!("goto.{}", node.value.unwrap());
+                let mut lines = vec![];
+                if !options.terminated {
+                    lines.push(format!("  br label %{label}"));
+                }
+                lines.push(format!("{label}:"));
+                options.terminated = false;
+                lines.extend(self.gen_node(node.lhs.as_ref().unwrap(), options));
+                return lines;
+            }
+            NodeType::FloatAbs => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let value = options.register_queue.pop().unwrap();
+                let ty = node.resolve_type_view().unwrap();
+                let bits = ty.float_bits().unwrap();
+                let float = Self::gen_type(&ty);
+                let raw = options.new_temporary();
+                let masked = options.new_temporary();
+                let result = options.new_register();
+                let mask = (1u128 << (bits - 1)) - 1;
+                lines.extend([
+                    format!("  %{raw} = bitcast {float} {value} to i{bits}"),
+                    format!("  %{masked} = and i{bits} %{raw}, {mask}"),
+                    format!("  %{result} = bitcast i{bits} %{masked} to {float}"),
+                ]);
+                return lines;
+            }
+            NodeType::BitScan { bits, leading } => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let operand = options.register_queue.pop().unwrap();
+                let count = options.new_temporary();
+                let intrinsic = if leading { "ctlz" } else { "cttz" };
+                lines.push(format!(
+                    "  %{count} = call i{bits} @llvm.{intrinsic}.i{bits}(i{bits} {operand}, i1 false)"
+                ));
+                if bits == 64 {
+                    let result = options.new_register();
+                    lines.push(format!("  %{result} = trunc i64 %{count} to i32"));
+                } else {
+                    options.register_queue.push(format!("%{count}"));
+                }
+                return lines;
+            }
+            NodeType::VaStart | NodeType::VaEnd => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let pointer = options.register_queue.pop().unwrap();
+                let intrinsic = if node.nt == NodeType::VaStart {
+                    "va_start"
+                } else {
+                    "va_end"
+                };
+                lines.push(format!("  call void @llvm.{intrinsic}(ptr {pointer})"));
+                options.register_queue.push("0".into());
+                return lines;
+            }
+            NodeType::StackAlloc => {
+                let mut lines = self.gen_node(node.lhs.as_ref().unwrap(), options);
+                let size = options.register_queue.pop().unwrap();
+                let register = options.new_register();
+                lines.push(format!("  %{register} = alloca i8, i64 {size}, align 16"));
+                return lines;
+            }
+            NodeType::Prefetch(write, locality) => {
+                return self.gen_prefetch(node, write, locality, options);
+            }
+            NodeType::Atomic(operation) => {
+                return self.gen_atomic(node, operation, options);
+            }
+            NodeType::InlineAsm(volatile, memory) => {
+                return self.gen_inline_assembly(node, volatile, memory, options);
+            }
+            NodeType::ZeroFill { bytes } => {
+                let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
+                let pointer = options.register_queue.pop().unwrap();
+                lines.push(format!(
+                    "  call void @llvm.memset.p0.i64(ptr align 1 {pointer}, i8 0, i64 {bytes}, i1 false)"
+                ));
+                options.register_queue.push("0".into());
+                return lines;
+            }
+            NodeType::CopyBytes { bytes } => {
+                let mut lines = self.gen_addr(node.lhs.as_ref().unwrap(), options);
+                let destination = options.register_queue.pop().unwrap();
+                lines.extend(self.gen_addr(node.rhs.as_ref().unwrap(), options));
+                let source = options.register_queue.pop().unwrap();
+                lines.push(format!(
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {destination}, ptr align 1 {source}, i64 {bytes}, i1 false)"
+                ));
+                options.register_queue.push(destination);
+                return lines;
+            }
             _ => {}
         }
 
@@ -1539,15 +1536,15 @@ impl<'a> IrGenerator<'a> {
             NodeType::Mul => "mul nsw",
             NodeType::Div => "sdiv",
             NodeType::Mod => "srem",
+            NodeType::BitLeft => "shl",
+            NodeType::BitRight => "ashr",
+            NodeType::BitAnd => "and",
+            NodeType::BitXor => "xor",
+            NodeType::BitOr => "or",
             NodeType::Eq => "icmp eq",
             NodeType::Ne => "icmp ne",
             NodeType::Lt => "icmp slt",
             NodeType::Le => "icmp sle",
-            NodeType::BitAnd => "and",
-            NodeType::BitXor => "xor",
-            NodeType::BitOr => "or",
-            NodeType::BitLeft => "shl",
-            NodeType::BitRight => "ashr",
             _ => "unknown",
         };
         let mut rhs_register = options.register_queue.pop().unwrap();
@@ -1584,14 +1581,14 @@ impl<'a> IrGenerator<'a> {
             }
         } else if operand_ty.integer_info().is_some_and(|(_, signed)| !signed) {
             match node.nt {
-                NodeType::Div => "udiv",
-                NodeType::Mod => "urem",
-                NodeType::Lt => "icmp ult",
-                NodeType::Le => "icmp ule",
-                NodeType::BitRight => "lshr",
                 NodeType::Add => "add",
                 NodeType::Sub => "sub",
                 NodeType::Mul => "mul",
+                NodeType::Div => "udiv",
+                NodeType::Mod => "urem",
+                NodeType::BitRight => "lshr",
+                NodeType::Lt => "icmp ult",
+                NodeType::Le => "icmp ule",
                 _ => operation,
             }
         } else {
@@ -1626,15 +1623,15 @@ impl<'a> IrGenerator<'a> {
                 | NodeType::Mul
                 | NodeType::Div
                 | NodeType::Mod
-                | NodeType::Eq
-                | NodeType::Ne
-                | NodeType::Lt
-                | NodeType::Le
+                | NodeType::BitLeft
+                | NodeType::BitRight
                 | NodeType::BitAnd
                 | NodeType::BitXor
                 | NodeType::BitOr
-                | NodeType::BitLeft
-                | NodeType::BitRight => {
+                | NodeType::Eq
+                | NodeType::Ne
+                | NodeType::Lt
+                | NodeType::Le => {
                     format!(
                         "  %{} = {} {} {}, {}",
                         options.new_register(),

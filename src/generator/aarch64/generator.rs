@@ -63,7 +63,6 @@ impl<'a> AsmGenerator<'a> {
         let generator = Self {
             error_logger: self.error_logger,
             target_os: self.target_os,
-            symbol_names: ast.symbol_names.clone(),
             defined_symbols: ast
                 .functions
                 .iter()
@@ -76,6 +75,7 @@ impl<'a> AsmGenerator<'a> {
                         .map(|(name, _)| name.clone()),
                 )
                 .collect(),
+            symbol_names: ast.symbol_names.clone(),
         };
         let references =
             if ast.functions.values().any(|function| {
@@ -615,128 +615,45 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_node_inner(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
-            NodeType::Prefetch(write, locality) => {
-                return self.gen_prefetch(node, write, locality, options);
+            NodeType::Num => {
+                return Self::push(node.value.unwrap());
             }
-            NodeType::InlineAsm(_, _) => return self.gen_inline_assembly(node, options),
-            NodeType::Atomic(operation) => {
-                return self.gen_atomic(node, operation, options);
+            NodeType::LocalVar | NodeType::GlobalVar => {
+                return vec![
+                    self.gen_addr(node, options),
+                    if let Some(
+                        Type::Arr(..)
+                        | Type::Vla(..)
+                        | Type::Struct(_)
+                        | Type::Func(..)
+                        | Type::VariadicFunc(..),
+                    ) = node.resolve_type()
+                    {
+                        vec![].into()
+                    } else {
+                        vec![Self::pop(X8), self.deref(node), Self::push(X8)].into()
+                    },
+                ]
+                .into();
             }
-            NodeType::VaStart | NodeType::VaEnd => {
-                let mut lines = vec![
-                    self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X11),
-                ];
-                if node.nt == NodeType::VaStart {
-                    let (gp, fp, stack) = crate::generator::abi::variadic_state(
-                        node,
-                        crate::generator::Arch::Aarch64,
-                        self.target_os,
-                    );
-                    lines.extend([
-                        Assembly::inst3(ADD, X8, X29, options.offset + 32 + stack),
-                        Assembly::inst2(STR, X8, Ptr(X11, 8)),
-                    ]);
-                    if !matches!(self.target_os, Os::MacOS) {
-                        for (position, top) in [(8, 64), (16, 192)] {
-                            lines.extend([
-                                Assembly::inst3(ADD, X8, X29, top),
-                                Assembly::inst3(ADD, X10, X11, position),
-                                Assembly::inst2(STR, X8, Ptr(X10, 8)),
-                            ]);
-                        }
-                        for (position, remaining) in [(24, (8 - gp) * 8), (28, (8 - fp) * 16)] {
-                            lines.extend([
-                                Assembly::inst2(MOV, X8, 0),
-                                Assembly::inst3(SUB, X8, X8, remaining),
-                                Assembly::inst3(ADD, X10, X11, position),
-                                Assembly::inst2(STR, X8, Ptr(X10, 4)),
-                            ]);
-                        }
-                    }
-                }
-                lines.push(Self::push(0));
-                return lines.into();
+            NodeType::Addr => {
+                return self.gen_addr(node.lhs.as_ref().unwrap(), options);
             }
-
-            NodeType::CopyBytes { bytes } => {
-                let mut lines = vec![
-                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
-                    self.gen_addr(node.rhs.as_ref().unwrap(), options),
-                    Self::pop(X10),
-                    Self::pop(X11),
-                    Self::push(X11),
-                ];
-                if bytes >= 8 {
-                    lines.extend([
-                        Assembly::inst2(MOV, X9, bytes / 8),
-                        "902:".into(),
-                        Assembly::inst2(LDR, X12, Ptr(X10, 8)),
-                        Assembly::inst2(STR, X12, Ptr(X11, 8)),
-                        Assembly::inst3(ADD, X10, X10, 8),
-                        Assembly::inst3(ADD, X11, X11, 8),
-                        Assembly::inst3(SUB, X9, X9, 1),
-                        Assembly::inst2(CMP, X9, 0),
-                        Assembly::inst1(JNE, "902b"),
-                    ]);
-                }
-                for _ in 0..bytes % 8 {
-                    lines.extend([
-                        Assembly::inst2(LDRU, X12, Ptr(X10, 1)),
-                        Assembly::inst2(STR, X12, Ptr(X11, 1)),
-                        Assembly::inst3(ADD, X10, X10, 1),
-                        Assembly::inst3(ADD, X11, X11, 1),
-                    ]);
-                }
-                return lines.into();
-            }
-            NodeType::ZeroFill { bytes } => {
-                let mut lines = vec![
-                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X11),
-                    Assembly::inst2(MOV, X9, 0),
-                ];
-                if bytes >= 8 {
-                    lines.extend([
-                        Assembly::inst2(MOV, X10, bytes / 8),
-                        // Numeric labels stay local to this closed instruction sequence.
-                        "901:".into(),
-                        Assembly::inst2(STR, X9, Ptr(X11, 8)),
-                        Assembly::inst3(ADD, X11, X11, 8),
-                        Assembly::inst3(SUB, X10, X10, 1),
-                        Assembly::inst2(CMP, X10, 0),
-                        Assembly::inst1(JNE, "901b"),
-                    ]);
-                }
-                for _ in 0..bytes % 8 {
-                    lines.extend([
-                        Assembly::inst2(STR, X9, Ptr(X11, 1)),
-                        Assembly::inst3(ADD, X11, X11, 1),
-                    ]);
-                }
-                lines.push(Self::push(0));
-                return lines.into();
-            }
-            NodeType::BitScan { bits, leading } => {
-                let register = if bits == 32 { W8 } else { X8 };
-                let mut lines = vec![
-                    self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                ];
-                if !leading {
-                    lines.push(Assembly::inst2(RBIT, register, register));
-                }
-                lines.extend([Assembly::inst2(CLZ, register, register), Self::push(X8)]);
-                return lines.into();
-            }
-            NodeType::FloatAbs => {
-                let shift = 65 - node.resolve_type().unwrap().float_bits().unwrap() as usize;
+            NodeType::Deref => {
                 return vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    Assembly::inst3(SHL, X8, X8, shift),
-                    Assembly::inst3(SHR, X8, X8, shift),
-                    Self::push(X8),
+                    if let Some(
+                        Type::Arr(..)
+                        | Type::Vla(..)
+                        | Type::Struct(_)
+                        | Type::Func(..)
+                        | Type::VariadicFunc(..),
+                    ) = node.lhs.as_ref().unwrap().dest_type()
+                    {
+                        vec![].into()
+                    } else {
+                        vec![Self::pop(X8), self.deref(node), Self::push(X8)].into()
+                    },
                 ]
                 .into();
             }
@@ -758,20 +675,124 @@ impl<'a> AsmGenerator<'a> {
                 lines.push(Self::push(X8));
                 return lines.into();
             }
-            NodeType::Sequence => {
-                let mut lines = vec![];
-                for (index, child) in node.children.iter().enumerate() {
-                    lines.push(self.gen_node(child, options));
-                    if index + 1 < node.children.len()
-                        && !matches!(child.nt, NodeType::Block | NodeType::DefVar)
-                    {
-                        lines.push(Self::pop(X8));
-                    }
-                }
-                return lines.into();
+            NodeType::BitLeft | NodeType::BitRight => {
+                return vec![
+                    self.gen_node(node.rhs.as_ref().unwrap(), options),
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Self::pop(X10),
+                    Assembly::inst3(
+                        if matches!(node.nt, NodeType::BitLeft) {
+                            SHL
+                        } else if node.resolve_type().unwrap().integer_info().unwrap().1 {
+                            SAR
+                        } else {
+                            SHR
+                        },
+                        X8,
+                        X8,
+                        X10,
+                    ),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), X8),
+                    Self::push(X8),
+                ]
+                .into();
             }
-            NodeType::DefVar => {
-                return self.gen_statements(&node.children, options);
+            NodeType::BitNot => {
+                return vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Assembly::inst2(MVN, X8, X8),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), X8),
+                    Self::push(X8),
+                ]
+                .into();
+            }
+            NodeType::Conditional | NodeType::If => {
+                let branch_num = node.token.as_ref().unwrap().pos;
+                let branch = |child: &Node| {
+                    if node.nt == NodeType::If {
+                        self.gen_statements(std::slice::from_ref(child), options)
+                    } else {
+                        self.gen_node(child, options)
+                    }
+                };
+                return vec![
+                    self.gen_node(node.cond.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Assembly::inst2(CMP, X8, 0),
+                    Assembly::inst1(JE, ElseFlag(branch_num)),
+                    branch(node.then.as_deref().unwrap()),
+                    Assembly::inst1(JMP, EndFlag(branch_num)),
+                    format!("{}:", ElseFlag(branch_num)).into(),
+                    node.els
+                        .as_deref()
+                        .map(branch)
+                        .unwrap_or_else(|| vec![].into()),
+                    format!("{}:", EndFlag(branch_num)).into(),
+                    if matches!(node.nt, NodeType::Conditional)
+                        && node
+                            .resolve_type()
+                            .is_some_and(|ty| ty.integer_info().is_some())
+                    {
+                        vec![
+                            Self::pop(X8),
+                            Self::normalize_integer(&node.resolve_type().unwrap(), X8),
+                            Self::push(X8),
+                        ]
+                        .into()
+                    } else {
+                        vec![].into()
+                    },
+                ]
+                .into();
+            }
+            NodeType::Assign => {
+                return vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
+                    self.gen_node(node.rhs.as_ref().unwrap(), options),
+                    Self::pop(X13),
+                    Self::pop(X8),
+                    Assembly::inst2(
+                        STR,
+                        X13,
+                        Ptr(
+                            X8,
+                            node.lhs.as_ref().unwrap().resolve_type().unwrap().size_of(),
+                        ),
+                    ),
+                    self.deref(node.lhs.as_ref().unwrap()),
+                    Self::push(X8),
+                ]
+                .into();
+            }
+            NodeType::SuffixIncr | NodeType::SuffixDecr => {
+                let op = if let NodeType::SuffixIncr = node.nt {
+                    ADD
+                } else {
+                    SUB
+                };
+                return vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Assembly::inst2(MOV, X13, 1),
+                    if let Some(t) = node.lhs.as_ref().unwrap().dest_type() {
+                        vec![
+                            Assembly::inst2(MOV, X10, t.size_of()),
+                            Assembly::inst3(MUL, X13, X13, X10),
+                        ]
+                        .into()
+                    } else {
+                        vec![].into()
+                    },
+                    Assembly::inst2(MOV, X11, X8),
+                    self.deref(node.lhs.as_ref().unwrap()),
+                    Assembly::inst3(op, X13, X8, X13),
+                    Self::normalize_integer(&node.resolve_type().unwrap(), X13),
+                    Assembly::inst2(STR, X13, Ptr(X11, node.resolve_type().unwrap().size_of())),
+                    Self::push(X8),
+                ]
+                .into();
             }
             NodeType::CallFunc => {
                 if matches!(node.resolve_type(), Some(Type::Struct(_)))
@@ -863,114 +884,40 @@ impl<'a> AsmGenerator<'a> {
                 ]);
                 return lines.into();
             }
-            NodeType::If | NodeType::Conditional => {
-                let branch_num = node.token.as_ref().unwrap().pos;
-                let branch = |child: &Node| {
-                    if node.nt == NodeType::If {
-                        self.gen_statements(std::slice::from_ref(child), options)
-                    } else {
-                        self.gen_node(child, options)
-                    }
-                };
-                return vec![
-                    self.gen_node(node.cond.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    Assembly::inst2(CMP, X8, 0),
-                    Assembly::inst1(JE, ElseFlag(branch_num)),
-                    branch(node.then.as_deref().unwrap()),
-                    Assembly::inst1(JMP, EndFlag(branch_num)),
-                    format!("{}:", ElseFlag(branch_num)).into(),
-                    node.els
-                        .as_deref()
-                        .map(branch)
-                        .unwrap_or_else(|| vec![].into()),
-                    format!("{}:", EndFlag(branch_num)).into(),
-                    if matches!(node.nt, NodeType::Conditional)
-                        && node
-                            .resolve_type()
-                            .is_some_and(|ty| ty.integer_info().is_some())
+            NodeType::Sequence => {
+                let mut lines = vec![];
+                for (index, child) in node.children.iter().enumerate() {
+                    lines.push(self.gen_node(child, options));
+                    if index + 1 < node.children.len()
+                        && !matches!(child.nt, NodeType::DefVar | NodeType::Block)
                     {
-                        vec![
-                            Self::pop(X8),
-                            Self::normalize_integer(&node.resolve_type().unwrap(), X8),
-                            Self::push(X8),
-                        ]
-                        .into()
+                        lines.push(Self::pop(X8));
+                    }
+                }
+                return lines.into();
+            }
+            NodeType::DefVar => {
+                return self.gen_statements(&node.children, options);
+            }
+            NodeType::Block => {
+                return self.gen_statements(&node.children, options);
+            }
+            NodeType::Return => {
+                if matches!(node.resolve_type(), Some(Type::Struct(_))) {
+                    return self.aggregate_return(node, options);
+                }
+                if node.lhs.is_none() {
+                    return Self::epilogue(options.offset);
+                }
+                return vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X0),
+                    if let Some(bits) = node.resolve_type().and_then(|ty| ty.float_bits()) {
+                        Assembly::inst2(FMOV, Float(0, bits), if bits == 32 { W0 } else { X0 })
                     } else {
                         vec![].into()
                     },
-                ]
-                .into();
-            }
-            NodeType::Switch => {
-                let branch_num = node.token.as_ref().unwrap().pos;
-                let mut lines = vec![
-                    self.gen_node(node.cond.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                ];
-                let mut default = format!("{}", EndFlag(branch_num));
-                for case in &node.children {
-                    let label = format!(".Lcase.{}", case.token.as_ref().unwrap().pos);
-                    if let Some(value) = case.value {
-                        lines.push(Assembly::inst2(MOV, X9, value));
-                        lines.push(Assembly::inst2(CMP, X8, X9));
-                        lines.push(Assembly::inst1(JE, label));
-                    } else {
-                        default = label;
-                    }
-                }
-                lines.push(Assembly::inst1(JMP, default));
-                lines.push(self.gen_node(
-                    node.then.as_ref().unwrap(),
-                    Options {
-                        breakable_branch_num: branch_num,
-                        ..options
-                    },
-                ));
-                lines.push(format!("{}:", EndFlag(branch_num)).into());
-                return lines.into();
-            }
-            NodeType::Goto => {
-                return Assembly::inst1(JMP, format!(".Lgoto.{}", node.value.unwrap()));
-            }
-            NodeType::Label => {
-                return vec![
-                    format!(".Lgoto.{}:", node.value.unwrap()).into(),
-                    self.gen_statements(
-                        std::slice::from_ref(node.lhs.as_deref().unwrap()),
-                        options,
-                    ),
-                ]
-                .into();
-            }
-            NodeType::Case => {
-                return vec![
-                    format!(".Lcase.{}:", node.token.as_ref().unwrap().pos).into(),
-                    self.gen_statements(
-                        std::slice::from_ref(node.lhs.as_deref().unwrap()),
-                        options,
-                    ),
-                ]
-                .into();
-            }
-            NodeType::DoWhile => {
-                let branch_num = node.token.as_ref().unwrap().pos;
-                let options = Options {
-                    breakable_branch_num: branch_num,
-                    ..options
-                };
-                return vec![
-                    format!("{}:", BeginFlag(branch_num)).into(),
-                    self.gen_statements(
-                        std::slice::from_ref(node.then.as_deref().unwrap()),
-                        options,
-                    ),
-                    format!(".Lcontinue.{}:", branch_num).into(),
-                    self.gen_node(node.cond.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    Assembly::inst2(CMP, X8, 0),
-                    Assembly::inst1(JNE, BeginFlag(branch_num)),
-                    format!("{}:", EndFlag(branch_num)).into(),
+                    Self::epilogue(options.offset),
                 ]
                 .into();
             }
@@ -995,6 +942,27 @@ impl<'a> AsmGenerator<'a> {
                     format!("{}:", EndFlag(branch_num)).into(),
                 ];
                 return v.into();
+            }
+            NodeType::DoWhile => {
+                let branch_num = node.token.as_ref().unwrap().pos;
+                let options = Options {
+                    breakable_branch_num: branch_num,
+                    ..options
+                };
+                return vec![
+                    format!("{}:", BeginFlag(branch_num)).into(),
+                    self.gen_statements(
+                        std::slice::from_ref(node.then.as_deref().unwrap()),
+                        options,
+                    ),
+                    format!(".Lcontinue.{}:", branch_num).into(),
+                    self.gen_node(node.cond.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Assembly::inst2(CMP, X8, 0),
+                    Assembly::inst1(JNE, BeginFlag(branch_num)),
+                    format!("{}:", EndFlag(branch_num)).into(),
+                ]
+                .into();
             }
             NodeType::For => {
                 let branch_num = node.token.as_ref().unwrap().pos;
@@ -1027,11 +995,43 @@ impl<'a> AsmGenerator<'a> {
                 ];
                 return v.into();
             }
-            NodeType::Block => {
-                return self.gen_statements(&node.children, options);
+            NodeType::Switch => {
+                let branch_num = node.token.as_ref().unwrap().pos;
+                let mut lines = vec![
+                    self.gen_node(node.cond.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                ];
+                let mut default = format!("{}", EndFlag(branch_num));
+                for case in &node.children {
+                    let label = format!(".Lcase.{}", case.token.as_ref().unwrap().pos);
+                    if let Some(value) = case.value {
+                        lines.push(Assembly::inst2(MOV, X9, value));
+                        lines.push(Assembly::inst2(CMP, X8, X9));
+                        lines.push(Assembly::inst1(JE, label));
+                    } else {
+                        default = label;
+                    }
+                }
+                lines.push(Assembly::inst1(JMP, default));
+                lines.push(self.gen_node(
+                    node.then.as_ref().unwrap(),
+                    Options {
+                        breakable_branch_num: branch_num,
+                        ..options
+                    },
+                ));
+                lines.push(format!("{}:", EndFlag(branch_num)).into());
+                return lines.into();
             }
-            NodeType::Continue => {
-                return Assembly::inst1(JMP, format!(".Lcontinue.{}", node.value.unwrap()));
+            NodeType::Case => {
+                return vec![
+                    format!(".Lcase.{}:", node.token.as_ref().unwrap().pos).into(),
+                    self.gen_statements(
+                        std::slice::from_ref(node.lhs.as_deref().unwrap()),
+                        options,
+                    ),
+                ]
+                .into();
             }
             NodeType::Break => {
                 if options.breakable_branch_num != 0 {
@@ -1043,146 +1043,145 @@ impl<'a> AsmGenerator<'a> {
                     );
                 }
             }
-            NodeType::Return => {
-                if matches!(node.resolve_type(), Some(Type::Struct(_))) {
-                    return self.aggregate_return(node, options);
-                }
-                if node.lhs.is_none() {
-                    return Self::epilogue(options.offset);
-                }
+            NodeType::Continue => {
+                return Assembly::inst1(JMP, format!(".Lcontinue.{}", node.value.unwrap()));
+            }
+            NodeType::Goto => {
+                return Assembly::inst1(JMP, format!(".Lgoto.{}", node.value.unwrap()));
+            }
+            NodeType::Label => {
                 return vec![
-                    self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X0),
-                    if let Some(bits) = node.resolve_type().and_then(|ty| ty.float_bits()) {
-                        Assembly::inst2(FMOV, Float(0, bits), if bits == 32 { W0 } else { X0 })
-                    } else {
-                        vec![].into()
-                    },
-                    Self::epilogue(options.offset),
-                ]
-                .into();
-            }
-            NodeType::Num => {
-                return Self::push(node.value.unwrap());
-            }
-            NodeType::LocalVar | NodeType::GlobalVar => {
-                return vec![
-                    self.gen_addr(node, options),
-                    if let Some(
-                        Type::Arr(..)
-                        | Type::Vla(..)
-                        | Type::Struct(_)
-                        | Type::Func(..)
-                        | Type::VariadicFunc(..),
-                    ) = node.resolve_type()
-                    {
-                        vec![].into()
-                    } else {
-                        vec![Self::pop(X8), self.deref(node), Self::push(X8)].into()
-                    },
-                ]
-                .into();
-            }
-            NodeType::Addr => {
-                return self.gen_addr(node.lhs.as_ref().unwrap(), options);
-            }
-            NodeType::Deref => {
-                return vec![
-                    self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    if let Some(
-                        Type::Arr(..)
-                        | Type::Vla(..)
-                        | Type::Struct(_)
-                        | Type::Func(..)
-                        | Type::VariadicFunc(..),
-                    ) = node.lhs.as_ref().unwrap().dest_type()
-                    {
-                        vec![].into()
-                    } else {
-                        vec![Self::pop(X8), self.deref(node), Self::push(X8)].into()
-                    },
-                ]
-                .into();
-            }
-            NodeType::Assign => {
-                return vec![
-                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
-                    self.gen_node(node.rhs.as_ref().unwrap(), options),
-                    Self::pop(X13),
-                    Self::pop(X8),
-                    Assembly::inst2(
-                        STR,
-                        X13,
-                        Ptr(
-                            X8,
-                            node.lhs.as_ref().unwrap().resolve_type().unwrap().size_of(),
-                        ),
+                    format!(".Lgoto.{}:", node.value.unwrap()).into(),
+                    self.gen_statements(
+                        std::slice::from_ref(node.lhs.as_deref().unwrap()),
+                        options,
                     ),
-                    self.deref(node.lhs.as_ref().unwrap()),
+                ]
+                .into();
+            }
+            NodeType::FloatAbs => {
+                let shift = 65 - node.resolve_type().unwrap().float_bits().unwrap() as usize;
+                return vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X8),
+                    Assembly::inst3(SHL, X8, X8, shift),
+                    Assembly::inst3(SHR, X8, X8, shift),
                     Self::push(X8),
                 ]
                 .into();
             }
-            NodeType::BitLeft | NodeType::BitRight => {
-                return vec![
-                    self.gen_node(node.rhs.as_ref().unwrap(), options),
+            NodeType::BitScan { bits, leading } => {
+                let register = if bits == 32 { W8 } else { X8 };
+                let mut lines = vec![
                     self.gen_node(node.lhs.as_ref().unwrap(), options),
                     Self::pop(X8),
+                ];
+                if !leading {
+                    lines.push(Assembly::inst2(RBIT, register, register));
+                }
+                lines.extend([Assembly::inst2(CLZ, register, register), Self::push(X8)]);
+                return lines.into();
+            }
+            NodeType::VaStart | NodeType::VaEnd => {
+                let mut lines = vec![
+                    self.gen_node(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X11),
+                ];
+                if node.nt == NodeType::VaStart {
+                    let (gp, fp, stack) = crate::generator::abi::variadic_state(
+                        node,
+                        crate::generator::Arch::Aarch64,
+                        self.target_os,
+                    );
+                    lines.extend([
+                        Assembly::inst3(ADD, X8, X29, options.offset + 32 + stack),
+                        Assembly::inst2(STR, X8, Ptr(X11, 8)),
+                    ]);
+                    if !matches!(self.target_os, Os::MacOS) {
+                        for (position, top) in [(8, 64), (16, 192)] {
+                            lines.extend([
+                                Assembly::inst3(ADD, X8, X29, top),
+                                Assembly::inst3(ADD, X10, X11, position),
+                                Assembly::inst2(STR, X8, Ptr(X10, 8)),
+                            ]);
+                        }
+                        for (position, remaining) in [(24, (8 - gp) * 8), (28, (8 - fp) * 16)] {
+                            lines.extend([
+                                Assembly::inst2(MOV, X8, 0),
+                                Assembly::inst3(SUB, X8, X8, remaining),
+                                Assembly::inst3(ADD, X10, X11, position),
+                                Assembly::inst2(STR, X8, Ptr(X10, 4)),
+                            ]);
+                        }
+                    }
+                }
+                lines.push(Self::push(0));
+                return lines.into();
+            }
+            NodeType::Prefetch(write, locality) => {
+                return self.gen_prefetch(node, write, locality, options);
+            }
+            NodeType::Atomic(operation) => {
+                return self.gen_atomic(node, operation, options);
+            }
+            NodeType::InlineAsm(_, _) => return self.gen_inline_assembly(node, options),
+            NodeType::ZeroFill { bytes } => {
+                let mut lines = vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
+                    Self::pop(X11),
+                    Assembly::inst2(MOV, X9, 0),
+                ];
+                if bytes >= 8 {
+                    lines.extend([
+                        Assembly::inst2(MOV, X10, bytes / 8),
+                        // Numeric labels stay local to this closed instruction sequence.
+                        "901:".into(),
+                        Assembly::inst2(STR, X9, Ptr(X11, 8)),
+                        Assembly::inst3(ADD, X11, X11, 8),
+                        Assembly::inst3(SUB, X10, X10, 1),
+                        Assembly::inst2(CMP, X10, 0),
+                        Assembly::inst1(JNE, "901b"),
+                    ]);
+                }
+                for _ in 0..bytes % 8 {
+                    lines.extend([
+                        Assembly::inst2(STR, X9, Ptr(X11, 1)),
+                        Assembly::inst3(ADD, X11, X11, 1),
+                    ]);
+                }
+                lines.push(Self::push(0));
+                return lines.into();
+            }
+            NodeType::CopyBytes { bytes } => {
+                let mut lines = vec![
+                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
+                    self.gen_addr(node.rhs.as_ref().unwrap(), options),
                     Self::pop(X10),
-                    Assembly::inst3(
-                        if matches!(node.nt, NodeType::BitLeft) {
-                            SHL
-                        } else if node.resolve_type().unwrap().integer_info().unwrap().1 {
-                            SAR
-                        } else {
-                            SHR
-                        },
-                        X8,
-                        X8,
-                        X10,
-                    ),
-                    Self::normalize_integer(&node.resolve_type().unwrap(), X8),
-                    Self::push(X8),
-                ]
-                .into();
-            }
-            NodeType::BitNot => {
-                return vec![
-                    self.gen_node(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    Assembly::inst2(MVN, X8, X8),
-                    Self::normalize_integer(&node.resolve_type().unwrap(), X8),
-                    Self::push(X8),
-                ]
-                .into();
-            }
-            NodeType::SuffixIncr | NodeType::SuffixDecr => {
-                let op = if let NodeType::SuffixIncr = node.nt {
-                    ADD
-                } else {
-                    SUB
-                };
-                return vec![
-                    self.gen_addr(node.lhs.as_ref().unwrap(), options),
-                    Self::pop(X8),
-                    Assembly::inst2(MOV, X13, 1),
-                    if let Some(t) = node.lhs.as_ref().unwrap().dest_type() {
-                        vec![
-                            Assembly::inst2(MOV, X10, t.size_of()),
-                            Assembly::inst3(MUL, X13, X13, X10),
-                        ]
-                        .into()
-                    } else {
-                        vec![].into()
-                    },
-                    Assembly::inst2(MOV, X11, X8),
-                    self.deref(node.lhs.as_ref().unwrap()),
-                    Assembly::inst3(op, X13, X8, X13),
-                    Self::normalize_integer(&node.resolve_type().unwrap(), X13),
-                    Assembly::inst2(STR, X13, Ptr(X11, node.resolve_type().unwrap().size_of())),
-                    Self::push(X8),
-                ]
-                .into();
+                    Self::pop(X11),
+                    Self::push(X11),
+                ];
+                if bytes >= 8 {
+                    lines.extend([
+                        Assembly::inst2(MOV, X9, bytes / 8),
+                        "902:".into(),
+                        Assembly::inst2(LDR, X12, Ptr(X10, 8)),
+                        Assembly::inst2(STR, X12, Ptr(X11, 8)),
+                        Assembly::inst3(ADD, X10, X10, 8),
+                        Assembly::inst3(ADD, X11, X11, 8),
+                        Assembly::inst3(SUB, X9, X9, 1),
+                        Assembly::inst2(CMP, X9, 0),
+                        Assembly::inst1(JNE, "902b"),
+                    ]);
+                }
+                for _ in 0..bytes % 8 {
+                    lines.extend([
+                        Assembly::inst2(LDRU, X12, Ptr(X10, 1)),
+                        Assembly::inst2(STR, X12, Ptr(X11, 1)),
+                        Assembly::inst3(ADD, X10, X10, 1),
+                        Assembly::inst3(ADD, X11, X11, 1),
+                    ]);
+                }
+                return lines.into();
             }
             _ => {}
         }
@@ -1271,6 +1270,9 @@ impl<'a> AsmGenerator<'a> {
                     Assembly::inst4(MSUB, X8, X10, X13, X8),
                 ]
                 .into(),
+                NodeType::BitAnd => Assembly::inst3(AND, X8, X8, X13),
+                NodeType::BitXor => Assembly::inst3(XOR, X8, X8, X13),
+                NodeType::BitOr => Assembly::inst3(OR, X8, X8, X13),
                 NodeType::Eq | NodeType::Ne | NodeType::Lt | NodeType::Le => vec![
                     Assembly::inst2(CMP, X8, X13),
                     Assembly::inst2(
@@ -1298,9 +1300,6 @@ impl<'a> AsmGenerator<'a> {
                     ),
                 ]
                 .into(),
-                NodeType::BitAnd => Assembly::inst3(AND, X8, X8, X13),
-                NodeType::BitXor => Assembly::inst3(XOR, X8, X8, X13),
-                NodeType::BitOr => Assembly::inst3(OR, X8, X8, X13),
                 _ => {
                     self.error_logger
                         .print_error_position(node.token.as_ref().unwrap().pos, "unexpected node");
@@ -1320,19 +1319,19 @@ impl<'a> AsmGenerator<'a> {
                     self.gen_node(node, options),
                     if matches!(
                         node.nt,
-                        NodeType::Block
-                            | NodeType::DefVar
+                        NodeType::DefVar
+                            | NodeType::Block
+                            | NodeType::Return
                             | NodeType::If
                             | NodeType::While
                             | NodeType::DoWhile
                             | NodeType::For
                             | NodeType::Switch
                             | NodeType::Case
-                            | NodeType::Label
-                            | NodeType::Goto
                             | NodeType::Break
                             | NodeType::Continue
-                            | NodeType::Return
+                            | NodeType::Goto
+                            | NodeType::Label
                     ) {
                         vec![].into()
                     } else {
@@ -1347,22 +1346,11 @@ impl<'a> AsmGenerator<'a> {
 
     fn gen_addr(&self, node: &Node, options: Options) -> Assembly {
         match node.nt {
-            NodeType::CopyBytes { .. } => self.gen_node(node, options),
-            NodeType::CallFunc => self.gen_node(node, options),
-            NodeType::Conditional => self.gen_node(node, options),
-
-            NodeType::Sequence => {
-                let mut lines = vec![];
-                for child in &node.children[..node.children.len() - 1] {
-                    lines.push(self.gen_node(child, options));
-                    if !matches!(child.nt, NodeType::Block | NodeType::DefVar) {
-                        lines.push(Self::pop(X8));
-                    }
-                }
-                lines.push(self.gen_addr(node.children.last().unwrap(), options));
-                lines.into()
-            }
-
+            NodeType::LocalVar => vec![
+                Assembly::inst3(ADD, X8, X29, options.offset - node.offset.unwrap()),
+                Self::push(X8),
+            ]
+            .into(),
             NodeType::GlobalVar => vec![
                 if !node.dest.is_empty() {
                     vec![
@@ -1370,8 +1358,8 @@ impl<'a> AsmGenerator<'a> {
                             ADRP,
                             X8,
                             match self.target_os {
-                                Os::MacOS => node.dest.clone().replace('@', "L_") + "@PAGE",
                                 Os::Linux => node.dest.clone().replace('@', "L_"),
+                                Os::MacOS => node.dest.clone().replace('@', "L_") + "@PAGE",
                             },
                         ),
                         Assembly::inst3(
@@ -1379,10 +1367,10 @@ impl<'a> AsmGenerator<'a> {
                             X8,
                             X8,
                             match self.target_os {
-                                Os::MacOS => node.dest.clone().replace('@', "L_") + "@PAGEOFF",
                                 Os::Linux => {
                                     ":lo12:".to_string() + &node.dest.clone().replace('@', "L_")
                                 }
+                                Os::MacOS => node.dest.clone().replace('@', "L_") + "@PAGEOFF",
                             },
                         ),
                     ]
@@ -1390,8 +1378,8 @@ impl<'a> AsmGenerator<'a> {
                 } else if !self.defined_symbols.contains(&node.global_name) {
                     let symbol = self.with_prefix(&node.global_name);
                     let (page, offset) = match self.target_os {
-                        Os::MacOS => (format!("{symbol}@GOTPAGE"), format!("{symbol}@GOTPAGEOFF")),
                         Os::Linux => (format!(":got:{symbol}"), format!(":got_lo12:{symbol}")),
+                        Os::MacOS => (format!("{symbol}@GOTPAGE"), format!("{symbol}@GOTPAGEOFF")),
                     };
                     vec![
                         Assembly::inst2(ADRP, X8, page),
@@ -1404,8 +1392,8 @@ impl<'a> AsmGenerator<'a> {
                             ADRP,
                             X8,
                             match self.target_os {
-                                Os::MacOS => self.with_prefix(&node.global_name) + "@PAGE",
                                 Os::Linux => self.with_prefix(&node.global_name),
+                                Os::MacOS => self.with_prefix(&node.global_name) + "@PAGE",
                             },
                         ),
                         Assembly::inst3(
@@ -1413,11 +1401,11 @@ impl<'a> AsmGenerator<'a> {
                             X8,
                             X8,
                             match self.target_os {
-                                Os::MacOS => self.with_prefix(&node.global_name) + "@PAGEOFF",
                                 Os::Linux => {
                                     ":lo12:".to_string()
                                         + &self.with_prefix(&node.global_name).replace('@', "L_")
                                 }
+                                Os::MacOS => self.with_prefix(&node.global_name) + "@PAGEOFF",
                             },
                         ),
                     ]
@@ -1426,12 +1414,21 @@ impl<'a> AsmGenerator<'a> {
                 Self::push(X8),
             ]
             .into(),
-            NodeType::LocalVar => vec![
-                Assembly::inst3(ADD, X8, X29, options.offset - node.offset.unwrap()),
-                Self::push(X8),
-            ]
-            .into(),
             NodeType::Deref => self.gen_node(node.lhs.as_ref().unwrap(), options),
+            NodeType::Conditional => self.gen_node(node, options),
+            NodeType::CallFunc => self.gen_node(node, options),
+            NodeType::Sequence => {
+                let mut lines = vec![];
+                for child in &node.children[..node.children.len() - 1] {
+                    lines.push(self.gen_node(child, options));
+                    if !matches!(child.nt, NodeType::DefVar | NodeType::Block) {
+                        lines.push(Self::pop(X8));
+                    }
+                }
+                lines.push(self.gen_addr(node.children.last().unwrap(), options));
+                lines.into()
+            }
+            NodeType::CopyBytes { .. } => self.gen_node(node, options),
             _ => {
                 unreachable!();
             }

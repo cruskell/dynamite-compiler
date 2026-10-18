@@ -5,15 +5,15 @@ fn cast(node: Node, ty: Type) -> Node {
     Node {
         nt: NodeType::Cast,
         token: node.token.clone(),
-        lhs: Some(Box::new(node)),
         cty: Some(ty),
+        lhs: Some(Box::new(node)),
         ..Node::default()
     }
 }
 fn number(value: usize) -> Node {
     Node {
-        value: Some(value),
         cty: Some(Type::integer(64, false)),
+        value: Some(value),
         ..Node::default()
     }
 }
@@ -95,9 +95,9 @@ impl AstBuilderImpl<'_> {
     pub(super) fn dynamic_node(ty: Type, offset: usize, token: Token) -> Node {
         let pointer = Node {
             nt: NodeType::LocalVar,
+            token: Some(token.clone()),
             cty: Some(Type::Ptr(Rc::new(ty))),
             offset: Some(offset),
-            token: Some(token.clone()),
             ..Node::default()
         };
         Node::new_with_op_and_lhs(Some(token), NodeType::Deref, pointer)
@@ -113,19 +113,19 @@ impl AstBuilderImpl<'_> {
     }
     pub(super) fn runtime_size(ty: &Type) -> Node {
         match ty.unqualified() {
+            Type::Arr(child, size) if child.is_variable_array() => binary(
+                NodeType::Mul,
+                number(size.unwrap_or(0)),
+                Self::runtime_size(child),
+            ),
             Type::Vla(child, offset) => binary(
                 NodeType::Mul,
                 Node {
                     nt: NodeType::LocalVar,
-                    offset: Some(*offset),
                     cty: Some(Type::integer(64, false)),
+                    offset: Some(*offset),
                     ..Node::default()
                 },
-                Self::runtime_size(child),
-            ),
-            Type::Arr(child, size) if child.is_variable_array() => binary(
-                NodeType::Mul,
-                number(size.unwrap_or(0)),
                 Self::runtime_size(child),
             ),
             _ => number(ty.size_of()),
@@ -134,9 +134,9 @@ impl AstBuilderImpl<'_> {
     fn allocation_call(name: &str, value: Node, result: Type, parameter: Type) -> Node {
         Node {
             nt: NodeType::CallFunc,
+            cty: Some(result),
             global_name: name.into(),
             args: vec![value],
-            cty: Some(result),
             parameter_types: vec![parameter],
             ..Node::default()
         }

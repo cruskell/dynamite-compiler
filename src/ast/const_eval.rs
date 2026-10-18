@@ -29,21 +29,20 @@ impl AstBuilderImpl<'_> {
                     .is_some_and(|ty| ty.integer_info().is_some())
                     && node.lhs.as_deref().is_some_and(Self::integer_constant)
             }
-            NodeType::BitNot => node.lhs.as_deref().is_some_and(Self::integer_constant),
             NodeType::Add
             | NodeType::Sub
             | NodeType::Mul
             | NodeType::Div
             | NodeType::Mod
+            | NodeType::BitLeft
+            | NodeType::BitRight
+            | NodeType::BitAnd
+            | NodeType::BitXor
+            | NodeType::BitOr
             | NodeType::Eq
             | NodeType::Ne
             | NodeType::Lt
             | NodeType::Le
-            | NodeType::BitAnd
-            | NodeType::BitOr
-            | NodeType::BitXor
-            | NodeType::BitLeft
-            | NodeType::BitRight
             | NodeType::LogicalAnd
             | NodeType::LogicalOr => {
                 node.lhs
@@ -54,6 +53,7 @@ impl AstBuilderImpl<'_> {
                         .as_ref()
                         .is_some_and(|child| Self::integer_constant(child))
             }
+            NodeType::BitNot => node.lhs.as_deref().is_some_and(Self::integer_constant),
             NodeType::Conditional => [&node.cond, &node.then, &node.els]
                 .into_iter()
                 .flatten()
@@ -241,7 +241,24 @@ impl AstBuilderImpl<'_> {
                     }
                 };
             }
-
+            NodeType::Add
+            | NodeType::Sub
+            | NodeType::Mul
+            | NodeType::Div
+            | NodeType::Mod
+            | NodeType::BitLeft
+            | NodeType::BitRight
+            | NodeType::BitAnd
+            | NodeType::BitXor
+            | NodeType::BitOr
+            | NodeType::Eq
+            | NodeType::Ne
+            | NodeType::Lt
+            | NodeType::Le => {}
+            NodeType::BitNot => {
+                let value = !self.eval(node.lhs.as_ref().unwrap());
+                return node.resolve_type().unwrap().convert_constant(value);
+            }
             NodeType::LogicalAnd => {
                 return (self.eval_truth(node.lhs.as_ref().unwrap())
                     && self.eval_truth(node.rhs.as_ref().unwrap())) as i64;
@@ -257,24 +274,6 @@ impl AstBuilderImpl<'_> {
                     self.eval(node.els.as_ref().unwrap())
                 };
             }
-            NodeType::BitNot => {
-                let value = !self.eval(node.lhs.as_ref().unwrap());
-                return node.resolve_type().unwrap().convert_constant(value);
-            }
-            NodeType::Eq
-            | NodeType::Ne
-            | NodeType::Le
-            | NodeType::Lt
-            | NodeType::Add
-            | NodeType::Sub
-            | NodeType::Mul
-            | NodeType::Div
-            | NodeType::Mod
-            | NodeType::BitAnd
-            | NodeType::BitOr
-            | NodeType::BitXor
-            | NodeType::BitLeft
-            | NodeType::BitRight => {}
             _ => {
                 self.error_logger.print_error_position(
                     node.token.as_ref().unwrap().pos,
@@ -294,14 +293,14 @@ impl AstBuilderImpl<'_> {
         if unsigned {
             let (lhs, rhs) = (lhs as u64, rhs as u64);
             let value = match node.nt {
-                NodeType::Div if rhs != 0 => Some(lhs / rhs),
-                NodeType::Mod if rhs != 0 => Some(lhs % rhs),
-                NodeType::Lt => Some(u64::from(lhs < rhs)),
-                NodeType::Le => Some(u64::from(lhs <= rhs)),
                 NodeType::Add => Some(lhs.wrapping_add(rhs)),
                 NodeType::Sub => Some(lhs.wrapping_sub(rhs)),
                 NodeType::Mul => Some(lhs.wrapping_mul(rhs)),
+                NodeType::Div if rhs != 0 => Some(lhs / rhs),
+                NodeType::Mod if rhs != 0 => Some(lhs % rhs),
                 NodeType::BitRight if rhs < ty.integer_info().unwrap().0 as u64 => Some(lhs >> rhs),
+                NodeType::Lt => Some(u64::from(lhs < rhs)),
+                NodeType::Le => Some(u64::from(lhs <= rhs)),
                 _ => None,
             };
             if let Some(value) = value {
@@ -309,18 +308,11 @@ impl AstBuilderImpl<'_> {
             }
         }
         let result = match node.nt {
-            NodeType::Eq => Some((lhs == rhs) as i64),
-            NodeType::Ne => Some((lhs != rhs) as i64),
-            NodeType::Le => Some((lhs <= rhs) as i64),
-            NodeType::Lt => Some((lhs < rhs) as i64),
             NodeType::Add => lhs.checked_add(rhs),
             NodeType::Sub => lhs.checked_sub(rhs),
             NodeType::Mul => lhs.checked_mul(rhs),
             NodeType::Div => lhs.checked_div(rhs),
             NodeType::Mod => lhs.checked_rem(rhs),
-            NodeType::BitAnd => Some(lhs & rhs),
-            NodeType::BitOr => Some(lhs | rhs),
-            NodeType::BitXor => Some(lhs ^ rhs),
             NodeType::BitLeft
                 if (0..lhs_ty.promoted().integer_info().unwrap().0 as i64).contains(&rhs) =>
             {
@@ -331,6 +323,13 @@ impl AstBuilderImpl<'_> {
             {
                 lhs.checked_shr(rhs as u32)
             }
+            NodeType::BitAnd => Some(lhs & rhs),
+            NodeType::BitXor => Some(lhs ^ rhs),
+            NodeType::BitOr => Some(lhs | rhs),
+            NodeType::Eq => Some((lhs == rhs) as i64),
+            NodeType::Ne => Some((lhs != rhs) as i64),
+            NodeType::Lt => Some((lhs < rhs) as i64),
+            NodeType::Le => Some((lhs <= rhs) as i64),
             _ => None,
         };
         let value = result.unwrap_or_else(|| {
@@ -388,7 +387,6 @@ impl AstBuilderImpl<'_> {
         }
         let value = match node.nt {
             NodeType::Num => ty.float_value(node.value.unwrap()),
-            NodeType::FloatAbs => self.eval_float_as(node.lhs.as_ref().unwrap(), &ty).abs(),
             NodeType::Cast => self.eval_float(node.lhs.as_ref().unwrap()),
             NodeType::Add => {
                 self.eval_float_as(node.lhs.as_ref().unwrap(), &ty)
@@ -413,6 +411,7 @@ impl AstBuilderImpl<'_> {
                     self.eval_float(node.els.as_ref().unwrap())
                 }
             }
+            NodeType::FloatAbs => self.eval_float_as(node.lhs.as_ref().unwrap(), &ty).abs(),
             _ => {
                 self.error_logger.print_error_position(
                     node.token.as_ref().unwrap().pos,
@@ -449,7 +448,6 @@ impl AstBuilderImpl<'_> {
                 |bits| Extended::from_bits(**bits),
             ),
             NodeType::Cast => self.eval_extended(node.lhs.as_ref().unwrap()),
-            NodeType::FloatAbs => self.eval_extended(node.lhs.as_ref().unwrap()).abs(),
             NodeType::Add | NodeType::Sub | NodeType::Mul | NodeType::Div => {
                 let lhs = self.eval_extended(node.lhs.as_ref().unwrap());
                 let rhs = self.eval_extended(node.rhs.as_ref().unwrap());
@@ -474,6 +472,7 @@ impl AstBuilderImpl<'_> {
                     node.els.as_ref().unwrap()
                 })
             }
+            NodeType::FloatAbs => self.eval_extended(node.lhs.as_ref().unwrap()).abs(),
             _ => {
                 self.error_logger.print_error_position(
                     node.token.as_ref().unwrap().pos,

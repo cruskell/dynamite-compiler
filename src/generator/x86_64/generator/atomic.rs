@@ -25,10 +25,10 @@ impl AsmGenerator<'_> {
             Assembly::inst2(MOV, RCX, RAX),
         ];
         lines.push(match operation {
-            AtomicRmwOperation::Exchange => Assembly::inst2(MOV, RCX, RSI),
             AtomicRmwOperation::Nand => {
                 vec![Assembly::inst2(AND, RCX, RSI), Assembly::inst1(NOT, RCX)].into()
             }
+            AtomicRmwOperation::Exchange => Assembly::inst2(MOV, RCX, RSI),
             _ => Assembly::inst2(
                 match operation {
                     AtomicRmwOperation::Add => ADD,

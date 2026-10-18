@@ -637,8 +637,8 @@ impl AstBuilderImpl<'_> {
                         nt: NodeType::ZeroFill {
                             bytes: size * unit_size,
                         },
-                        cty: Some(Type::Void),
                         token: Some(token.clone()),
+                        cty: Some(Type::Void),
                         lhs: Some(Box::new(node.clone())),
                         ..Node::default()
                     });
@@ -647,8 +647,8 @@ impl AstBuilderImpl<'_> {
                     nt: NodeType::CopyBytes {
                         bytes: size.min(literal_size) * unit_size,
                     },
-                    cty: Some(Type::Void),
                     token: Some(token.clone()),
+                    cty: Some(Type::Void),
                     lhs: Some(Box::new(node.clone())),
                     rhs: Some(Box::new(literal)),
                     ..Node::default()
@@ -779,8 +779,8 @@ impl AstBuilderImpl<'_> {
                 }
             }
             Node {
-                token: Some(assign_token.clone()),
                 nt: NodeType::Block,
+                token: Some(assign_token.clone()),
                 children,
                 ..Node::default()
             }
@@ -805,8 +805,8 @@ impl AstBuilderImpl<'_> {
                 nt: NodeType::CopyBytes {
                     bytes: ty.size_of(),
                 },
-                cty: Some(ty),
                 token: Some(token),
+                cty: Some(ty),
                 lhs: Some(Box::new(lhs)),
                 rhs: Some(Box::new(rhs)),
                 ..Node::default()
@@ -872,7 +872,7 @@ impl AstBuilderImpl<'_> {
     }
 
     pub(super) fn initializer_expressions(node: Node, expressions: &mut Vec<Node>) {
-        if matches!(node.nt, NodeType::Block | NodeType::DefVar) {
+        if matches!(node.nt, NodeType::DefVar | NodeType::Block) {
             for child in node.children {
                 Self::initializer_expressions(child, expressions);
             }
