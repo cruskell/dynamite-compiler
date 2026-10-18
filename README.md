@@ -232,6 +232,30 @@ These measurements do not replace the clean-build timings below.
 
 ## Measured Linux build times
 
+### Record-member optimization and current main (2026-10-18)
+
+Current main `6739321` and baseline `7804347` (before #216) each built pristine
+Redis 8.10.2 and Git v2.56.0 twice alongside Clang 15.0.7. These are **whole-build
+wall times**, including dependencies and linking, with `make -j4`, GNU99 and
+`-O0 -g0` on Linux x86_64 (Intel i5-5575R, Rust 1.86 release).
+Dynamite explicitly selected native preprocessing and the **opt-in LLVM 15 tools
+backend**; its default Clang lowering/linking backend was not measured.
+
+| Clean build | Before #216 | Current main | Clang | Reduction vs before | Reduction vs Clang |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Redis | 10.906 s | 10.731 s | 14.008 s | 1.61% | 23.40% |
+| Git | 38.408 s | 38.317 s | 40.733 s | 0.24% | 5.93% |
+
+Values are two-run medians; compiler order reverses on the second round. These
+are clean builds with warm filesystem caches and no compiler cache. Redis built
+six native tools using libc, with TLS/Vector Sets/C11 atomics disabled; Git
+omitted Rust/PCH and optional scripting/localization frontends. Git's roughly
+0.2% before/after difference is too small to claim a confirmed improvement.
+All 12 builds and runtime smoke checks passed. Full-build changes are smaller
+than the earlier Redis-server frontend-only reduction. See the
+[method, samples and stage totals](tools/benchmarks/results/linux-x86_64-2026-10-18-full-builds.md)
+and [measurement snapshot](tools/benchmarks/results/linux-x86_64-2026-10-18-full-builds.json).
+
 ### Native preprocessing and LLVM tools backend (2026-10-17)
 
 At commit `de9de24` (including [#201](https://github.com/cruskell/dynamite-compiler/pull/201)),
