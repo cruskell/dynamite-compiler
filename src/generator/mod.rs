@@ -1,3 +1,5 @@
+use crate::{ast::ProgramAst, error::ErrorLogger};
+
 pub mod aarch64;
 pub mod abi;
 pub mod llvm;
@@ -12,6 +14,13 @@ pub enum Os {
 pub enum Arch {
     Aarch64,
     X86_64,
+}
+
+#[derive(Clone, Copy)]
+pub enum ScalarLocation {
+    General(usize),
+    Floating(usize),
+    Stack(usize, usize),
 }
 
 /// Register width requested by the supported GNU target operand modifiers.
@@ -29,8 +38,6 @@ pub(crate) fn asm_register_width(
         _ => None,
     }
 }
-
-use crate::{ast::ProgramAst, error::ErrorLogger};
 
 /// References reachable from emitted definitions and global initializers.
 /// Unreferenced static inline bodies must not create linker dependencies.
@@ -130,13 +137,6 @@ pub fn new<'a>(
             target_os,
         )),
     }
-}
-
-#[derive(Clone, Copy)]
-pub enum ScalarLocation {
-    General(usize),
-    Floating(usize),
-    Stack(usize, usize),
 }
 
 pub fn scalar_arguments(

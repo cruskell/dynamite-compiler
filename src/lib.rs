@@ -11,6 +11,7 @@ pub mod preprocessor;
 pub mod timing;
 pub mod token;
 pub mod tokenizer;
+pub mod toolchain;
 pub mod trie;
 
 use ast::{AstBuilder, ProgramAst};
@@ -156,5 +157,3 @@ fn gen_asm(ast: ProgramAst, error_printer: &dyn error::ErrorLogger) -> String {
 fn gen_llvm_ir(ast: ProgramAst, error_printer: &dyn error::ErrorLogger) -> String {
     generator::llvm::generator::IrGenerator::new(error_printer).generate(ast)
 }
-
-pub mod toolchain;

@@ -40,6 +40,9 @@ macro expansion and preprocessing/dependency arguments.
 Each backend keeps its generator entry point and core node dispatch in
 `src/generator/<backend>/generator.rs`; `generator/aggregate.rs`, `globals.rs`,
 `atomic.rs` and `inline_asm.rs` contain the corresponding target-specific operations.
+The C build driver starts in `src/bin/dynamite-cc/main.rs`, with argument handling
+in `arguments.rs`. Its LLVM tools module keeps lowering and backend selection
+in `llvm_tools.rs`, with native linking in `llvm_tools/gnu.rs` and `darwin.rs`.
 
 The image workflow runs only when `dockerfiles/dev.Dockerfile`, `.dockerignore`,
 or `.github/workflows/publish.yaml` changes, or when started manually. Image
