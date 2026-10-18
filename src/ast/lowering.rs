@@ -17,21 +17,7 @@ impl AstBuilderImpl<'_> {
         for ty in &mut node.parameter_types {
             ty.lower_parameter_for_codegen();
         }
-        for child in [
-            &mut node.lhs,
-            &mut node.rhs,
-            &mut node.cond,
-            &mut node.then,
-            &mut node.els,
-            &mut node.ini,
-            &mut node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            Self::lower_source_types(child);
-        }
-        for child in node.children.iter_mut().chain(&mut node.args) {
+        for child in node.child_nodes_mut() {
             Self::lower_source_types(child);
         }
     }
@@ -50,21 +36,7 @@ impl AstBuilderImpl<'_> {
     }
 
     pub(super) fn insert_integer_conversions(node: &mut Node) {
-        for child in [
-            &mut node.lhs,
-            &mut node.rhs,
-            &mut node.cond,
-            &mut node.then,
-            &mut node.els,
-            &mut node.ini,
-            &mut node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            Self::insert_integer_conversions(child);
-        }
-        for child in node.children.iter_mut().chain(&mut node.args) {
+        for child in node.child_nodes_mut() {
             Self::insert_integer_conversions(child);
         }
         if matches!(

@@ -2,6 +2,7 @@ use crate::{ast::ProgramAst, error::ErrorLogger};
 
 pub mod aarch64;
 pub mod abi;
+mod globals;
 pub mod llvm;
 pub mod x86_64;
 
@@ -55,15 +56,7 @@ pub(crate) fn referenced_symbols<'a>(
         if !node.global_name.is_empty() {
             add_name(&node.global_name, names, pending);
         }
-        for child in [
-            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            node_names(child, names, pending);
-        }
-        for child in node.children.iter().chain(&node.args) {
+        for child in node.child_nodes() {
             node_names(child, names, pending);
         }
     }

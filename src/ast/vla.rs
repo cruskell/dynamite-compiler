@@ -34,34 +34,12 @@ fn block(children: Vec<Node>) -> Node {
 }
 fn walk(node: &Node, visitor: &mut impl FnMut(&Node)) {
     visitor(node);
-    for child in [
-        &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        walk(child, visitor);
-    }
-    for child in node.children.iter().chain(&node.args) {
+    for child in node.child_nodes() {
         walk(child, visitor);
     }
 }
 fn walk_mut(node: &mut Node, visitor: &mut impl FnMut(&mut Node)) {
-    for child in [
-        &mut node.lhs,
-        &mut node.rhs,
-        &mut node.cond,
-        &mut node.then,
-        &mut node.els,
-        &mut node.ini,
-        &mut node.upd,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        walk_mut(child, visitor);
-    }
-    for child in node.children.iter_mut().chain(&mut node.args) {
+    for child in node.child_nodes_mut() {
         walk_mut(child, visitor);
     }
     visitor(node);
@@ -252,21 +230,7 @@ impl AstBuilderImpl<'_> {
     // Report type changes so only ancestors of rewritten expressions need refreshing.
     fn lower_variable_arithmetic_types(node: &mut Node) -> bool {
         let mut changed = false;
-        for child in [
-            &mut node.lhs,
-            &mut node.rhs,
-            &mut node.cond,
-            &mut node.then,
-            &mut node.els,
-            &mut node.ini,
-            &mut node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            changed |= Self::lower_variable_arithmetic_types(child);
-        }
-        for child in node.children.iter_mut().chain(&mut node.args) {
+        for child in node.child_nodes_mut() {
             changed |= Self::lower_variable_arithmetic_types(child);
         }
         if changed {

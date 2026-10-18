@@ -53,21 +53,7 @@ impl AstBuilderImpl<'_> {
             node.offset = object.offset;
             node.cty = object.cty.clone();
         }
-        for child in [
-            &mut node.lhs,
-            &mut node.rhs,
-            &mut node.cond,
-            &mut node.then,
-            &mut node.els,
-            &mut node.ini,
-            &mut node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            Self::resolve_deferred_local(child, offset, object);
-        }
-        for child in node.children.iter_mut().chain(&mut node.args) {
+        for child in node.child_nodes_mut() {
             Self::resolve_deferred_local(child, offset, object);
         }
         node.refresh_arithmetic_type();

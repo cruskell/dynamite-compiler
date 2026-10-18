@@ -285,15 +285,7 @@ impl AstBuilderImpl<'_> {
                 "external inline definition cannot refer to an internal identifier",
             );
         }
-        for child in [
-            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.validate_inline_body(child);
-        }
-        for child in node.children.iter().chain(&node.args) {
+        for child in node.child_nodes() {
             self.validate_inline_body(child);
         }
     }
@@ -506,15 +498,7 @@ impl AstBuilderImpl<'_> {
                 );
             }
         }
-        for child in [
-            &node.lhs, &node.rhs, &node.cond, &node.then, &node.els, &node.ini, &node.upd,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.validate_void_expressions(child);
-        }
-        for child in node.children.iter().chain(&node.args) {
+        for child in node.child_nodes() {
             self.validate_void_expressions(child);
         }
     }
