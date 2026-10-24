@@ -99,6 +99,46 @@ allocation APIs are not intercepted. Counter runs add atomic-operation overhead
 and must not supply performance timings. The interposer uses glibc internals
 and is an optional Linux profiling tool, not part of the compiler runtime.
 
+## Profile-guided optimization
+
+Replay successful C compilations recorded by `cc.py` to train a PGO build of
+`dynamite-cc`. Install `llvm-tools-preview` for the Rust toolchain first:
+
+```sh
+rustup component add llvm-tools-preview
+python3 tools/benchmarks/pgo.py \
+  --records temp/benchmark-run/redis-dynamite-1-records \
+  --records temp/benchmark-run/git-dynamite-1-records \
+  --output temp/pgo-run --clang clang-15 --jobs 4
+```
+
+`--toolchain VERSION` selects a Rustup toolchain. The matching `llvm-profdata`
+is located in that toolchain's sysroot. The output directory must be new.
+Training sources, generated headers and working directories referenced by the
+records must still exist. Use trusted records: their compiler arguments are
+replayed as commands, with object outputs redirected and dependency generation
+disabled. Commands, build/training logs, raw and merged profiles, toolchain
+metadata and both binaries remain in the output directory.
+
+The resulting `temp/pgo-run/dynamite-pgo` is an optional compiler executable;
+the normal release binary is not replaced. Only Dynamite is trained: the external
+Clang backend is unchanged. Normal `RUSTFLAGS` apply equally to the instrumented
+and profile-use builds; do not supply other PGO flags. Encoded Rust flags are
+rejected rather than silently overriding these settings.
+
+Compare the regular and PGO binaries with the same flags and clean-build workload.
+Keep training and timing separate. Train on several projects and evaluate held-out
+inputs before drawing conclusions about general compiler performance. Profiles
+are specific to the source and Rust toolchain; regenerate them after changes.
+See the [curl-only versus mixed-corpus measurements](results/linux-x86_64-2026-10-18-mixed-pgo.md)
+for a three-application comparison using the same compiler source and different
+training corpora.
+See the [mixed-PGO versus Clang measurements](results/linux-x86_64-2026-10-18-pgo-clang.md)
+for three clean builds per compiler/application with the same `-O2` settings.
+The [matching `-O0` comparison](results/linux-x86_64-2026-10-18-pgo-clang-o0.md)
+keeps those compiler binaries and the Clang backend fixed while changing the
+application optimization level.
+
 For the experimental LLVM tools backend, set `DYNAMITE_BACKEND=llvm` and select
 matching `DYNAMITE_LLC`, `DYNAMITE_OPT`, and `DYNAMITE_LLD` executables. Use
 `--no-trace`, since Clang time-trace options are unsupported on that path.

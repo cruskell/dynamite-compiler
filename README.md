@@ -137,6 +137,10 @@ result. Independent inputs share immutable header scans and directive tokens;
 macro definitions, include guards, counters, and dependency lists reset per input.
 Parameter references are indexed when a macro is defined, expanded arguments are
 memoized within an invocation, and header/dependency membership uses hash tables.
+Cached dependency directives are borrowed until line remapping requires a copy.
+Macro definitions record which arguments need their original spelling and how
+often expanded arguments are used. Expansion moves argument tokens on their last
+use and consumes token-paste inputs instead of copying them again.
 
 The same implementation can preprocess C compilation and `-E` without invoking
 Clang:
